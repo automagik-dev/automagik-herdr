@@ -1,0 +1,217 @@
+// The bot view over plain data: which bots are live (DESIGN Decision 3, counting every
+// machine), each bot's pose (Decision 7, A6), the tree of a project (A1 nesting, A2
+// categories, A3 planned, helpers from herdr-core's parent field), where each project's tree
+// goes in the sidebar (A8), and the rows a fold state leaves showing (A7). Pure: no `herdr`,
+// `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
+
+import { BOT_LABEL, mainBotOf, effectiveLead } from "./model.js";
+import { agentInForeground, rowIsAgent } from "./launchArgs.js";
+
+/** Idle this long is asleep (Automagik's own threshold). */
+export const ASLEEP_MS = 10 * 60 * 1000;
+
+/** A project's identity in the view: its machine and key. */
+export const projectId = (p) => JSON.stringify([p?.machine ?? null, p?.key ?? null]);
+
+const addressOf = (t) => t?.address ?? t?.id ?? null;
+// Decision 3: an agent in front, by the program table, else by the foreground process.
+const agentInFront = (t) => rowIsAgent(t) ?? agentInForeground(t);
+
+/**
+ * The live map: bot id -> its live pane, from `terminals()` rows. A terminal counts while it
+ * is live, carries `bot=<id>` for a bot in `known` (every id when `known` is null) and has an
+ * agent in front. On any machine: the view shows remote bots too (launch.js' liveTerminalOf
+ * is this computer's only, for Start and Attach). Several holders: the newest by
+ * `created_ms` counts, flagged `duplicate`.
+ */
+export function liveFrom(terminals, known = null) {
+  const holders = new Map();
+  for (const t of terminals ?? []) {
+    const id = t?.labels?.[BOT_LABEL];
+    if (!id || (known && !known.has(id)) || t.state !== "live" || !addressOf(t) || !agentInFront(t)) continue;
+    holders.set(id, [...(holders.get(id) ?? []), t]);
+  }
+  const live = {};
+  for (const [id, rows] of holders) {
+    const pick = rows.reduce((a, b) => ((b.created_ms ?? -1) > (a.created_ms ?? -1) ? b : a));
+    live[id] = {
+      terminal: addressOf(pick), duplicate: rows.length > 1, status: pick.status ?? null,
+      status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
+    };
+  }
+  return live;
+}
+
+/**
+ * A bot's pose from herdr-core's status (Decision 7): working, blocked -> needs you, error ->
+ * failed, done, idle -> idle or asleep once its status is ASLEEP_MS old. A live bot with no
+ * status yet is idle with no asleep timer; a stopped or planned bot (no live pane) is asleep.
+ */
+export function poseOf(live, now) {
+  if (!live) return "asleep";
+  switch (live.status) {
+    case "working": return "working";
+    case "blocked": return "needs-you";
+    case "error": return "failed";
+    case "done": return "done";
+    case "idle": return typeof live.status_ms === "number" && now - live.status_ms >= ASLEEP_MS ? "asleep" : "idle";
+    default: return "idle";
+  }
+}
+
+/** When the next idle bot turns asleep (ms since the epoch), or null: the view's one wake-up. */
+export function nextWake(live, now) {
+  let next = null;
+  for (const l of Object.values(live ?? {})) {
+    if (l?.status !== "idle" || typeof l.status_ms !== "number") continue;
+    const at = l.status_ms + ASLEEP_MS;
+    if (at > now && (next === null || at < next)) next = at;
+  }
+  return next;
+}
+
+/**
+ * A pane's helpers: the live terminals whose hc parent it is, depth first, with their own
+ * helpers beneath. A terminal tied to a known bot is never anyone's helper (it shows as that
+ * bot, by definition), and what it started stays under it, so it is not followed.
+ */
+export function helpersOf(terminals, address, known = new Set(), depth = 0, seen = new Set([address])) {
+  const kids = (terminals ?? []).filter((t) => t?.parent === address && t.state === "live" && !seen.has(addressOf(t))
+    && !known.has(t.labels?.[BOT_LABEL]));
+  return kids.flatMap((t) => {
+    const terminal = addressOf(t);
+    seen.add(terminal);
+    const row = { terminal, name: t.name || t.template || t.program?.name || terminal, agent: t.program?.key ?? null,
+      program: t.program ?? null, status: t.status ?? null, depth };
+    return [row, ...helpersOf(terminals, terminal, known, depth + 1, seen)];
+  });
+}
+
+/**
+ * Every project's bot tree. `projects`: discoverProjects()' entries ({ key, machine?, file,
+ * warnings? }); one tree per machine and key however often it is listed (worktree spaces).
+ * `live`: liveFrom()'s map. `terminals`: terminals() rows, for helpers only. A member nests
+ * under its effective lead (A1, by definition only, never by hc parent); the main bot's
+ * direct reports group by `category` in file order, then the uncategorised; a planned bot
+ * is never live and has no members (a planned lead falls back to the main bot).
+ */
+export function buildTree({ projects, live = {}, terminals = [], now = Date.now() }) {
+  const known = knownBots(projects);
+  const done = new Set();
+  const trees = [];
+  for (const p of projects ?? []) {
+    const pid = projectId(p);
+    if (done.has(pid)) continue;
+    done.add(pid);
+    const file = p.file ?? { version: 1, categories: [], bots: [] };
+    const main = mainBotOf(file);
+    const warnings = [...(p.warnings ?? [])];
+    const leads = new Map(file.bots.map((b) => [b.id, b === main ? { lead: "" } : effectiveLead(file, b.id)]));
+    const placed = new Set();
+    const node = (bot) => {
+      placed.add(bot.id);
+      const planned = Boolean(bot.planned);
+      const l = planned ? null : live[bot.id] ?? null;
+      const members = planned ? [] : file.bots.filter((b) => !placed.has(b.id) && b !== main && leads.get(b.id)?.lead === bot.id).map(node);
+      const n = {
+        bot, planned, pose: poseOf(l, now), members,
+        live: l ? { terminal: l.terminal, duplicate: l.duplicate } : null,
+        status: l?.status ?? null, program: l?.program ?? null,
+        helpers: l ? helpersOf(terminals, l.terminal, known) : [],
+      };
+      const warning = leads.get(bot.id)?.warning;
+      if (warning && bot !== main) n.warning = warning;
+      return n;
+    };
+    if (!main) {
+      // No main bot (or a file that did not parse): every bot at the top, nothing nested.
+      if (!warnings.includes("no main bot") && file.bots.length) warnings.unshift("no main bot");
+      trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: null, categories: [],
+        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings });
+      continue;
+    }
+    placed.add(main.id);
+    const direct = file.bots.filter((b) => b !== main && leads.get(b.id)?.lead === main.id);
+    const categories = file.categories
+      .map((c) => ({ id: c.id, title: c.title, ...(c.sub ? { sub: c.sub } : {}), bots: direct.filter((b) => b.category === c.id && !placed.has(b.id)).map(node) }))
+      .filter((c) => c.bots.length);
+    const uncategorised = direct.filter((b) => !placed.has(b.id)).map(node);
+    const mainNode = node(main);
+    // main's own `members` are its direct reports, already grouped above.
+    mainNode.members = [];
+    trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings });
+  }
+  return trees;
+}
+
+/**
+ * Where each project's tree is drawn (A8): after the first space row, in sidebar order, that
+ * belongs to it (a project lists its spaces' ids); other spaces of the project draw none.
+ * Returns { at: Map<space id, project id>, rest: project ids with no space shown }.
+ */
+export function placeTrees(orderedSpaceIds, trees) {
+  const at = new Map();
+  const placed = new Set();
+  for (const sid of orderedSpaceIds) {
+    const t = trees.find((x) => !placed.has(projectId(x)) && x.spaces.includes(sid));
+    if (!t) continue;
+    placed.add(projectId(t));
+    at.set(sid, projectId(t));
+  }
+  return { at, rest: trees.map(projectId).filter((id) => !placed.has(id)) };
+}
+
+/** The fold id of a bot row, or of a project's category. */
+export const botFold = (botId) => `b:${botId}`;
+export const categoryFold = (tree, categoryId) => `c:${projectId(tree)}:${categoryId}`;
+
+/**
+ * The rows a tree shows under a fold state (A7). `open`: Map<fold id, boolean> of the
+ * person's folds this session; anything not in it takes the default: the main bot open,
+ * every category open, every other bot folded. Each row: { kind: "main" | "category" | "bot"
+ * | "planned" | "helper" | "notice", id, guides, foldable, open, ... } where `guides` lists
+ * the lines on its left, outermost first: "main" (inside the main bot), "member" (inside a
+ * bot's team), "helper" (a dashed helper group).
+ */
+export function visibleRows(tree, open = new Map()) {
+  const rows = [];
+  const isOpen = (id, dflt) => (open.has(id) ? open.get(id) : dflt);
+  const helperRows = (owner, helpers, guides) => helpers.map((h) => ({
+    kind: "helper", id: `h:${h.terminal}`, owner: owner.bot.id, helper: h, foldable: false, open: false,
+    guides: [...guides, ...Array(h.depth + 1).fill("helper")],
+  }));
+  const botRows = (n, guides) => {
+    const id = botFold(n.bot.id);
+    if (n.planned) { rows.push({ kind: "planned", id, node: n, guides, foldable: false, open: false }); return; }
+    const foldable = n.members.length + n.helpers.length > 0;
+    const o = foldable && isOpen(id, false);
+    rows.push({ kind: "bot", id, node: n, guides, foldable, open: o });
+    if (!o) return;
+    for (const m of n.members) botRows(m, [...guides, "member"]);
+    rows.push(...helperRows(n, n.helpers, [...guides, "member"]));
+  };
+  if (!tree.main) {
+    if (tree.warnings.length) rows.push({ kind: "notice", id: `n:${projectId(tree)}`, text: tree.warnings[0], guides: [], foldable: false, open: false });
+    for (const n of tree.uncategorised) botRows(n, []);
+    return rows;
+  }
+  const mainId = botFold(tree.main.bot.id);
+  const foldable = tree.categories.length + tree.uncategorised.length + tree.main.helpers.length > 0;
+  const mainOpen = foldable && isOpen(mainId, true);
+  rows.push({ kind: "main", id: mainId, node: tree.main, guides: [], foldable, open: mainOpen });
+  if (!mainOpen) return rows;
+  for (const c of tree.categories) {
+    const id = categoryFold(tree, c.id);
+    const o = isOpen(id, true);
+    rows.push({ kind: "category", id, category: c, guides: ["main"], foldable: true, open: o });
+    if (o) for (const n of c.bots) botRows(n, ["main"]);
+  }
+  for (const n of tree.uncategorised) botRows(n, ["main"]);
+  rows.push(...helperRows(tree.main, tree.main.helpers, ["main"]));
+  return rows;
+}
+
+/** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */
+export function knownBots(projects) {
+  return new Set((projects ?? []).flatMap((p) => p.file?.bots?.map((b) => b.id) ?? []));
+}
