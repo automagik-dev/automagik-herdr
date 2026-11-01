@@ -1,5 +1,6 @@
-// The Create / Edit form, the Attach picker and the bot list (Edit, Start): the pack opened
-// as a Herdr dialog or popup (props.form "create" | "edit" | "attach" | "pick"). Text fields are Herdr's Input and Textarea;
+// The Create / Edit form, the Attach picker, the bot list (Edit, Start) and a bot row's menu
+// (Edit, Start, Attach to the focused pane): the pack opened as a Herdr dialog or popup
+// (props.form "create" | "edit" | "attach" | "pick" | "menu"). Text fields are Herdr's Input and Textarea;
 // choices are pills, as in Herdr's own automations form. The form reads the project's
 // .herdr/bots.json itself and writes back its raw copy with the text it read as the
 // snapshot, so an entry it can't show, or someone's edit since, is never lost. Apache-2.0.
@@ -19,6 +20,7 @@ export class BotForm {
     this.mode = p.form;
     this.error = null; // why it can't be saved, shown above the buttons
     this.busy = false;
+    if (this.mode === "menu") return;
     if (this.mode === "attach" || this.mode === "pick") {
       this.projects = null;
       cx.spawn(async (cx) => {
@@ -168,7 +170,7 @@ export class BotForm {
     });
   }
 
-  // The bot list's actions, until the bot rows (Group 3) carry their own menu.
+  // The bot list's and the row menu's actions.
   edit(project, bot) {
     openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "edit", bot: bot.id, project: project.key } });
     closeOverlay(this.p.overlay);
@@ -206,9 +208,9 @@ export class BotForm {
 
   render(cx) {
     const t = theme();
-    const list = this.mode === "attach" || this.mode === "pick";
-    const title = { attach: `Attach ${this.p.terminal} as a bot`, pick: "Bots", edit: "Edit bot" }[this.mode] ?? "New bot";
-    const body = list ? this.listBody(t) : this.formBody(t, cx);
+    const list = this.mode === "attach" || this.mode === "pick" || this.mode === "menu";
+    const title = { attach: `Attach ${this.p.terminal} as a bot`, pick: "Bots", edit: "Edit bot", menu: this.p.name }[this.mode] ?? "New bot";
+    const body = this.mode === "menu" ? this.menuBody(t) : list ? this.listBody(t) : this.formBody(t, cx);
     return v_flex().id("bot-form").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child(title)))
@@ -218,6 +220,23 @@ export class BotForm {
         .child(h_flex().gap(8).justify_end()
           .child(this.button("bot-cancel", "Cancel", t, () => closeOverlay(this.p.overlay)))
           .when(!list, (el) => el.child(this.button("bot-save", this.busy ? "Saving…" : "Save", t, (cx) => this.save(cx), { solid: true })))));
+  }
+
+  // A bot row's right-click (A10): Edit, Start (not for a planned bot), Attach to the pane
+  // that was focused at the click. A bot defined on another machine is changed from there.
+  menuBody(t) {
+    if (this.p.machine) {
+      return div().p(14).text_size(12).text_color(t.muted)
+        .child(`${this.p.name} is defined on ${this.p.machine}; Edit, Start and Attach work from that computer.`);
+    }
+    const project = { key: this.p.project }, bot = { id: this.p.bot };
+    const pane = typeof this.p.terminal === "string" && !this.p.terminal.includes("/") ? this.p.terminal : null;
+    const item = (id, label, onClick) => h_flex().id(id).h(30).px(10).items_center().rounded(7).cursor_pointer()
+      .hover((s) => s.bg(t.hover)).on_click((_e, cx) => onClick(cx)).child(label);
+    return v_flex().p(6).gap(2)
+      .child(item("menu-edit", "Edit\u2026", () => this.edit(project, bot)))
+      .when(!this.p.planned, (el) => el.child(item("menu-start", this.busy ? "Starting\u2026" : "Start", (cx) => this.start(project, bot, cx))))
+      .when(!this.p.planned && Boolean(pane), (el) => el.child(item("menu-attach", `Attach to the focused pane (${pane})`, (cx) => this.attach(project, bot, cx))));
   }
 
   // This computer's bots by project: click one to attach the pane (attach), or Edit / Start (pick).

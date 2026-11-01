@@ -16,13 +16,16 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm } from "./create.js";
-import { startBot, attachBot } from "./launch.js";
+import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
+import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
+import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry } from "./rows.js";
 
-// The pack itself as a dialog: the bot form (create.js), or the attach picker as a popup.
+// The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
+// and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
-    ? { mod: "spaces-agents", kind: "popup", width: 300, height: 360, props: form }
+    ? { mod: "spaces-agents", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
     : { mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: form });
 }
 
@@ -95,6 +98,9 @@ const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
+// Character pictures (characters.js), under the app home outside mods/, by their path
+// relative to the app home, as image() takes it.
+const PETS = "spaces-agents-pets";
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
@@ -134,10 +140,13 @@ export default class Spaces extends View {
     // Hermes reports no status to the core: read its screen for the question footer.
     this.screen = {}; // terminal address -> "blocked" | null
     cx.timer.every(2500, (cx) => this.scanHermes(cx));
-    cx.timer.every(15000, cx => { this.refreshMachines(cx); this.loadExtra(cx); this.refreshBots(cx); });
+    cx.timer.every(15000, cx => {
+      this.refreshMachines(cx); this.loadExtra(cx); this.refreshBots(cx); this.loadModelTexts(cx);
+      this.petsFailed.clear(); // a picture whose write failed is tried again at the next render
+    });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => this.checkNew(cx));
+    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); });
     // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
     // Otherwise as before: Cmd+V pastes text, or gives a local agent its Ctrl+V for an
@@ -170,6 +179,27 @@ export default class Spaces extends View {
     this.botsRun = 0; // the latest discovery; an older one finishing late is dropped
     this.botWatch = new Map(); // local project key -> the token of its one watcher
     this.refreshBots(cx);
+    // The bot view (rows.js): the folds made this session (A7: fold id -> open), the row under
+    // the pointer, the trees drawn last, the terminals drawn as bots (left out of the space's
+    // own agent rows), the pictures known to be on disk, and when the next idle bot falls
+    // asleep (one wake-up then, on the 250 ms timer below). The bot rows take no keyboard
+    // focus: a focus target in the sidebar would take typing from the terminal on a click
+    // (shipped mods track focus only on overlays), so the fold arrow shows on hover only.
+    this.open = new Map();
+    this.hoverRow = null;
+    this.trees = [];
+    this.botOf = new Map(); // terminal address -> bot id
+    this.pets = new Set();
+    this.petsWanted = new Map(); // file -> { look, pose, dark }
+    this.petsFailed = new Set();
+    this.wakeAt = null;
+    // The model a bot row shows (A12, rows.js secondLine): the agents' own config files, read
+    // now and on the 15-second timer, and each live bot pane's foreground command line by
+    // address ({ argv, created }), read with hc get after each bot discovery when terminals()
+    // didn't carry it.
+    this.modelTexts = {};
+    this.argvOf = new Map();
+    this.loadModelTexts(cx);
     // Hermes's own icon from the program table (its process shows as Python).
     this.hermes = { key: "hermes", name: "Hermes", icon: "icons/hermes.svg", tint: true };
     cx.spawn(async (cx) => {
@@ -250,7 +280,8 @@ export default class Spaces extends View {
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
   kids(addr, lines = []) {
-    const kids = this.all.filter((k) => k.parent === addr && k.state === "live");
+    // A terminal drawn as a bot is placed by its definition only, never as someone's child.
+    const kids = this.all.filter((k) => k.parent === addr && k.state === "live" && !this.botOf.has(k.address));
     return kids.flatMap((k, i) => {
       const last = i === kids.length - 1;
       return [{ k, lines: [...lines, last ? "└" : "├"] }, ...this.kids(k.address, [...lines, last ? "" : "│"])];
@@ -262,7 +293,8 @@ export default class Spaces extends View {
     const tabs = new Set((w.tabs ?? []).map((c) => c.id));
     const indent = tree ? 44 : 20;
     const shown = focused()?.agent;
-    return [...this.agentList, ...this.extraList].filter((a) => tabs.has(a.tab)).flatMap((a) => {
+    const asBot = (a) => this.botOf.has(a.address) || (a.core && this.botOf.has(a.core));
+    return [...this.agentList, ...this.extraList].filter((a) => tabs.has(a.tab) && !asBot(a)).flatMap((a) => {
       if (!a.extra) this.order.push(a.address);
       const pic = icon(a.program, 14, t.foreground);
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
@@ -329,6 +361,210 @@ export default class Spaces extends View {
       const l = labels.get(a.address);
       return detail.get(a.address) ?? (/^\d+$/.test(l) ? a.program?.name || l : l);
     };
+  }
+
+  // ---- The bot view (Group 3): each project's bots as the approved mockup draws them ----
+
+  // Live bots, poses and trees from this render's terminals() (rows.js decides; no hc get
+  // here: terminals() carries program.agent, status, status_ms and created_ms on this host;
+  // a command line it lacks comes from readBotArgv, read off the drawing path).
+  prepareBots() {
+    const now = Date.now();
+    const known = knownBots(this.bots);
+    const live = liveFrom(this.all, known);
+    this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
+    this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
+    this.wakeAt = nextWake(live, now);
+  }
+
+  // On the 250 ms timer: one redraw when the next idle bot reaches its asleep mark, and the
+  // character pictures the last render asked for, written once each.
+  botTick(cx) {
+    if (this.wakeAt !== null && Date.now() >= this.wakeAt) { this.wakeAt = null; cx.notify(); }
+    if (this.petsWanted.size && !this.petsBusy) this.writePets(cx);
+  }
+
+  // A character picture is a file under the app home outside mods/ (a write inside a mod
+  // folder reloads it, DESIGN Decision 8), drawn by its path relative to the app home
+  // (image() draws nothing for an absolute path on this host). Written when absent or stale.
+  writePets(cx) {
+    const wanted = [...this.petsWanted];
+    this.petsWanted.clear();
+    this.petsBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        await fs.mkdir(`${appHome()}/${PETS}`, { recursive: true });
+        for (const [file, { look, pose, dark }] of wanted) {
+          const path = `${appHome()}/${PETS}/${file}`;
+          const svg = characterSvg(look.character, look.colour, pose, dark);
+          try {
+            const had = await fs.readFile(path, "utf8").catch(() => null);
+            if (had !== svg) await fs.writeFile(path, svg);
+            this.pets.add(file);
+          } catch (e) { this.petsFailed.add(file); this.petsTrouble(e); }
+        }
+      } catch (e) { for (const [file] of wanted) this.petsFailed.add(file); this.petsTrouble(e); }
+      this.petsBusy = false;
+      cx.notify();
+    });
+  }
+
+  // Pictures that can't be written: said once (the first failure), naming the folder; they
+  // are tried again on the 15-second timer either way.
+  petsTrouble(e) {
+    if (this.petsWarned) return;
+    this.petsWarned = true;
+    notify({ title: "Bots", level: "warning", timeout: 15000,
+      body: `Couldn't write bot pictures in ${appHome()}/${PETS} (${e?.message ?? e}). Bots show without them until it works; it is tried again every 15 seconds.` });
+  }
+
+  // A bot's character in its pose; until its file is written, an empty box the same size.
+  pet(bot, pose, size, dark) {
+    const look = bot.look ?? {};
+    const file = characterFile(look.character, look.colour, pose, dark);
+    if (!this.pets.has(file)) {
+      if (!this.petsFailed.has(file)) this.petsWanted.set(file, { look, pose, dark });
+      return div().size(size).flex_none();
+    }
+    const pic = image(`${PETS}/${file}`).size(size).flex_none();
+    // Needs you: Herdr's own motion, a small bob.
+    return pose === "needs-you" ? div().relative().flex_none().child(pic).loop("top", { from: 0, to: -2, period: 700 }) : pic;
+  }
+
+  // The coding agent's Herdr icon: the live pane's program, else the agent the bot runs
+  // (knownAgents), else the shell icon.
+  agentIcon(node, size, t) {
+    const program = node.program ?? (this.known ?? []).find((k) => k.key === node.bot.agent);
+    return icon(program, size, t.foreground) ?? image("icons/shell.svg").size(size).flex_none();
+  }
+
+  toggle(id, open, cx) {
+    this.open.set(id, !open);
+    cx.notify();
+  }
+
+  // The lines on a row's left (A4): inside the main bot and a bot's team solid, helpers dashed.
+  guides(list, t) {
+    return list.map((g) => div().flex_none().self_stretch()
+      .ml(g === "main" ? 22 : g === "member" ? 31 : 2).w(g === "helper" ? 9 : 7)
+      .border_l(1).border_color(t.border).when(g === "helper", (el) => el.border_dashed()));
+  }
+
+  // The fold arrow: its slot always there (10 px), seen only while the row is hovered (A7,
+  // hover half: see the bot view's state in init); down when open, right when folded;
+  // nothing else marks a fold.
+  arrow(r, t) {
+    const slot = div().id(`fold-${r.id}`).w(10).flex_none().flex().items_center().justify_center();
+    if (!r.foldable) return slot;
+    const shown = this.hoverRow === r.id;
+    return slot.cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.toggle(r.id, r.open, cx); })
+      .child(svg(`mods/workspace-chrome/chevron-${r.open ? "down" : "right"}.svg`).size(10).text_color(t.dim).opacity(shown ? 1 : 0));
+  }
+
+  // A row's shared behaviour: hover (for its arrow), click and right-click.
+  rowEvents(el, r, t, onClick, onMenu) {
+    return el.id(`row-${r.id}`)
+      .on_hover((over, cx) => {
+        const next = over ? r.id : this.hoverRow === r.id ? null : this.hoverRow;
+        if (next !== this.hoverRow) { this.hoverRow = next; cx.notify(); }
+      })
+      .when(Boolean(onClick), (el) => el.cursor_pointer().on_click((_e, cx) => onClick(cx)))
+      .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
+  }
+
+  // One tree's rows (visibleRows decides which show), in one block.
+  botBlock(tree, t, dark) {
+    const rows = visibleRows(tree, this.open).map((r) => {
+      if (r.kind === "category") return this.categoryRow(r, t);
+      if (r.kind === "helper") return this.helperRow(r, t);
+      if (r.kind === "notice") return h_flex().id(`row-${r.id}`).px(8).py(4).gap(6).text_size(11).text_color(t.dim)
+        .child(div().flex_1().min_w(0).truncate().child(`${base(tree.key)}: ${r.text}`));
+      return this.botRow(r, tree, t, dark);
+    });
+    return [v_flex().id(`bots-${projectId(tree)}`).children(rows)];
+  }
+
+  categoryRow(r, t) {
+    const c = r.category;
+    return h_flex().items_stretch()
+      .children(this.guides(r.guides, t))
+      .child(this.rowEvents(h_flex().flex_1().min_w(0).mt(8).mb(2).py(3).pl(2).pr(8).gap(8).items_center().rounded(8)
+        .border_1().border_color(`${t.chrome}00`)
+        .hover((s) => s.bg(t.hover)), r, t, (cx) => this.toggle(r.id, r.open, cx))
+        .child(this.arrow(r, t))
+        .child(div().flex_none().text_size(11).font_bold().text_color(t.muted).child(c.title.toUpperCase()))
+        .when(Boolean(c.sub), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(c.sub))));
+  }
+
+  helperRow(r, t) {
+    const h = r.helper;
+    this.order.push(h.terminal);
+    const shown = focused()?.agent === h.terminal;
+    const pic = icon(h.program, 14, t.foreground) ?? image("icons/shell.svg").size(14).flex_none();
+    return h_flex().items_stretch()
+      .children(this.guides(r.guides, t))
+      .child(h_flex().id(`row-${r.id}`).flex_1().min_w(0).h(26).px(6).gap(8).items_center().rounded(8).text_size(12).cursor_pointer()
+        .when(shown, (el) => el.bg(t.raised)).hover((s) => s.bg(t.hover))
+        .on_click(() => run("agent.focus", { terminal: h.terminal }))
+        .child(pic)
+        .child(div().flex_1().min_w(0).truncate().text_color(shown ? t.foreground : t.muted).child(h.name))
+        .when(h.terminal.includes("/"), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(h.terminal.split("/")[0])))
+        .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) })));
+  }
+
+  // A bot row (A4): fold slot, character, name in its ink over `role · model`, the agent's
+  // icon and the status mark. The main bot's is a raised card bordered in its ink; a planned
+  // bot's is dimmed and dashed, asleep, with its note and wave (A3).
+  botRow(r, tree, t, dark) {
+    const n = r.node, b = n.bot;
+    const main = r.kind === "main", planned = r.kind === "planned";
+    const ink = inkOf(b.look?.colour, dark);
+    const live = n.live;
+    if (live) this.order.push(live.terminal);
+    const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
+    const s = n.status === "error" ? "blocked" : n.status;
+    const project = { key: tree.key, machine: tree.machine };
+    const onClick = live
+      ? () => run("agent.focus", { terminal: live.terminal })
+      : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
+    const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
+      machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");
+    const size = main ? 30 : 26;
+    let row = h_flex().flex_1().min_w(0).gap(8).items_center()
+      .when(!planned, (el) => el.child(this.arrow(r, t)))
+      .child(planned ? div().flex_none().opacity(0.45).child(this.pet(b, "asleep", size, dark)) : this.pet(b, n.pose, size, dark))
+      .child(v_flex().flex_1().min_w(0).gap(1)
+        .child(h_flex().min_w(0).gap(5).items_center()
+          .child(div().min_w(0).truncate().text_size(main ? 14 : 13).font_weight(main ? 700 : 600).text_color(planned ? t.muted : ink).child(b.name))
+          .when(Boolean(live?.duplicate), (el) => el.child(div().id(`dup-${b.id}`).flex_none().text_size(10).text_color(t.blocked)
+            .tooltip("More than one pane carries this bot; the newest counts").child("×2")))
+          .when(Boolean(n.warning), (el) => el.child(div().id(`warn-${b.id}`).flex_none().text_size(10).font_bold().text_color(t.blocked)
+            .tooltip(n.warning).child("!"))))
+        .child(div().min_w(0).truncate().text_size(11).text_color(planned ? t.dim : t.muted).child(second)))
+      .when(Boolean(tree.machine) && main, (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(tree.machine)));
+    if (planned) {
+      row = row.child(div().flex_none().px(7).py(2).rounded(999).border_1().border_color(t.border)
+        .text_size(10).font_semibold().text_color(t.muted).child(`Wave ${b.planned.wave}`));
+    } else {
+      row = row.child(this.agentIcon(n, main ? 16 : 15, t))
+        .child(live ? this.status(t, { status: s }) : div().w(13).flex_none());
+    }
+    const box = this.rowEvents(row, r, t, onClick, onMenu).rounded(main ? 10 : 8);
+    const styled = main
+      ? box.mt(3).py(7).pl(2).pr(8).bg(t.raised).border_1().border_color(`${ink}40`)
+      : planned
+        ? box.my(2).ml(18).py(5).px(8).border_1().border_color(t.border).border_dashed()
+        : box.py(5).pl(2).pr(8).border_1().border_color(`${t.chrome}00`)
+          .when(Boolean(live) && focused()?.agent === live?.terminal, (el) => el.bg(t.selected)).hover((st) => st.bg(t.hover));
+    return h_flex().items_stretch().children(this.guides(r.guides, t)).child(styled);
+  }
+
+  // A project with no open space (A8): its tree at the end, under a plain header.
+  projectHeader(tree, t) {
+    return h_flex().id(`project-${projectId(tree)}`).h(28).mt(6).px(8).gap(8).items_center().text_size(12).text_color(t.dim)
+      .child(svg("mods/workspace-chrome/folder.svg").size(13).flex_none())
+      .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(base(tree.key)))
+      .when(Boolean(tree.machine), (el) => el.child(div().flex_none().text_size(10).child(tree.machine)));
   }
 
   checkNew(cx) {
@@ -460,10 +696,58 @@ export default class Spaces extends View {
         });
       }
       const seen = JSON.stringify(found);
-      if (seen === this.botsSeen) return;
-      this.botsSeen = seen;
-      this.bots = found;
+      if (seen !== this.botsSeen) {
+        this.botsSeen = seen;
+        this.bots = found;
+        cx.notify();
+      }
+      this.readBotArgv(cx);
+    });
+  }
+
+  // The agents' config files (models.js configPaths) for each bot's default model; redraw on
+  // a change only.
+  loadModelTexts(cx) {
+    cx.spawn(async (cx) => {
+      let texts;
+      try { texts = await modelTexts(); } catch { return; }
+      const seen = JSON.stringify(texts);
+      if (seen === this.modelTextsSeen) return;
+      this.modelTextsSeen = seen;
+      this.modelTexts = texts;
       cx.notify();
+    });
+  }
+
+  // A12: each live bot pane's foreground command line, for the model it runs. rows.js
+  // argvToAsk picks the panes: labelled with a known bot, no `foreground.argv` in the row, not
+  // read already for the same pane (created_ms), three at most. Asked after each discovery
+  // (on load, the 15-second timer and a .herdr change), never while drawing. A failed ask
+  // keeps what was read before; a pane gone is dropped.
+  readBotArgv(cx) {
+    if (this.argvBusy) return;
+    const rows = terminals();
+    const { ask, gone } = argvToAsk(rows, knownBots(this.bots), this.argvOf);
+    let changed = gone.length > 0;
+    for (const a of gone) this.argvOf.delete(a);
+    if (!ask.length) { if (changed) cx.notify(); return; }
+    const createdOf = new Map(rows.map((k) => [k.address, k.created_ms ?? null]));
+    this.argvBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        for (const address of ask) {
+          let entry;
+          try {
+            const r = await hc(["get", address, "--json"]);
+            if (r.code !== 0) continue;
+            entry = argvEntry(JSON.parse(r.stdout), createdOf.get(address));
+          } catch { continue; }
+          if (!entry.argv) continue;
+          if (JSON.stringify(entry.argv) !== JSON.stringify(this.argvOf.get(address)?.argv)) changed = true;
+          this.argvOf.set(address, entry);
+        }
+      } finally { this.argvBusy = false; }
+      if (changed) cx.notify();
     });
   }
 
@@ -572,8 +856,15 @@ export default class Spaces extends View {
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
-    // A space's row, then (expanded) its agents beneath it.
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.agentRows(r.w, r.tree, t)]);
+    // A8: each project's bot tree after the first space row of it, in this order; a project
+    // with no space shown, at the end under a plain header. None while the sidebar is narrow.
+    const dark = isDark(t.chrome);
+    const { at, rest } = placeTrees(rows.map((r) => r.w.id), this.trees);
+    const byId = new Map(this.trees.map((tr) => [projectId(tr), tr]));
+    const treeAfter = (r) => (at.has(r.w.id) ? this.botBlock(byId.get(at.get(r.w.id)), t, dark) : []);
+    const tail = collapsed ? [] : rest.flatMap((id) => [this.projectHeader(byId.get(id), t), ...this.botBlock(byId.get(id), t, dark)]);
+    // A space's row, then (expanded) its agents beneath it, then the bot tree placed there.
+    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.agentRows(r.w, r.tree, t), ...treeAfter(r)]);
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -581,9 +872,9 @@ export default class Spaces extends View {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.flatMap(draw);
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : [...rows.flatMap(draw), ...tail];
     const machineNames = [null, ...remote];
-    return machineNames.flatMap((m) => {
+    return [...machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const machine = this.machines.find(k => k.name === m);
       const connected = !m || machine?.state === "connected";
@@ -607,7 +898,7 @@ export default class Spaces extends View {
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/workspace-chrome/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
       return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
-    });
+    }), ...tail];
   }
 
   // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
@@ -743,6 +1034,7 @@ export default class Spaces extends View {
     }
     if (changed) setShared("space.colors", kept);
     this.prepareAgents();
+    this.prepareBots();
     const list = this.grouped(t, collapsed);
     // agent.next / agent.prev follow the rows; ones not shown come after, in model order.
     setAgentOrder(this.order);
@@ -759,8 +1051,6 @@ export default class Spaces extends View {
         .child(h_flex().id("bot-new").w_full().h(34).px(10).gap(10).items_center().rounded(8).cursor_pointer()
           .bg(t.raised).text_color(t.foreground).text_size(13).font_semibold().hover((s) => s.bg(t.hover))
           .on_click(() => openBotForm({ form: "create" }))
-          // Right-click: this computer's bots, to Edit or Start (the bot rows come in Group 3).
-          .on_mouse_down("right", () => openBotForm({ form: "pick" }, "popup"))
           .child(div().text_size(15).child("+")).child("New bot"))));
   }
 }

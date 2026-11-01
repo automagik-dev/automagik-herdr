@@ -7,14 +7,17 @@
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
-import { accessSync, constants, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { accessSync, constants, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync,
+  unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
-  defaultLook, descendantsOf, effectiveLead, mainBotOf, newBotId, newCategoryId, parseBots, plannedOf, projectKeyOf } from "../model.js";
+  PROJECTS_FILE, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId, parseBots,
+  plannedOf, projectKeyOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, hcName, isClaude, labelMoves, paneOf, parentArgs, placementFrom, rowsOf, startArgs,
   startRefusal, youngPane } from "../launchArgs.js";
 import { installHook } from "../briefingText.mjs";
@@ -150,6 +153,68 @@ export function writeBotsFile(key, raw, expected, io = fsIo) {
     if (e?.code === "EEXIST") throw new CliError(`Not saved: ${path} appeared since it was read. Run the command again.`);
     throw new CliError(`Not saved: ${e?.message ?? e}`);
   }
+}
+
+// A lock beside the project list: made exclusively (wx) holding its holder's pid and a token,
+// so one CLI at a time edits the list, and a holder removes only its own lock. Waited for up
+// to LOCK_WAIT ms; one older than LOCK_STALE ms (a CLI killed mid-write) is taken over.
+// Without it, two CLIs that read the list at once each write their own copy.
+const LOCK_WAIT = 3000;
+const LOCK_STALE = 10_000;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const stale = (path) => { try { return Date.now() - statSync(path).mtimeMs > LOCK_STALE; } catch { return false; } };
+
+// A stale lock is moved aside first, so of two waiters only one takes it. Aside, it is checked
+// again: a lock made fresh in between goes back (by link, which never replaces a newer one).
+function takeOverStale(lock) {
+  if (!stale(lock)) return;
+  const aside = `${lock}.${process.pid}`;
+  try { renameSync(lock, aside); } catch { return; } // another waiter moved it first
+  if (!stale(aside)) { try { linkSync(aside, lock); } catch { /* a newer lock is there */ } }
+  try { unlinkSync(aside); } catch { /* gone already */ }
+}
+
+function withLock(lock, fn) {
+  const token = `${process.pid} ${randomUUID()}`;
+  const until = Date.now() + LOCK_WAIT;
+  for (;;) {
+    try { writeFileSync(lock, token, { flag: "wx" }); break; } catch (e) {
+      if (e?.code !== "EEXIST") throw e;
+      takeOverStale(lock);
+      if (Date.now() > until) throw new Error(`${lock} is held by another herdr-bots`);
+      pause(5 + Math.floor(Math.random() * 20));
+    }
+  }
+  try { return fn(); } finally {
+    try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
+  }
+}
+
+/**
+ * Adds a project to the list the sidebar reads beside its own remembered projects
+ * (model.js PROJECTS_FILE, in the app home outside mods/, so the write reloads nothing), so a
+ * project managed from here shows in the sidebar with no space open on it. Under a lock:
+ * read, add, write beside, rename, read again; tried three times until the key is there.
+ * No app home (Herdr isn't set up here): nothing is written. A failure only warns: the
+ * command's own work is done.
+ */
+export function listProject(key, dir = appHome()) {
+  const path = `${dir}/${PROJECTS_FILE}`;
+  const read = () => { try { return readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return null; throw e; } };
+  let why = "it was still missing after three writes";
+  if (!existsSync(dir)) return false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      withLock(`${path}.lock`, () => {
+        const text = read();
+        const next = withListedProject(text, key);
+        if (next !== text) fsIo.replace(path, next);
+      });
+      if (listedProjects(read()).includes(key)) return true;
+    } catch (e) { why = e?.message ?? String(e); }
+  }
+  process.stderr.write(`herdr-bots: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${why}\n`);
+  return false;
 }
 
 /** A bot by id, else by its name (exact, then ignoring case), unique in the project. */
@@ -373,11 +438,16 @@ export function entryFrom(opts, base, project, { creating }) {
 
 async function projectFor(opts) { return loadProject(await keyOf(opts.project ?? process.cwd())); }
 
+// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
 function rememberedKeys() {
+  let keys = [];
   try {
     const list = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}")?.["spaces-agents.projects"];
-    return Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
-  } catch { return []; }
+    keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
+  } catch { /* unreadable: none */ }
+  let listed = [];
+  try { listed = listedProjects(readText(`${appHome()}/${PROJECTS_FILE}`)); } catch { /* unreadable: none */ }
+  return [...new Set([...keys, ...listed])];
 }
 
 async function cmdLs(opts) {
@@ -432,6 +502,7 @@ async function cmdCreate(opts) {
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   writeBotsFile(project.key, applyBotEdit(project.raw, entry), project.text);
+  listProject(project.key);
   return opts.json ? { id, project: project.key, bot: entry } : id;
 }
 
@@ -441,6 +512,7 @@ async function cmdEdit(opts, [ref]) {
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
   writeBotsFile(project.key, applyBotEdit(project.raw, entry), project.text);
+  listProject(project.key);
   return opts.json ? { id: bot.id, project: project.key, bot: entry } : `${entry.name} (${bot.id}) saved.`;
 }
 
@@ -479,6 +551,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   const save = () => {
     if (project.text === null) throw new CliError("This project has no bots yet; create its main bot first.");
     writeBotsFile(project.key, raw, project.text);
+    listProject(project.key);
   };
   const find = (ref) => {
     const hit = findCategory(project.file, ref);
@@ -546,12 +619,16 @@ async function placementOf(key) {
 }
 
 async function cmdStart(opts, [ref]) {
+  if (opts.tab && !opts.space) throw new CliError("--tab needs --space (the space that tab is in).", 2);
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
   const bot = findBot(file, ref);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
+  // launch.js checks the folder Start launches in against the project (attachRefusal on
+  // keyOf(projectKey)). Here that folder is `key`, which keyOf already returned, and a key
+  // keys to itself, so the check can't refuse: it is left out, not forgotten.
   // One terminal plays a bot: a live one is reported, never a second start. So is a pane
   // started under a minute ago whose agent may not be in front yet (launch.js' grace).
   const mine = await panesOf(bot.id, { localOnly: true });
@@ -581,6 +658,7 @@ async function cmdStart(opts, [ref]) {
   let terminal = null;
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
+  listProject(key);
   if (!place) {
     hook.warnings.push(`No open Herdr space shows ${key}, so Herdr gives ${terminal} no pane: it runs, unseen. `
       + `Watch it with hc attach ${terminal}. To give the next start a pane, open a space on ${key} first, or pass --space <id> (herdr-app ls lists the ids).`);
@@ -629,6 +707,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const hook = claude ? await writeBriefingHook(bot, sessionFolder) : { written: false, warnings: [] };
   if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, open /hooks once in that session to load it.`);
   report(hook.warnings);
+  listProject(key);
   const movedFrom = holders.filter((h) => h !== address);
   return opts.json ? { id: bot.id, terminal: address, movedFrom, hookWritten: hook.written, warnings: hook.warnings }
     : `${bot.name} is now ${address}${movedFrom.length ? ` (label moved from ${movedFrom.join(", ")})` : ""}.`;
