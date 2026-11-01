@@ -87,12 +87,13 @@ model, its agent's icon and its status. Right-click a bot to edit, start or atta
 build and run their own teams.
 
 ```text
-automagik-herdr ls [--all]                 bots: kind, lead, category, planned, agent, model, pane, status
+automagik-herdr ls [--all]                 bots: kind, lead, category, rank, planned, agent, model, pane, status
 automagik-herdr show <bot>                 one bot in full
 automagik-herdr create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
-       [--character C --colour K | --omni] [--model M] [--planned-wave N [--planned-note T]]
-automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category]
+       [--character C --colour K | --omni] [--model M] [--rank R]
+       [--planned-wave N [--planned-note T]]
+automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
@@ -138,7 +139,25 @@ updates: it shows the tarball is the one the release lists, not who published th
 
 ## Pane labels
 
-A bot's pane carries the hc label `bot=<id>`.
+A bot's pane carries hc labels that say which bot it is, so tools such as herdr-meter can
+stamp events with them (`actor.bot`, `actor.role`, `actor.squad`):
+
+| Label | Value |
+|---|---|
+| `bot` | the bot's id |
+| `role` | `main` for the main bot; `captain` for a bot that leads other bots; otherwise its `rank`. No rank, no label. |
+| `category` | the category it shows under (a deeper member: its chain's category), when there is one |
+| `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, and `automagik-herdr.squad=<that squad>` records the copy. |
+
+Start sets them. Attach leaves the pane matching its bot: a `role=` or `category=` the bot
+doesn't have (left by the pane's last bot) comes off. An edit that changes a bot's rank, lead or category, or a lead's
+captain status, rewrites the labels on the live panes of the bots it changes; a squad this
+pack copied (the pane's `squad` still equals its `automagik-herdr.squad`) follows a lead
+change, or comes off when the new lead's pane has none. Detach takes off `bot`, any `role`
+and any `category` (nothing else sets those two today), the `automagik-herdr.squad` mark,
+and `squad` only while it still equals the mark: a squad set after the copy stays. Only panes
+on this computer are labelled. The lead's pane is its live one with an agent in front, the
+newest when there are several.
 
 ## Reference
 
@@ -161,15 +180,31 @@ A bot's pane carries the hc label `bot=<id>`.
 }
 ```
 
-- Exactly one bot is `main`; every other bot is a `member`. A member without `lead` reports
-  to the main bot. A lead that is missing, planned or part of a cycle counts as the main bot,
-  and the row shows a warning.
-- `category` applies to bots that report to the main bot. Category order, titles and
-  subtitles are edited by hand.
-- `planned` marks a bot that waits for a later wave. It needs no `agent` and can't start.
-- `model` is an optional pin from the agent's known models.
-- In git, the file lives in the main checkout only, never in a worktree. Outside git, a
-  folder belongs to the nearest folder above it with a `.herdr/bots.json`.
+- Exactly one bot has `kind: "main"`. Every other bot is a `member`.
+- `lead` is the id of the bot a member reports to. Without one, the member reports to the
+  main bot. A lead that is missing, planned or part of a cycle counts as the main bot, and
+  the row shows a warning.
+- `category` places a bot that reports to the main bot under a category header. Bots
+  deeper down show under their lead and ignore it. A category id is a lowercase slug
+  (`a-z`, `0-9`, single dashes, like `quality-gate`), since it goes into a pane label. A new
+  id must be one (`category add --id`, the form's new category). An id already in the file
+  that isn't one (`Knowledge`, written by hand) keeps working, with a warning, and gives its
+  bots no `category=` label.
+- `planned` marks a bot that is not started yet. It needs no `agent`.
+- `instructions` holds at most 4,000 characters.
+- `model` is an optional pin, picked from the agent's known models (never typed freely).
+  Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
+  free-text model) is skipped by the sidebar with a note and refused by the CLI. A running
+  bot shows the model its pane runs: the one its command line names, else the agent's own
+  configured default. A bot that isn't running shows no model in its sidebar row
+  ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
+- `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `integrator`, `pm`,
+  `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
+  rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
+  to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
+  for team members; `automagik-herdr create|edit --rank R` sets one (`--rank=` clears it).
+- Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
+  `bot=<id>`.
 
 ### The briefing hook (Claude bots)
 

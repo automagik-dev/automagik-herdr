@@ -5,7 +5,7 @@
 // the sidebar preview's second line. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`,
 // so `node --test` runs it. Apache-2.0.
 
-import { MAX_INSTRUCTIONS, OMNI_LOOK, defaultLook, descendantsOf, effectiveLead, mainBotOf, newCategoryId, plannedOf } from "./model.js";
+import { MAX_INSTRUCTIONS, OMNI_LOOK, RANKS, defaultLook, descendantsOf, effectiveLead, mainBotOf, newCategoryId, plannedOf } from "./model.js";
 import { defaultModelFrom, knownModelsFrom } from "./models.js";
 
 /** Waves the stepper offers (the mockup's 1..9); a stored later wave stays reachable. */
@@ -56,7 +56,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
       character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
       role: str(bot.role), instructions: str(bot.instructions), agent: str(bot.agent), pin: str(bot.model),
       lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
-      planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
+      rank: str(bot.rank), planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
       storedPlanned: planned,
     };
   }
@@ -64,7 +64,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
   return {
     mode: "create", id, name: "", kind: file && mainBotOf(file) ? "member" : "main",
     character: look.character, colour: look.colour, role: "", instructions: "", agent, pin: "",
-    lead: "", category: "", catTitle: "", catSub: "", planned: false, wave: 1, note: "", storedPlanned: null,
+    lead: "", category: "", catTitle: "", catSub: "", rank: "", planned: false, wave: 1, note: "", storedPlanned: null,
   };
 }
 
@@ -221,6 +221,9 @@ export function problemOf(state, { key = null, loadError = null, file = null, in
   }
   const { byMain } = placeOf(state, file);
   if (byMain && state.category === NEW_CATEGORY && !state.catTitle.trim()) return "Give the new category a title.";
+  if (state.kind === "member" && state.rank && !RANKS.includes(state.rank)) {
+    return `"${state.rank}" isn't a rank; pick one of ${RANKS.join(", ")}, or none.`;
+  }
   return null;
 }
 
@@ -234,8 +237,12 @@ export function entryOf(state, file) {
   const main = file ? mainBotOf(file) : null;
   const member = state.kind === "member";
   const newCat = byMain && state.category === NEW_CATEGORY;
+  // A16: a member's rank, "" clearing it; the main bot's entry leaves rank out, so a stored
+  // one stays (the form picks ranks for members only).
+  const rank = member ? { rank: state.rank ?? "" } : {};
   return {
     entry: {
+      ...rank,
       id: state.id, name: state.name.trim(), kind: state.kind,
       look: { character: state.character, colour: state.colour },
       role: state.role.trim(), instructions: state.instructions,
@@ -253,7 +260,7 @@ export function entryOf(state, file) {
  * The `automagik-herdr` line that does what the form will do (A11), shown live in the footer and
  * copied by Copy. Create: every chosen field, in the mockup's order. Edit: `edit <bot>` and
  * only what changed since `initial`, with the CLI's clearing spellings (--no-model,
- * --no-category, --unplanned). A new category is added first with `category add --id`, the
+ * --no-category, --unplanned, --rank=). A new category is added first with `category add --id`, the
  * id the create line names. The project is named with --project, so the line writes the
  * same file from any folder. Every value goes as `--option=<quoted>` (see opt). Instructions
  * go inline (the mockup's `--instructions-file -` would wait on stdin when pasted).
@@ -280,6 +287,7 @@ export function commandOf(state, { key = null, file = null, initial = null } = {
     if (state.role.trim()) parts.push(opt("role", state.role.trim()));
     if (state.kind === "member" && leadId) parts.push(opt("lead", leadId));
     if (byMain && categoryId) parts.push(opt("category", categoryId));
+    if (state.kind === "member" && state.rank) parts.push(opt("rank", state.rank));
     parts.push(opt("character", state.character), opt("colour", state.colour));
     if (state.pin) parts.push(opt("model", state.pin));
     if (state.planned) {
@@ -298,6 +306,7 @@ export function commandOf(state, { key = null, file = null, initial = null } = {
     if (byMain && (categoryId !== was.category || !wasPlace.byMain)) {
       parts.push(categoryId ? opt("category", categoryId) : "--no-category");
     }
+    if (state.kind === "member" && changed("rank")) parts.push(state.rank ? opt("rank", state.rank) : "--rank=");
     if (changed("character") || changed("colour")) parts.push(opt("character", state.character), opt("colour", state.colour));
     if (changed("pin") || (changed("agent") && was.pin)) parts.push(state.pin ? opt("model", state.pin) : "--no-model");
     if (!state.planned && was.planned) parts.push("--unplanned");
@@ -315,7 +324,7 @@ export function commandOf(state, { key = null, file = null, initial = null } = {
 export function editChanged(state, initial) {
   if (!initial) return true;
   return ["name", "kind", "character", "colour", "role", "instructions", "agent", "pin", "lead", "category",
-    "catTitle", "catSub", "planned", "wave", "note"].some((k) => state[k] !== initial[k]);
+    "catTitle", "catSub", "rank", "planned", "wave", "note"].some((k) => state[k] !== initial[k]);
 }
 
 // The mockup's six interface icons (mockup/create-form.dc.html), as whole SVG documents in a

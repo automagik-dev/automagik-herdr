@@ -380,7 +380,7 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().terminal, "t100");
   const run = runCall(s.calls());
-  assert.deepEqual(run, ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--no-parent",
+  assert.deepEqual(run, ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
     "--", "claude", "--model", "claude-opus-5-5"]);
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
@@ -475,9 +475,9 @@ test("attach moves the label: off the old pane first, then onto the new one; the
   const r = s.cli(["attach", "Genie", "t2", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.json().movedFrom, ["t1"]);
-  assert.deepEqual(labelCalls(s.calls()), [["label", "t1", "bot="], ["label", "t2", `bot=${ID.main}`]]);
+  assert.deepEqual(labelCalls(s.calls()), [["label", "t1", "bot="], ["label", "t2", `bot=${ID.main}`], ["label", "t2", "role=main"]]);
   const labels = Object.fromEntries(s.hcState().terminals.map((x) => [x.address, x.labels]));
-  assert.deepEqual(labels, { t1: {}, t2: { bot: ID.main } });
+  assert.deepEqual(labels, { t1: {}, t2: { bot: ID.main, role: "main" } });
   assert.ok(existsSync(join(sub, ".claude/settings.local.json")));
   assert.match(r.err, /open \/hooks once/);
 });
@@ -667,4 +667,168 @@ test("detach takes a removed bot's label off by its bare id; an unknown name is 
   // No bots.json at all: a bare id still works.
   rmSync(s.botsPath);
   assert.equal(s.cli(["detach", ID.dev]).code, 0);
+});
+
+// ---- A16: pane labels ----
+
+const labelsIn = (s) => Object.fromEntries(s.hcState().terminals.map((x) => [x.address, x.labels]));
+
+test("--rank on create and edit: checked against the set, '' clears it; show and ls --json carry it", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const bad = s.cli(["edit", "Dev", "--rank", "boss"]);
+  assert.equal(bad.code, 2);
+  assert.match(bad.err, /--rank is one of captain, dev, tester, reviewer, integrator, pm, owner/);
+  assert.equal(s.cli(["create", "--name", "Ana", "--agent", "claude", "--rank", "tester"]).code, 0);
+  assert.equal(s.bots().bots.find((b) => b.name === "Ana").rank, "tester");
+  assert.equal(s.cli(["edit", "Dev", "--rank", "reviewer"]).code, 0);
+  assert.equal(s.cli(["show", "Dev", "--json"]).json().rank, "reviewer");
+  assert.match(s.cli(["show", "Dev"]).out, /rank\s+reviewer/);
+  assert.equal(s.cli(["ls", "--json"]).json().projects[0].bots.find((b) => b.name === "Dev").rank, "reviewer");
+  assert.equal(s.cli(["edit", "Dev", "--rank", ""]).code, 0);
+  assert.equal("rank" in s.bots().bots.find((b) => b.name === "Dev"), false);
+  assert.equal(s.cli(["show", "Dev", "--json"]).json().rank, null);
+});
+
+test("start labels the pane: role from rank or captaincy, category, and the lead pane's squad, marked", (t) => {
+  const lead = term("t7", { bot: ID.cap });
+  lead.labels.squad = "memory";
+  const s = scene(t, { terminals: [lead] });
+  const f = team();
+  f.bots.find((b) => b.id === ID.dev).rank = "dev";
+  s.seed(f);
+  assert.equal(s.cli(["start", "Dev"]).code, 0);
+  const run = runCall(s.calls());
+  const labels = run.flatMap((w, i) => (run[i - 1] === "--label" ? [w] : []));
+  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "automagik-herdr.squad=memory"]);
+});
+
+test("attach labels the pane and keeps its own squad; detach takes off bot, role, category and only a copied squad", (t) => {
+  const lead = term("t7", { bot: ID.cap });
+  lead.labels.squad = "memory";
+  const own = term("t8", { cwd: "/x" });
+  own.labels.squad = "infra";
+  const s = scene(t, { terminals: [lead, own, term("t9", { cwd: "/x" })] });
+  const f = team();
+  f.bots.find((b) => b.id === ID.dev).rank = "tester";
+  s.seed(f);
+  for (const [address] of [["t8"], ["t9"]]) {
+    const st = s.hcState();
+    st.terminals.find((x) => x.address === address).foreground.cwd = s.project;
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  }
+  assert.equal(s.cli(["attach", "Dev", "t8"]).code, 0);
+  assert.deepEqual(labelsIn(s).t8, { squad: "infra", bot: ID.dev, role: "tester", category: "eng" });
+  // Moved to t9: t8 loses what Detach takes off, keeping its own squad; t9 copies the lead's.
+  assert.equal(s.cli(["attach", "Dev", "t9"]).code, 0);
+  assert.deepEqual(labelsIn(s).t8, { squad: "infra" });
+  assert.deepEqual(labelsIn(s).t9, { bot: ID.dev, role: "tester", category: "eng", squad: "memory", "automagik-herdr.squad": "memory" });
+  assert.equal(s.cli(["detach", "Dev"]).code, 0);
+  assert.deepEqual(labelsIn(s).t9, {});
+  // The captain's own squad stays on detach: this pack didn't put it there.
+  assert.equal(s.cli(["detach", "Captain"]).code, 0);
+  assert.deepEqual(labelsIn(s).t7, { squad: "memory" });
+});
+
+test("an edit relabels the live local panes it changes, the old and new leads included; a remote pane is never touched", (t) => {
+  const s = scene(t, { terminals: [
+    term("t1", { bot: ID.main }), term("t7", { bot: ID.cap }), term("t8", { bot: ID.dev }), term("far/t9", { bot: ID.dev }),
+  ] });
+  const f = team();
+  f.bots.find((b) => b.id === ID.cap).rank = "integrator";
+  s.seed(f);
+  // Labels as Start would have set them.
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t7").labels, { role: "captain", category: "eng" });
+  Object.assign(st.terminals.find((x) => x.address === "t8").labels, { category: "eng" });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  // Dev moves to the main bot, no category, rank dev: the captain leads nobody now.
+  const r = s.cli(["edit", "Dev", "--lead", "Genie", "--rank", "dev", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().relabelled.sort(), ["t7", "t8"]);
+  const labels = labelsIn(s);
+  assert.deepEqual(labels.t7, { bot: ID.cap, role: "integrator", category: "eng" });
+  assert.deepEqual(labels.t8, { bot: ID.dev, role: "dev" });
+  assert.deepEqual(labels["far/t9"], { bot: ID.dev });
+  assert.equal(labelCalls(s.calls()).some((c) => c[1].includes("/")), false);
+  // A change that moves no label: no label call.
+  const before = labelCalls(s.calls()).length;
+  assert.equal(s.cli(["edit", "Dev", "--role", "writes code"]).code, 0);
+  assert.equal(labelCalls(s.calls()).length, before);
+});
+
+test("category add --id takes slug ids only; a hand-written non-slug id stays usable, with no category label", (t) => {
+  const s = scene(t, { terminals: [term("t8", { bot: ID.dev })] });
+  s.seed(team());
+  const bad = s.cli(["category", "add", "--title", "Quality", "--id", "Quality Gate"]);
+  assert.equal(bad.code, 2);
+  assert.match(bad.err, /--id "Quality Gate" isn't a category id: a lowercase slug/);
+  assert.equal(s.cli(["category", "add", "--title", "Quality Gate!"]).code, 0);
+  assert.ok(s.bots().categories.some((c) => c.id === "quality-gate"));
+  // brain-v3 style: "Knowledge" written by hand. Edits of the file still work.
+  const f = team();
+  f.categories.push({ id: "Knowledge", title: "Knowledge" });
+  s.seed(f);
+  const r = s.cli(["edit", "Dev", "--lead", "Genie", "--category", "Knowledge", "--rank", "dev"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(s.bots().bots.find((b) => b.id === ID.dev).category, "Knowledge");
+  assert.equal(s.cli(["edit", "Captain", "--role", "still editable"]).code, 0);
+  // Its pane gets a role but no category= label.
+  assert.deepEqual(labelsIn(s).t8, { bot: ID.dev, role: "dev" });
+});
+
+test("a lead change moves the squad copied from the old lead, and leaves a pane's own squad", (t) => {
+  const cap = term("t7", { bot: ID.cap });
+  cap.labels.squad = "memory";
+  const main = term("t1", { bot: ID.main });
+  main.labels.squad = "core";
+  const dev = term("t8", { bot: ID.dev });
+  Object.assign(dev.labels, { squad: "memory", "automagik-herdr.squad": "memory" });
+  const s = scene(t, { terminals: [main, cap, dev] });
+  s.seed(team());
+  assert.equal(s.cli(["edit", "Dev", "--lead", "Genie"]).code, 0);
+  assert.deepEqual([labelsIn(s).t8.squad, labelsIn(s).t8["automagik-herdr.squad"]], ["core", "core"]);
+  // Its own squad (set after the copy) stays when the lead changes again.
+  const st = s.hcState();
+  st.terminals.find((x) => x.address === "t8").labels.squad = "ops";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["edit", "Dev", "--lead", "Captain"]).code, 0);
+  assert.equal(labelsIn(s).t8.squad, "ops");
+  // Detach keeps that squad and takes the mark off.
+  assert.equal(s.cli(["detach", "Dev"]).code, 0);
+  assert.deepEqual(labelsIn(s).t8, { squad: "ops" });
+});
+
+test("attach leaves the pane matching the bot: a stale role or category from its last bot comes off; an unmarked squad stays", (t) => {
+  const pane = term("t8", { cwd: "/x" });
+  Object.assign(pane.labels, { role: "captain", category: "old", squad: "ops" });
+  const s = scene(t, { terminals: [pane] });
+  s.seed(team()); // Dev: no rank, under the captain (category eng)
+  const st = s.hcState();
+  st.terminals[0].foreground.cwd = s.project;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["attach", "Dev", "t8"]).code, 0);
+  assert.deepEqual(labelsIn(s).t8, { squad: "ops", bot: ID.dev, category: "eng" });
+});
+
+test("start: an edit landing during hc run relabels the new pane; a failed relabel reaches stderr", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const edited = team();
+  edited.bots.find((b) => b.id === ID.dev).rank = "reviewer";
+  const st = s.hcState();
+  st.onRunWrite = { path: s.botsPath, text: `${JSON.stringify(edited, null, 2)}\n` };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const ok = s.cli(["start", "Dev"]);
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(labelsIn(s).t100.role, "reviewer");
+  // Again, with the new pane refusing the label.
+  s.seed(team());
+  const st2 = s.hcState();
+  st2.terminals = [];
+  st2.failLabel = "t101";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st2));
+  const r = s.cli(["start", "Dev"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /t101's labels role=reviewer weren't set\./);
 });

@@ -13,7 +13,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button } from "gpui-base";
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
-import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, parseBots, newBotId, applyBotEdit } from "./model.js";
+import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, applyBotEdit } from "./model.js";
 import { configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
@@ -597,7 +597,7 @@ export class BotForm {
         .child(h_flex().p(3).rounded(9).bg(t.surface ?? t.background).border_1().border_color(t.border)
           .child(seg("main", "Main bot")).child(seg("member", "Team member")))
         .when(Boolean(reason), (el) => el.child(div().flex_1().min_w(0).text_size(11).text_color(t.muted).child(reason))))
-      .when(member, (el) => el.child(this.reportsTo(v)).child(this.category(v)))
+      .when(member, (el) => el.child(this.reportsTo(v)).child(this.category(v)).child(this.rank(v)))
       .when(!member, (el) => el.child(div().text_size(12).text_color(t.muted)
         .child("The project's main bot: every other bot reports to it, directly or through a lead.")))
       .child(this.plannedBlock(v));
@@ -649,6 +649,20 @@ export class BotForm {
       .when(state.category === NEW_CATEGORY, (el) => el.child(h_flex().gap(8)
         .child(this.field(t, "bot-cat-title", this.inputs.catTitle, { h: 32, size: 12, px: 10, grow: true }))
         .child(this.field(t, "bot-cat-sub", this.inputs.catSub, { h: 32, size: 12, px: 10, grow: true })))));
+  }
+
+  // A16: an optional rank, the pane's role= label; none plus the closed set, as chips.
+  rank(v) {
+    const { t, state } = v;
+    const pick = (rank) => (cx) => this.set({ rank }, cx);
+    return h_flex().gap(12).items_start()
+      .child(div().w(84).flex_none().pt(6).text_size(12).text_color(t.foreground).child("Rank"))
+      .child(v_flex().flex_1().min_w(0).gap(6)
+        .child(h_flex().flex_wrap().gap(6)
+          .child(this.chip(t, "bot-rank-none", "None", pick(""), { on: !state.rank }))
+          .children(RANKS.map((r) => this.chip(t, `bot-rank-${r}`, r, pick(r), { on: state.rank === r }))))
+        .child(div().text_size(11).text_color(t.muted)
+          .child("Optional; the pane's role= label. The main bot is role=main, and a bot others report to is captain, automatically.")));
   }
 
   plannedBlock(v) {

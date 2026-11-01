@@ -5,8 +5,9 @@
 // No `fs/promises` here: Herdr's writes only under its app home, and has no access().
 // Files go through readTextFile/writeTextFile, folders through exec.
 
-import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome } from "herdr";
-import { BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
+import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
+import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
+import { relabel, relabelPlan } from "./launchArgs.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "spaces-agents.projects";
@@ -152,10 +153,12 @@ export async function discoverProjects() {
  * that can't be shown, and writing them would delete those entries. `expected` is required:
  * the text read (null when there was no file); a file changed since rejects (writeTextFile's
  * stale-snapshot rule). A file checkBots faults is refused before anything is written.
+ * After an edit, the labels of the changed bots' live local panes follow (relabelLocal),
+ * without the save waiting for them: resolves with { relabel }, that work's promise.
  */
 export async function writeBots(projectKey, file, expected) {
   if (expected === undefined) throw new Error("writeBots: pass the text the edit started from (null for a new file)");
-  const errors = checkBots(file);
+  const errors = checkBots(file, expected);
   if (errors.length) throw new Error(`Not saved: ${errors.join("; ")}`);
   // writeTextFile isn't documented to make folders; Herdr's fs writes only in its home.
   if (expected === null) {
@@ -166,6 +169,35 @@ export async function writeBots(projectKey, file, expected) {
   await writeTextFile(under(projectKey, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
   keys.clear(); // a folder outside git may belong to this project now
   rememberProject(projectKey, null);
+  // Not awaited: the save is done; the labels follow on their own (A16).
+  return { relabel: expected === null ? Promise.resolve({ done: [], failed: [] }) : relabelLocal(expected, file) };
+}
+
+/**
+ * A16: after an edit (the form's save, any writeBots), the live panes on this computer of
+ * every bot whose labels changed (rank, lead, category, a lead's captain status) get them
+ * rewritten by launchArgs.js relabel. Another machine's panes are never touched. Never
+ * rejects: panes left unlabelled are named in one notice. Resolves relabel's { done, failed }.
+ */
+export async function relabelLocal(beforeText, afterRaw) {
+  try {
+    const plan = relabelPlan(parseBots(beforeText).file, parseBots(JSON.stringify(afterRaw)).file);
+    if (!plan.length) return { done: [], failed: [] };
+    const io = {
+      rows: async (id) => terminals().filter((t) => t?.state === "live" && typeof t.address === "string" && !t.address.includes("/")
+        && t.labels?.[BOT_LABEL] === id),
+      label: async (address, words) => (await hc(["label", address, ...words])).code === 0,
+    };
+    const out = await relabel(plan, io);
+    if (out.failed.length) {
+      notify({ title: "Bots", level: "warning", timeout: 15000,
+        body: `Saved, but these panes' labels weren't updated: ${out.failed.join(", ")}. Edit the bot again, or Detach and Attach it, to retry.` });
+    }
+    return out;
+  } catch (e) {
+    notify({ title: "Bots", level: "warning", timeout: 15000, body: `Saved, but the panes' labels weren't updated: ${e?.message ?? e}` });
+    return { done: [], failed: [] };
+  }
 }
 
 /**

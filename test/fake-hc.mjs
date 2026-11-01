@@ -68,6 +68,8 @@ switch (words[0]) {
     state.next = (state.next ?? 100) + 1;
     state.terminals.push({ address, name, cwd, labels, parent, state: "live", created_ms: Date.now(),
       foreground: { argv, cwd }, status: { app: argv[0] === "claude" ? "claude-code" : argv[0], state: "working" } });
+    // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
+    if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
     out({ address });
     break;
