@@ -16,6 +16,7 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
+import { ensureTheme, themeSettled } from "./theme.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
@@ -143,6 +144,7 @@ export default class Spaces extends View {
     cx.timer.every(2500, (cx) => this.scanHermes(cx));
     cx.timer.every(15000, cx => {
       this.refreshMachines(cx); this.loadExtra(cx); this.refreshBots(cx); this.loadModelTexts(cx);
+      if (!themeSettled()) this.applyTheme(cx); // Herdr may list a copied theme only later
       this.petsFailed.clear(); // a picture whose write failed is tried again at the next render
     });
     // `git status` walks the whole tree, on another machine a process there:
@@ -151,6 +153,8 @@ export default class Spaces extends View {
     // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
     // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js).
     this.updates = { node: null };
+    // The Automagik theme, selected once (theme.js): now, then on the 15-second timer until done.
+    this.applyTheme(cx);
     cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
     // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
@@ -380,6 +384,17 @@ export default class Spaces extends View {
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
+  }
+
+  // Copies the Automagik themes into the app home when absent, and selects them the first
+  // time only (theme.js). Never an error to the person: it is tried again on the timer.
+  applyTheme(cx) {
+    if (this.themeBusy) return;
+    this.themeBusy = true;
+    cx.spawn(async () => {
+      try { await ensureTheme(); } catch {}
+      this.themeBusy = false;
+    });
   }
 
   // One update look through `node <pack>/update.mjs check` (Herdr's runtime has no fetch),

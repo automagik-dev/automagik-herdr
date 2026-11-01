@@ -16,6 +16,8 @@ export const terminals = () => state.terminals;
 export const focused = () => state.focused;
 export const knownAgents = async () => state.agents;
 export function run(name, args) { state.runs.push([name, args]); return null; }
+// The theme list app.theme can use (theme.js), as Herdr's themes() answers it.
+export const themes = () => state.themeList ?? [];
 export async function hc(args) { state.hcCalls.push(args); return state.hcAnswer(args); }
 
 // The briefing hook (launch.js afterBind): the app home it computes the script path from,
