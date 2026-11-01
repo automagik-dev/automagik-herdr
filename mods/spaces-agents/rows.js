@@ -238,6 +238,24 @@ export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
   return (n.live ? [b.role, model] : ["not running", b.role]).filter(Boolean).join(" · ");
 }
 
+/**
+ * Which bot panes' command lines to read with `hc get` (A12), from `terminals()` rows:
+ * live, labelled with a `known` bot, and not carrying `foreground.argv`. A pane already in
+ * `cached` (address -> { argv, created }) with the same `created_ms` is skipped: a bot pane
+ * runs the command it was started with. At most `max` per call; the rest wait for the next.
+ * Returns { ask: addresses, gone: cached addresses no longer wanted }.
+ */
+export function argvToAsk(terminals, known, cached = new Map(), max = 3) {
+  const rows = (terminals ?? []).filter((k) => k?.address && k.state === "live" && known.has(k.labels?.[BOT_LABEL])
+    && !Array.isArray(k.foreground?.argv));
+  const wanted = new Set(rows.map((k) => k.address));
+  const ask = rows.filter((k) => {
+    const hit = cached.get(k.address);
+    return !hit || hit.created !== (k.created_ms ?? null);
+  }).map((k) => k.address).slice(0, max);
+  return { ask, gone: [...cached.keys()].filter((a) => !wanted.has(a)) };
+}
+
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */
 export function knownBots(projects) {
   return new Set((projects ?? []).flatMap((p) => p.file?.bots?.map((b) => b.id) ?? []));

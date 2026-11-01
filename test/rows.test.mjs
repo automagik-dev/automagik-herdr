@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine,
+  secondLine, argvToAsk,
 } from "../mods/spaces-agents/rows.js";
 import { parseBots } from "../mods/spaces-agents/model.js";
 
@@ -214,4 +214,22 @@ test("liveFrom and buildTree carry the live pane's foreground command line when 
   const cap = tree.categories.find((c) => c.id === "eng").bots.find((n) => n.bot.id === "b-captaincap");
   assert.deepEqual(cap.argv, ["claude", "--model", "opus"]);
   assert.equal(tree.main.argv, null);
+});
+
+test("argvToAsk: live known-bot panes without a command line, not read for the same pane, three at most", () => {
+  const known = new Set(["b-a", "b-b", "b-c", "b-d", "b-e"]);
+  const rows = [
+    T("t1", { labels: { bot: "b-a" }, created_ms: 10 }),
+    T("t2", { labels: { bot: "b-b" }, created_ms: 20 }),
+    T("t3", { labels: { bot: "b-c" }, foreground: { argv: ["claude"] } }), // the row has it
+    T("t4", { labels: { bot: "b-zz" } }), // not a known bot
+    T("t5", { labels: { bot: "b-d" }, state: "exited" }),
+    T("box/t6", { labels: { bot: "b-d" }, created_ms: 60 }),
+    T("t7", { labels: { bot: "b-e" }, created_ms: 70 }),
+  ];
+  assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [] });
+  // Read already for the same pane: skipped; a new pane at an old address: asked again.
+  const cached = new Map([["t1", { argv: ["claude"], created: 10 }], ["t2", { argv: ["claude"], created: 19 }], ["t9", { argv: ["x"], created: 1 }]]);
+  assert.deepEqual(argvToAsk(rows, known, cached), { ask: ["t2", "box/t6", "t7"], gone: ["t9"] });
+  assert.deepEqual(argvToAsk(rows, known, cached, 1).ask, ["t2"]);
 });

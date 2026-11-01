@@ -116,7 +116,8 @@ The shape (`version` 1):
   Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
   free-text model) is skipped by the sidebar with a note and refused by the CLI. A running
   bot shows the model its pane runs: the one its command line names, else the agent's own
-  configured default. A bot that isn't running shows its pin, else that default.
+  configured default. A bot that isn't running shows no model in its sidebar row
+  ("not running · role"), while `herdr-bots ls` and `show` print its pin, else that default.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 

@@ -19,7 +19,7 @@ import { BotForm } from "./create.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -195,7 +195,8 @@ export default class Spaces extends View {
     this.wakeAt = null;
     // The model a bot row shows (A12, rows.js secondLine): the agents' own config files, read
     // now and on the 15-second timer, and each live bot pane's foreground command line by
-    // address, read with hc get after each bot discovery when terminals() didn't carry it.
+    // address ({ argv, created }), read with hc get after each bot discovery when terminals()
+    // didn't carry it.
     this.modelTexts = {};
     this.argvOf = new Map();
     this.loadModelTexts(cx);
@@ -400,12 +401,21 @@ export default class Spaces extends View {
             const had = await fs.readFile(path, "utf8").catch(() => null);
             if (had !== svg) await fs.writeFile(path, svg);
             this.pets.add(file);
-          } catch { this.petsFailed.add(file); }
+          } catch (e) { this.petsFailed.add(file); this.petsTrouble(e); }
         }
-      } catch { for (const [file] of wanted) this.petsFailed.add(file); }
+      } catch (e) { for (const [file] of wanted) this.petsFailed.add(file); this.petsTrouble(e); }
       this.petsBusy = false;
       cx.notify();
     });
+  }
+
+  // Pictures that can't be written: said once (the first failure), naming the folder; they
+  // are tried again on the 15-second timer either way.
+  petsTrouble(e) {
+    if (this.petsWarned) return;
+    this.petsWarned = true;
+    notify({ title: "Bots", level: "warning", timeout: 15000,
+      body: `Couldn't write bot pictures in ${appHome()}/${PETS} (${e?.message ?? e}). Bots show without them until it works; it is tried again every 15 seconds.` });
   }
 
   // A bot's character in its pose; until its file is written, an empty box the same size.
@@ -511,7 +521,7 @@ export default class Spaces extends View {
     const ink = inkOf(b.look?.colour, dark);
     const live = n.live;
     if (live) this.order.push(live.terminal);
-    const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a) ?? null });
+    const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     const onClick = live
@@ -709,19 +719,19 @@ export default class Spaces extends View {
     });
   }
 
-  // A12: each live bot pane's foreground command line, for the model it runs. terminals()
-  // rows that carry `foreground.argv` need nothing; any other live terminal labelled with a
-  // known bot is asked once per discovery (on load, the 15-second timer and a .herdr change),
-  // never while drawing. A failed ask keeps what was read before.
+  // A12: each live bot pane's foreground command line, for the model it runs. rows.js
+  // argvToAsk picks the panes: labelled with a known bot, no `foreground.argv` in the row, not
+  // read already for the same pane (created_ms), three at most. Asked after each discovery
+  // (on load, the 15-second timer and a .herdr change), never while drawing. A failed ask
+  // keeps what was read before; a pane gone is dropped.
   readBotArgv(cx) {
     if (this.argvBusy) return;
-    const known = knownBots(this.bots);
-    const ask = terminals().filter((k) => k?.address && k.state === "live" && known.has(k.labels?.[BOT_LABEL])
-      && !Array.isArray(k.foreground?.argv)).map((k) => k.address);
-    const wanted = new Set(ask);
-    let changed = false;
-    for (const a of this.argvOf.keys()) if (!wanted.has(a)) { this.argvOf.delete(a); changed = true; }
+    const rows = terminals();
+    const { ask, gone } = argvToAsk(rows, knownBots(this.bots), this.argvOf);
+    let changed = gone.length > 0;
+    for (const a of gone) this.argvOf.delete(a);
     if (!ask.length) { if (changed) cx.notify(); return; }
+    const createdOf = new Map(rows.map((k) => [k.address, k.created_ms ?? null]));
     this.argvBusy = true;
     cx.spawn(async (cx) => {
       try {
@@ -732,7 +742,8 @@ export default class Spaces extends View {
             if (r.code === 0) argv = JSON.parse(r.stdout)?.foreground?.argv ?? null;
           } catch { continue; }
           if (!Array.isArray(argv)) continue;
-          if (JSON.stringify(argv) !== JSON.stringify(this.argvOf.get(address))) { this.argvOf.set(address, argv); changed = true; }
+          if (JSON.stringify(argv) !== JSON.stringify(this.argvOf.get(address)?.argv)) changed = true;
+          this.argvOf.set(address, { argv, created: createdOf.get(address) ?? null });
         }
       } finally { this.argvBusy = false; }
       if (changed) cx.notify();
