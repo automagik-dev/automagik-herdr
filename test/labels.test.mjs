@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   paneLabels, roleOf, labelWords, relabelWords, detachWords, relabelPlan, labelMoves, startArgs, SQUAD_MARK,
+  relabel, leadPane, attachWords,
 } from "../mods/spaces-agents/launchArgs.js";
 import { parseBots, effectiveCategory } from "../mods/spaces-agents/model.js";
 
@@ -48,23 +49,25 @@ test("paneLabels: bot, role, category; a pane's squad is kept; else the lead pan
   assert.deepEqual(paneLabels(f, ID.test), { bot: ID.test, category: "eng" }); // no rank: no role
   assert.deepEqual(paneLabels(f, ID.pm), { bot: ID.pm, role: "pm" }); // unknown category: none
   // Squad from the lead's pane, marked as copied; never over the pane's own.
-  assert.deepEqual(paneLabels(f, ID.dev, {}, { squad: "memory" }), { bot: ID.dev, role: "dev", category: "eng", squad: "memory", [SQUAD_MARK]: "1" });
+  assert.deepEqual(paneLabels(f, ID.dev, {}, { squad: "memory" }), { bot: ID.dev, role: "dev", category: "eng", squad: "memory", [SQUAD_MARK]: "memory" });
   assert.deepEqual(paneLabels(f, ID.dev, { squad: "infra" }, { squad: "memory" }), { bot: ID.dev, role: "dev", category: "eng" });
   assert.deepEqual(paneLabels(f, ID.dev, {}, { role: "captain" }), { bot: ID.dev, role: "dev", category: "eng" }); // the lead has none
 });
 
 test("startArgs carries the labels after the bot label, skipping empty ones", () => {
   const args = startArgs({ botId: ID.dev, name: "dev", cwd: "/p", parent: ["--no-parent"], argv: ["claude"],
-    labels: { bot: ID.dev, role: "dev", category: "", squad: "memory", [SQUAD_MARK]: "1" } });
+    labels: { bot: ID.dev, role: "dev", category: "", squad: "memory", [SQUAD_MARK]: "memory" } });
   assert.deepEqual(args.slice(args.indexOf("--cwd")), ["--cwd", "/p", "--label", `bot=${ID.dev}`, "--label", "role=dev",
-    "--label", "squad=memory", "--label", `${SQUAD_MARK}=1`, "--no-parent", "--", "claude"]);
+    "--label", "squad=memory", "--label", `${SQUAD_MARK}=memory`, "--no-parent", "--", "claude"]);
 });
 
 test("labelWords sets what differs; detachWords takes off bot, role, category and only a copied squad", () => {
   assert.deepEqual(labelWords({ bot: ID.dev, role: "dev", category: "eng" }, { bot: ID.dev, role: "pm" }), ["role=dev", "category=eng"]);
   assert.deepEqual(labelWords({ bot: ID.dev }, { bot: ID.dev }), []);
   assert.deepEqual(detachWords({ bot: ID.dev, role: "dev", category: "eng", squad: "infra" }), ["bot=", "role=", "category="]);
-  assert.deepEqual(detachWords({ bot: ID.dev, squad: "memory", [SQUAD_MARK]: "1" }), ["bot=", "squad=", `${SQUAD_MARK}=`]);
+  assert.deepEqual(detachWords({ bot: ID.dev, squad: "memory", [SQUAD_MARK]: "memory" }), ["bot=", "squad=", `${SQUAD_MARK}=`]);
+  // A squad set after the copy (the helper's) differs from the mark: kept; the mark goes.
+  assert.deepEqual(detachWords({ bot: ID.dev, squad: "infra", [SQUAD_MARK]: "memory" }), ["bot=", `${SQUAD_MARK}=`]);
   assert.deepEqual(detachWords(), ["bot="]);
   // Attach: an old holder loses what Detach takes off.
   assert.deepEqual(labelMoves(["t1", "t2"], "t2", ID.dev, (t) => (t === "t1" ? { bot: ID.dev, role: "dev" } : {})),
@@ -96,10 +99,73 @@ test("relabelPlan + relabelWords: rank, lead and category edits, and a lead's ca
   assert.deepEqual(relabelWords(pm.before, pm.after, { bot: ID.pm, role: "pm" }), ["role="]);
   assert.deepEqual(relabelWords(pm.before, pm.after, { bot: ID.pm, role: "owner" }), []);
   // A squad is only ever added.
-  assert.deepEqual(relabelWords({ bot: ID.dev }, { bot: ID.dev, squad: "memory", [SQUAD_MARK]: "1" }, { bot: ID.dev }), ["squad=memory", `${SQUAD_MARK}=1`]);
+  assert.deepEqual(relabelWords({ bot: ID.dev }, { bot: ID.dev }, { bot: ID.dev }, { leadSquad: "memory" }), ["squad=memory", `${SQUAD_MARK}=memory`]);
   // Nothing changed, nothing planned; planned bots never.
   assert.deepEqual(relabelPlan(before, file()), []);
   const planned = JSON.parse(JSON.stringify(FILE));
   planned.bots.find((b) => b.id === ID.plan).rank = "pm";
   assert.deepEqual(relabelPlan(before, file(planned)), []);
+});
+
+test("the copied squad follows a lead change: the new lead's, or off when it has none; an unmarked squad never moves", () => {
+  const before = { bot: ID.dev }, after = { bot: ID.dev };
+  const copied = { bot: ID.dev, squad: "memory", [SQUAD_MARK]: "memory" };
+  assert.deepEqual(relabelWords(before, after, copied, { leadChanged: true, leadSquad: "infra" }), ["squad=infra", `${SQUAD_MARK}=infra`]);
+  assert.deepEqual(relabelWords(before, after, copied, { leadChanged: true, leadSquad: null }), ["squad=", `${SQUAD_MARK}=`]);
+  assert.deepEqual(relabelWords(before, after, copied, { leadChanged: true, leadSquad: "memory" }), []);
+  assert.deepEqual(relabelWords(before, after, copied, { leadChanged: false, leadSquad: "infra" }), []); // no lead change
+  const own = { bot: ID.dev, squad: "ops" };
+  assert.deepEqual(relabelWords(before, after, own, { leadChanged: true, leadSquad: "infra" }), []);
+  const overwritten = { bot: ID.dev, squad: "ops", [SQUAD_MARK]: "memory" }; // the helper set it after the copy
+  assert.deepEqual(relabelWords(before, after, overwritten, { leadChanged: true, leadSquad: null }), []);
+});
+
+test("leadPane: the live one with an agent in front, newest by created_ms, from rows or hc get answers", () => {
+  assert.equal(leadPane([]), null);
+  const rows = [
+    { address: "t1", state: "live", created_ms: 5, program: { agent: true }, labels: { squad: "a" } },
+    { address: "t2", state: "live", created_ms: 9, program: { agent: false }, labels: { squad: "b" } }, // a shell in front
+    { address: "t3", state: "live", created_ms: 7, foreground: { argv: ["claude"] }, labels: { squad: "c" } },
+    { address: "t4", state: "finished", created_ms: 99, program: { agent: true } },
+  ];
+  assert.equal(leadPane(rows).address, "t3");
+  assert.equal(leadPane([{ address: "t9", state: "live", program: { agent: true } }]).address, "t9"); // no created_ms
+  // Attach copies from that pane.
+  assert.deepEqual(attachWords(file(), ID.dev, { bot: ID.dev }, rows), ["role=dev", "category=eng", "squad=c", `${SQUAD_MARK}=c`]);
+});
+
+test("relabel(plan, io): labels each live pane; a failed label or read is listed, the rest go on", async () => {
+  const before = file();
+  const edited = JSON.parse(JSON.stringify(FILE));
+  edited.bots.find((b) => b.id === ID.test).rank = "tester";
+  edited.bots.find((b) => b.id === ID.pm).rank = "reviewer";
+  const plan = relabelPlan(before, file(edited));
+  const calls = [];
+  const io = {
+    rows: async (id) => {
+      if (id === ID.pm) throw new Error("hc down");
+      if (id === ID.test) return [{ address: "t4", state: "live", labels: { bot: ID.test } }, { address: "t5", state: "live", labels: { bot: ID.test } }];
+      if (id === ID.cap) return [{ address: "t2", state: "live", program: { agent: true }, labels: { bot: ID.cap, squad: "memory" } }];
+      return [];
+    },
+    label: async (address, words) => { calls.push([address, ...words]); return address !== "t5"; },
+  };
+  assert.deepEqual(await relabel(plan, io), { done: ["t4"], failed: ["t5", ID.pm] });
+  // The pane had no category yet: set too (relabelWords sets whatever differs from the new file).
+  const words = ["role=tester", "category=eng", "squad=memory", `${SQUAD_MARK}=memory`];
+  assert.deepEqual(calls, [["t4", ...words], ["t5", ...words]]);
+});
+
+test("a category id that isn't a slug never reaches a label", () => {
+  const f = file({ ...FILE, categories: [{ id: "Eng Team", title: "Engineering" }], bots: FILE.bots.map((b) => (b.category === "eng" ? { ...b, category: "Eng Team" } : b)) });
+  assert.equal(effectiveCategory(f, ID.cap), null);
+  assert.deepEqual(paneLabels(f, ID.cap), { bot: ID.cap, role: "captain" });
+});
+
+test("rank captain is allowed and main is not a rank: role=main is the main bot's alone", () => {
+  const f = file({ ...FILE, bots: [...FILE.bots.filter((b) => b.id !== ID.test), bot(ID.test, "member", { rank: "captain" })] });
+  assert.equal(roleOf(f, ID.test), "captain");
+  const m = parseBots(JSON.stringify({ ...FILE, bots: [...FILE.bots.filter((b) => b.id !== ID.test), bot(ID.test, "member", { rank: "main" })] }));
+  assert.equal(roleOf(m.file, ID.test), null);
+  assert.ok(m.warnings.some((w) => /unknown rank "main"/.test(w)));
 });

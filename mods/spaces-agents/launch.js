@@ -6,13 +6,15 @@ import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTe
 import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
 import { keyOf, rememberProject } from "./bots.js";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal,
-  paneLabels, labelWords } from "./launchArgs.js";
+  paneLabels, attachWords, relabelWords, leadIdOf, leadPane } from "./launchArgs.js";
 import { installHook } from "./briefingText.mjs";
 import { configPaths, knownModelsFrom, modelArgs } from "./models.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
 // A terminal's labels as terminals() has them (null: no such terminal, or none given).
 const labelsOf = (address) => (address ? terminals().find((t) => t?.address === address)?.labels ?? null : null);
+// The live panes on this computer carrying a bot's label (launchArgs.js leadPane picks the lead's).
+const rowsOfBot = (botId) => terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && t.state === "live" && local(t.address));
 
 async function hcGet(address) {
   try {
@@ -146,7 +148,7 @@ async function startOnce(projectKey, botId) {
   const leadLive = lead ? (await liveTerminalOf(lead))?.terminal ?? null : null;
   const parent = parentArgs(file, botId, (id) => (id === lead ? leadLive : null));
   // A16: role, category and the lead pane's squad as labels on the new pane.
-  const labels = paneLabels(file, botId, {}, labelsOf(leadLive));
+  const labels = paneLabels(file, botId, {}, lead ? leadPane(rowsOfBot(lead))?.labels ?? null : null);
   const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
   const { space, tab } = await placeFor(projectKey);
   // A12: a pinned model goes to the agent with its own flag, as the CLI passes it; a pin the
@@ -168,6 +170,15 @@ async function startOnce(projectKey, botId) {
   if (!terminal) return { refused: `hc run gave no terminal address: ${r.stdout.trim()}` };
   started.set(botId, { terminal, at: Date.now() });
   rememberProject(projectKey);
+  // An edit that landed while this Start ran: the file read again, its role and category
+  // put on the new pane (relabelWords against the labels it started with).
+  try {
+    const fresh = await readProject(projectKey);
+    if (fresh?.bots.some((b) => b.id === botId && !b.planned)) {
+      const words = relabelWords(labels, paneLabels(fresh, botId), labels);
+      if (words.length) await hc(["label", terminal, ...words]);
+    }
+  } catch { /* the labels it started with stand */ }
   return { terminal };
 }
 
@@ -217,8 +228,8 @@ export async function attachBot(projectKey, botId, terminal) {
   // A16: role, category and a squad copied from the lead, beside the bot label. The pane
   // plays the bot already, so a failure here only warns.
   const have = { ...(row.labels ?? {}), [BOT_LABEL]: botId };
-  const lead = bot.kind === "member" ? effectiveLead(file, botId).lead : "";
-  const words = labelWords(paneLabels(file, botId, have, lead ? labelsOf((await liveTerminalOf(lead))?.terminal) : null), have);
+  const lead = leadIdOf(file, botId);
+  const words = attachWords(file, botId, have, lead ? rowsOfBot(lead) : []);
   if (words.length) {
     let why = null;
     try { const r = await hc(["label", terminal, ...words]); if (r.code !== 0) why = (r.stderr || r.stdout).trim(); } catch (e) { why = String(e?.message ?? e); }

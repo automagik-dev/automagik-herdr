@@ -16,10 +16,10 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
-  PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
+  CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
   parseBots, plannedOf, projectKeyOf, withListedProject } from "../model.js";
-import { UNANSWERED, attachRefusal, detachWords, hcName, isClaude, labelMoves, labelWords, paneLabels, paneOf, parentArgs,
-  placementFrom, relabelPlan, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
+import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
+  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
 import { installHook } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
@@ -432,7 +432,9 @@ export function entryFrom(opts, base, project, { creating }) {
   if (opts.category !== undefined) {
     const leadsToMain = entry.kind === "member" && (!entry.lead || entry.lead === main?.id);
     if (!leadsToMain) throw new CliError("A category goes only on a member that reports to the main bot.", 2);
-    entry.category = findCategory(file, opts.category).id;
+    const cat = findCategory(file, opts.category);
+    if (!CATEGORY_ID.test(cat.id)) throw new CliError(`Category id "${cat.id}" isn't a lowercase slug (a-z, 0-9, single dashes); fix it in ${BOTS_PATH} first.`);
+    entry.category = cat.id;
   }
   // Look: --omni, or a character and colour (one left out keeps the stored or default one).
   const colour = opts.colour ?? opts.color;
@@ -509,42 +511,25 @@ async function cmdShow(opts, [ref]) {
   ].join("\n");
 }
 
-// ---- A16 pane labels (launchArgs.js paneLabels): this computer's panes only ----
+// ---- A16 pane labels (launchArgs.js): this computer's panes only ----
 
-/** The labels of a bot's live pane on this computer (for the squad it passes on), or null. */
-async function leadLabelsOf(file, botId) {
-  const bot = file.bots.find((b) => b.id === botId);
-  const lead = bot?.kind === "member" ? effectiveLead(file, botId).lead : "";
-  if (!lead) return null;
-  return (await panesOf(lead, { localOnly: true })).live?.labels ?? null;
+/** hc get answers of the live panes on this computer carrying a bot's label (launchArgs relabel's io.rows). */
+async function liveRows(botId) {
+  return (await panesOf(botId, { localOnly: true })).gets.filter((g) => g?.state === "live" && g.address);
 }
+const labelIo = { rows: liveRows, label: async (address, words) => (await hc(["label", address, ...words])).code === 0 };
 
 /**
- * After a write, the live local panes of every bot whose labels the edit changed (rank,
- * lead or category, and a lead's captain status) get them rewritten. The file is saved
- * already, so a failing hc only warns. Resolves with the terminals relabelled.
+ * After a write, the live local panes of every bot whose labels the edit changed (rank, lead
+ * or category, and a lead's captain status) get them rewritten, by launchArgs.js relabel as
+ * the sidebar does. The file is saved already, so a failure only warns. Resolves with the
+ * terminals relabelled.
  */
 async function relabelAfter(beforeFile, afterRaw) {
   let afterFile;
   try { afterFile = parseBots(JSON.stringify(afterRaw)).file; } catch { return []; }
-  const done = [];
-  for (const item of relabelPlan(beforeFile, afterFile)) {
-    try {
-      const { gets } = await panesOf(item.id, { localOnly: true });
-      for (const get of gets.filter((g) => g?.state === "live" && g.address)) {
-        const have = get.labels ?? {};
-        const lead = have.squad ? null : await leadLabelsOf(afterFile, item.id);
-        const words = relabelWords(item.before, paneLabels(afterFile, item.id, have, lead), have);
-        if (!words.length) continue;
-        const r = await hc(["label", get.address, ...words]);
-        if (r.code !== 0) throw new CliError(`hc label ${get.address} failed: ${(r.stderr || r.stdout).trim()}`);
-        done.push(get.address);
-      }
-    } catch (e) {
-      if (!(e instanceof CliError)) throw e;
-      report([`${item.id}'s pane labels weren't updated: ${e.message}`]);
-    }
-  }
+  const { done, failed } = await relabel(relabelPlan(beforeFile, afterFile), labelIo);
+  if (failed.length) report([`saved, but these panes' labels weren't updated: ${failed.join(", ")}`]);
   return done;
 }
 
@@ -620,6 +605,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   if (verb === "add") {
     if (!opts.title?.trim()) throw new CliError("A category needs a title (--title).", 2);
     const id = opts.id ?? newCategoryId(opts.title, raw.categories);
+    if (!CATEGORY_ID.test(id)) throw new CliError(`--id "${id}" isn't a category id: a lowercase slug (a-z, 0-9, single dashes), as it goes into a pane's category= label.`, 2);
     if (raw.categories.some((c) => c?.id === id)) throw new CliError(`Category ${id} is there already.`);
     const cat = { id, title: opts.title.trim() };
     if (opts.sub?.trim()) cat.sub = opts.sub.trim();
@@ -703,7 +689,7 @@ async function cmdStart(opts, [ref]) {
   const leadGet = lead ? (await panesOf(lead, { localOnly: true })).live : null;
   const leadLive = leadGet?.address ?? null;
   const parent = parentArgs(file, bot.id, (id) => (id === lead ? leadLive : null));
-  const labels = paneLabels(file, bot.id, {}, leadGet?.labels ?? null); // A16
+  const labels = paneLabels(file, bot.id, {}, lead ? leadPane(await liveRows(lead))?.labels ?? null : null); // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   const argv = [...agent.run, ...modelArgs(bot.agent, bot.model)];
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : await placementOf(key);
@@ -717,6 +703,15 @@ async function cmdStart(opts, [ref]) {
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
   listProject(key);
+  // An edit that landed while this Start ran: the file read again, its role and category
+  // put on the new pane (relabelWords against the labels it started with).
+  try {
+    const fresh = loadProject(key).file;
+    if (fresh.bots.some((b) => b.id === bot.id && !b.planned)) {
+      const words = relabelWords(labels, paneLabels(fresh, bot.id), labels);
+      if (words.length && (await hc(["label", terminal, ...words])).code !== 0) hook.warnings.push(`${terminal}'s labels ${words.join(" ")} weren't set.`);
+    }
+  } catch { /* the file can't be read now: the labels it started with stand */ }
   if (!place) {
     hook.warnings.push(`No open Herdr space shows ${key}, so Herdr gives ${terminal} no pane: it runs, unseen. `
       + `Watch it with hc attach ${terminal}. To give the next start a pane, open a space on ${key} first, or pass --space <id> (herdr-app ls lists the ids).`);
@@ -765,7 +760,10 @@ async function cmdAttach(opts, [ref, terminal]) {
   // A16: role, category and a squad copied from the lead, beside the bot label. The pane
   // plays the bot already, so a failure here only warns.
   const have = { ...(get.labels ?? {}), [BOT_LABEL]: bot.id };
-  const words = labelWords(paneLabels(file, bot.id, have, await leadLabelsOf(file, bot.id).catch(() => null)), have);
+  const lead = leadIdOf(file, bot.id);
+  let leadRows = [];
+  try { leadRows = lead ? await liveRows(lead) : []; } catch { leadRows = []; }
+  const words = attachWords(file, bot.id, have, leadRows);
   const labelWarnings = [];
   if (words.length) {
     const r = await hc(["label", address, ...words]);

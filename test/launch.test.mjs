@@ -280,7 +280,7 @@ test("startBot labels the new pane: role, category, and the lead pane's squad, m
   assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
   const runArgs = state.hcCalls.find((a) => a[0] === "run");
   const labels = runArgs.flatMap((w, i) => (runArgs[i - 1] === "--label" ? [w] : []));
-  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "herdr-bots.squad=1"]);
+  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "automagik-herdr.squad=memory"]);
 });
 
 test("attachBot labels the pane beside the bot label and keeps a squad it has", async (t) => {
@@ -290,4 +290,20 @@ test("attachBot labels the pane beside the bot label and keeps a squad it has", 
   gets.t8 = { address: "t8", foreground: { argv: ["codex"], cwd: main }, labels: { squad: "infra" } };
   assert.deepEqual(await attachBot(main, ID.dev, "t8"), { ok: true });
   assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t8", `bot=${ID.dev}`], ["label", "t8", "role=dev", "category=eng"]]);
+});
+
+test("startBot re-reads the file after hc run: an edit made meanwhile reaches the new pane's labels", async (t) => {
+  reset();
+  const { main } = await project(t, ranked());
+  const answer = state.hcAnswer;
+  state.hcAnswer = (args) => {
+    if (args[0] === "run") {
+      const f = ranked();
+      f.bots.find((b) => b.id === ID.dev).rank = "reviewer";
+      writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(f));
+    }
+    return answer(args);
+  };
+  assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
+  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t42", "role=reviewer"]]);
 });

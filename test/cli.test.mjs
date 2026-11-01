@@ -678,7 +678,7 @@ test("--rank on create and edit: checked against the set, '' clears it; show and
   s.seed(team());
   const bad = s.cli(["edit", "Dev", "--rank", "boss"]);
   assert.equal(bad.code, 2);
-  assert.match(bad.err, /--rank is one of captain, dev, tester, reviewer, integrator, pm, main, owner/);
+  assert.match(bad.err, /--rank is one of captain, dev, tester, reviewer, integrator, pm, owner/);
   assert.equal(s.cli(["create", "--name", "Ana", "--agent", "claude", "--rank", "tester"]).code, 0);
   assert.equal(s.bots().bots.find((b) => b.name === "Ana").rank, "tester");
   assert.equal(s.cli(["edit", "Dev", "--rank", "reviewer"]).code, 0);
@@ -700,7 +700,7 @@ test("start labels the pane: role from rank or captaincy, category, and the lead
   assert.equal(s.cli(["start", "Dev"]).code, 0);
   const run = runCall(s.calls());
   const labels = run.flatMap((w, i) => (run[i - 1] === "--label" ? [w] : []));
-  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "herdr-bots.squad=1"]);
+  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "automagik-herdr.squad=memory"]);
 });
 
 test("attach labels the pane and keeps its own squad; detach takes off bot, role, category and only a copied squad", (t) => {
@@ -722,7 +722,7 @@ test("attach labels the pane and keeps its own squad; detach takes off bot, role
   // Moved to t9: t8 loses what Detach takes off, keeping its own squad; t9 copies the lead's.
   assert.equal(s.cli(["attach", "Dev", "t9"]).code, 0);
   assert.deepEqual(labelsIn(s).t8, { squad: "infra" });
-  assert.deepEqual(labelsIn(s).t9, { bot: ID.dev, role: "tester", category: "eng", squad: "memory", "herdr-bots.squad": "1" });
+  assert.deepEqual(labelsIn(s).t9, { bot: ID.dev, role: "tester", category: "eng", squad: "memory", "automagik-herdr.squad": "memory" });
   assert.equal(s.cli(["detach", "Dev"]).code, 0);
   assert.deepEqual(labelsIn(s).t9, {});
   // The captain's own squad stays on detach: this pack didn't put it there.
@@ -755,4 +755,42 @@ test("an edit relabels the live local panes it changes, the old and new leads in
   const before = labelCalls(s.calls()).length;
   assert.equal(s.cli(["edit", "Dev", "--role", "writes code"]).code, 0);
   assert.equal(labelCalls(s.calls()).length, before);
+});
+
+test("category add --id and the stored file take slug ids only; a non-slug id blocks --category", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const bad = s.cli(["category", "add", "--title", "Quality", "--id", "Quality Gate"]);
+  assert.equal(bad.code, 2);
+  assert.match(bad.err, /--id "Quality Gate" isn't a category id: a lowercase slug/);
+  assert.equal(s.cli(["category", "add", "--title", "Quality Gate!"]).code, 0);
+  assert.ok(s.bots().categories.some((c) => c.id === "quality-gate"));
+  const f = team();
+  f.categories.push({ id: "Ops Team", title: "Ops" });
+  s.seed(f);
+  const r = s.cli(["edit", "Dev", "--lead", "Genie", "--category", "Ops"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Category id "Ops Team" isn't a lowercase slug/);
+});
+
+test("a lead change moves the squad copied from the old lead, and leaves a pane's own squad", (t) => {
+  const cap = term("t7", { bot: ID.cap });
+  cap.labels.squad = "memory";
+  const main = term("t1", { bot: ID.main });
+  main.labels.squad = "core";
+  const dev = term("t8", { bot: ID.dev });
+  Object.assign(dev.labels, { squad: "memory", "automagik-herdr.squad": "memory" });
+  const s = scene(t, { terminals: [main, cap, dev] });
+  s.seed(team());
+  assert.equal(s.cli(["edit", "Dev", "--lead", "Genie"]).code, 0);
+  assert.deepEqual([labelsIn(s).t8.squad, labelsIn(s).t8["automagik-herdr.squad"]], ["core", "core"]);
+  // Its own squad (set after the copy) stays when the lead changes again.
+  const st = s.hcState();
+  st.terminals.find((x) => x.address === "t8").labels.squad = "ops";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["edit", "Dev", "--lead", "Captain"]).code, 0);
+  assert.equal(labelsIn(s).t8.squad, "ops");
+  // Detach keeps that squad and takes the mark off.
+  assert.equal(s.cli(["detach", "Dev"]).code, 0);
+  assert.deepEqual(labelsIn(s).t8, { squad: "ops" });
 });

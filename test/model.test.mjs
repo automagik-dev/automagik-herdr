@@ -368,7 +368,7 @@ test("the CLI's project list: absolute keys once each, the newest last, at most 
 import { RANKS } from "../mods/spaces-agents/model.js";
 
 test("rank: an unknown one is warned about and dropped when shown, and refused when written; role stays free text", () => {
-  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "integrator", "pm", "main", "owner"]);
+  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"]);
   const raw = { version: 1, categories: [], bots: [bot(ID.main, "main", { rank: "owner", role: "Runs it all" }), bot(ID.cap, "member", { rank: "boss" })] };
   const { file, warnings } = parseBots(JSON.stringify(raw));
   assert.equal(file.bots[0].rank, "owner");
@@ -386,4 +386,17 @@ test("applyBotEdit sets a rank, clears it when named empty, and keeps it when th
   const kept = applyBotEdit(set, bot(ID.main, "main", { role: "new role" }));
   assert.deepEqual([kept.bots[0].rank, kept.bots[0].role], ["pm", "new role"]);
   assert.equal("rank" in applyBotEdit(set, { ...bot(ID.main, "main"), rank: "" }).bots[0], false);
+});
+
+test("category ids are lowercase slugs: parseBots warns, checkBots refuses, newCategoryId makes one", () => {
+  const raw = { version: 1, categories: [{ id: "Eng Team", title: "Engineering" }, { id: "ok-1", title: "Fine" }], bots: [bot(ID.main, "main")] };
+  const { file, warnings } = parseBots(JSON.stringify(raw));
+  assert.equal(file.categories.length, 2);
+  assert.ok(warnings.some((w) => /"Eng Team": an id is a lowercase slug/.test(w)));
+  assert.ok(checkBots(raw).some((e) => /"Eng Team": an id is a lowercase slug/.test(e)));
+  for (const bad of ["a--b", "-a", "a-", "A", "a b", "ação", ""]) assert.ok(checkBots({ ...raw, categories: [{ id: bad, title: "x" }] }).length, bad);
+  assert.deepEqual(checkBots({ ...raw, categories: [raw.categories[1]] }), []);
+  for (const title of ["Ação & Studio", "  --Quality \"gate\"-- ", "!!!", "Platform 2"]) {
+    assert.match(newCategoryId(title, []), /^[a-z0-9]+(-[a-z0-9]+)*$/, title);
+  }
 });

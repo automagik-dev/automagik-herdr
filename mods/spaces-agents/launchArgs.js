@@ -84,8 +84,21 @@ export function newest(gets) {
 export const ROLE_LABEL = "role";
 export const CATEGORY_LABEL = "category";
 export const SQUAD_LABEL = "squad";
-/** Marks a `squad=` this pack copied from the lead's pane, so Detach removes only that one. */
-export const SQUAD_MARK = "herdr-bots.squad";
+/**
+ * Holds the `squad=` value this pack copied from the lead's pane. While the pane's squad
+ * still equals it, the squad is ours to move or remove; a squad set later (the helper's)
+ * differs from it and is never touched.
+ */
+export const SQUAD_MARK = "automagik-herdr.squad";
+
+/** Whether a pane's squad is the one this pack copied (its mark still names it). */
+export const copiedSquad = (have) => Boolean(have?.[SQUAD_LABEL]) && have?.[SQUAD_MARK] === have[SQUAD_LABEL];
+
+/** The bot a member reports to (A1), "" for the main bot or an unknown one. */
+export function leadIdOf(file, botId) {
+  const bot = file?.bots?.find((b) => b.id === botId);
+  return bot?.kind === "member" ? effectiveLead(file, botId).lead : "";
+}
 
 /**
  * A bot pane's `role=` (A16): the main bot is `main`; a member that leads another bot (by
@@ -100,10 +113,22 @@ export function roleOf(file, botId) {
 }
 
 /**
+ * The lead's pane whose labels a bot copies its squad from: of the panes carrying the lead's
+ * label on this computer (terminals() rows or hc get answers), the live ones with an agent in
+ * front (Decision 3), the newest by created_ms. Null when none. Used by Start, Attach and an
+ * edit's relabel, in the CLI and the sidebar alike.
+ */
+export function leadPane(rows) {
+  const live = (rows ?? []).filter((r) => r?.state === "live" && (rowIsAgent(r) ?? agentInForeground(r)));
+  // newest() starts from null, so a row with no created_ms would never be picked.
+  return live.length ? live.reduce((a, b) => ((b.created_ms ?? -1) > (a.created_ms ?? -1) ? b : a)) : null;
+}
+
+/**
  * The labels a bot's pane should carry (A16): `bot=<id>`; `role=` (roleOf) when there is one;
  * `category=<id>` when its effective category exists. `squad=` is never overwritten: when
  * `existing` (the pane's labels now) has one, it isn't listed; else the lead's pane's squad
- * (`leadLabels`) is copied, with SQUAD_MARK so Detach knows it was copied here.
+ * (`leadLabels`) is copied, with SQUAD_MARK holding the copied value.
  */
 export function paneLabels(file, botId, existing = {}, leadLabels = null) {
   const out = { [BOT_LABEL]: botId };
@@ -112,7 +137,7 @@ export function paneLabels(file, botId, existing = {}, leadLabels = null) {
   const category = effectiveCategory(file, botId);
   if (category) out[CATEGORY_LABEL] = category;
   const squad = leadLabels?.[SQUAD_LABEL];
-  if (!existing?.[SQUAD_LABEL] && squad) { out[SQUAD_LABEL] = squad; out[SQUAD_MARK] = "1"; }
+  if (!existing?.[SQUAD_LABEL] && squad) { out[SQUAD_LABEL] = squad; out[SQUAD_MARK] = squad; }
   return out;
 }
 
@@ -121,34 +146,50 @@ export function labelWords(want, have = {}) {
   return Object.entries(want).filter(([k, v]) => v && have?.[k] !== v).map(([k, v]) => `${k}=${v}`);
 }
 
+/** Attach's words for a pane (`have`: its labels, the bot label included), the lead's rows given. */
+export function attachWords(file, botId, have, leadRows) {
+  return labelWords(paneLabels(file, botId, have, leadPane(leadRows)?.labels ?? null), have);
+}
+
 /**
- * The words after an edit (A16): `before` and `after` are paneLabels of the old and new file.
- * A role or category that changed is set, or removed when the new file has none and the
- * pane still carries the one the old file gave it; a squad is only ever added (labelWords).
+ * The words after an edit (A16): `before` and `after` are paneLabels of the old and new file
+ * (no pane labels known). A role or category that changed is set, or removed when the new file
+ * has none and the pane still carries the one the old file gave it. The squad: a pane with
+ * none gets the lead's (`leadSquad`, the lead pane's squad or null); a squad this pack copied
+ * (copiedSquad) follows a lead change: the new lead's, or removed with its mark when the new
+ * lead has none. A squad set by anyone else is never touched.
  */
-export function relabelWords(before, after, have = {}) {
+export function relabelWords(before, after, have = {}, { leadChanged = false, leadSquad = null } = {}) {
   const words = [];
   for (const k of [ROLE_LABEL, CATEGORY_LABEL]) {
     if (after[k] && have?.[k] !== after[k]) words.push(`${k}=${after[k]}`);
     else if (!after[k] && before[k] && have?.[k] === before[k]) words.push(`${k}=`);
   }
-  if (after[SQUAD_LABEL] && !have?.[SQUAD_LABEL]) words.push(`${SQUAD_LABEL}=${after[SQUAD_LABEL]}`, `${SQUAD_MARK}=1`);
+  if (!have?.[SQUAD_LABEL]) {
+    if (leadSquad) words.push(`${SQUAD_LABEL}=${leadSquad}`, `${SQUAD_MARK}=${leadSquad}`);
+  } else if (leadChanged && copiedSquad(have) && have[SQUAD_LABEL] !== leadSquad) {
+    words.push(...(leadSquad ? [`${SQUAD_LABEL}=${leadSquad}`, `${SQUAD_MARK}=${leadSquad}`] : [`${SQUAD_LABEL}=`, `${SQUAD_MARK}=`]));
+  }
   return words;
 }
 
-/** The words Detach sends: bot, role and category off; squad only when this pack copied it. */
+/**
+ * The words Detach sends: bot, role and category off (any value: nothing else sets them
+ * today); the squad only while it is the one this pack copied, and the mark always.
+ */
 export function detachWords(have = {}) {
   const words = [`${BOT_LABEL}=`];
   for (const k of [ROLE_LABEL, CATEGORY_LABEL]) if (have?.[k]) words.push(`${k}=`);
-  if (have?.[SQUAD_MARK]) words.push(`${SQUAD_LABEL}=`, `${SQUAD_MARK}=`);
+  if (copiedSquad(have)) words.push(`${SQUAD_LABEL}=`);
+  if (have?.[SQUAD_MARK]) words.push(`${SQUAD_MARK}=`);
   return words;
 }
 
 /**
  * The bots whose pane labels an edit changes (A16): every bot of the new file whose role or
- * category differs from the old file's, or whose effective lead changed (a squad to copy).
- * Planned bots have no pane. Returns [{ id, before, after, leadChanged }] (before/after:
- * paneLabels with no pane labels known; the caller recomputes the squad with the real ones).
+ * category differs from the old file's, or whose effective lead changed (a squad to copy or
+ * move). Planned bots have no pane. Returns [{ id, lead, before, after, leadChanged }]
+ * (before/after: paneLabels with no pane labels known; `lead`: its lead in the new file).
  */
 export function relabelPlan(beforeFile, afterFile) {
   const plan = [];
@@ -157,12 +198,40 @@ export function relabelPlan(beforeFile, afterFile) {
     const had = beforeFile?.bots?.some((x) => x.id === b.id);
     const before = had ? paneLabels(beforeFile, b.id) : { [BOT_LABEL]: b.id };
     const after = paneLabels(afterFile, b.id);
-    const leadChanged = had && effectiveLead(beforeFile, b.id).lead !== effectiveLead(afterFile, b.id).lead;
+    const lead = leadIdOf(afterFile, b.id);
+    const leadChanged = Boolean(had) && leadIdOf(beforeFile, b.id) !== lead;
     if (before[ROLE_LABEL] !== after[ROLE_LABEL] || before[CATEGORY_LABEL] !== after[CATEGORY_LABEL] || leadChanged) {
-      plan.push({ id: b.id, before, after, leadChanged: Boolean(leadChanged) });
+      plan.push({ id: b.id, lead, before, after, leadChanged });
     }
   }
   return plan;
+}
+
+/**
+ * Carries out a relabelPlan on this computer's panes, the I/O given (as paneOf takes `ask`):
+ * `io.rows(botId)` resolves with the live local panes carrying that bot's label ({ address,
+ * labels, state, created_ms, program? | foreground? }); `io.label(address, words)` sets labels
+ * and resolves true when hc did. A failure of either is caught: that pane (or bot) is listed
+ * in `failed`, the rest go on. Resolves { done: addresses, failed: addresses or bot ids }.
+ */
+export async function relabel(plan, io) {
+  const done = [], failed = [];
+  for (const item of plan) {
+    let rows;
+    let leadSquad = null;
+    try {
+      rows = await io.rows(item.id);
+      if (item.lead) leadSquad = leadPane(await io.rows(item.lead))?.labels?.[SQUAD_LABEL] ?? null;
+    } catch { failed.push(item.id); continue; }
+    for (const row of rows.filter((r) => r?.state === "live" && r.address)) {
+      const words = relabelWords(item.before, item.after, row.labels ?? {}, { leadChanged: item.leadChanged, leadSquad });
+      if (!words.length) continue;
+      let ok = false;
+      try { ok = await io.label(row.address, words); } catch { ok = false; }
+      (ok ? done : failed).push(row.address);
+    }
+  }
+  return { done, failed };
 }
 
 /**

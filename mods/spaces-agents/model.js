@@ -12,9 +12,12 @@ export const BOTS_PATH = ".herdr/bots.json";
 export const KINDS = ["main", "member"];
 /**
  * A bot's rank (A16): a closed set, for the pane's `role=` label the event meter reads. The
- * free-text `role` stays for the briefing. Optional.
+ * free-text `role` stays for the briefing. Optional. `main` is not a rank: role=main is the
+ * main bot's alone, derived from its kind.
  */
-export const RANKS = ["captain", "dev", "tester", "reviewer", "integrator", "pm", "main", "owner"];
+export const RANKS = ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"];
+/** A category id: a lowercase slug, as it goes into a pane's `category=` label (A16). */
+export const CATEGORY_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 // Automagik's characters and colours, by name (apps/bots-dsh/src/client/characters.js and
 // inks.js). Only the names: the drawing comes with the characters themselves (Group 3).
@@ -82,6 +85,7 @@ export function parseBots(text) {
   for (const c of Array.isArray(raw.categories) ? raw.categories : []) {
     if (!isObject(c) || !isText(c.id) || typeof c.title !== "string") { warnings.push("a category with no id or title is left out"); continue; }
     if (categories.some((k) => k.id === c.id)) { warnings.push(`category ${c.id} is listed twice; the first counts`); continue; }
+    if (!CATEGORY_ID.test(c.id)) warnings.push(`category ${JSON.stringify(c.id)}: an id is a lowercase slug (a-z, 0-9, single dashes); it gets no pane label`);
     const cat = { ...c };
     if (cat.sub !== undefined && typeof cat.sub !== "string") delete cat.sub;
     categories.push(cat);
@@ -178,6 +182,7 @@ export function checkBots(file) {
   const catIds = new Set();
   for (const c of cats) {
     if (!isObject(c) || !isText(c.id) || typeof c.title !== "string") errors.push("a category has no id or title");
+    else if (!CATEGORY_ID.test(c.id)) errors.push(`category ${JSON.stringify(c.id)}: an id is a lowercase slug (a-z, 0-9, single dashes)`);
     else if (catIds.has(c.id)) errors.push(`category ${c.id} is listed twice`);
     else catIds.add(c.id);
   }
@@ -261,7 +266,8 @@ export function descendantsOf(file, botId) {
 /**
  * The category a bot shows under (A2): a direct report of the main bot carries its own;
  * a deeper member is under its lead's chain, so it takes the category of the direct report
- * that chain ends at. Null for the main bot, an unknown bot, or a category not in the file.
+ * that chain ends at. Null for the main bot, an unknown bot, a category not in the file, or
+ * an id that isn't a slug (free text never reaches a pane label).
  */
 export function effectiveCategory(file, botId) {
   const main = mainBotOf(file);
@@ -271,7 +277,7 @@ export function effectiveCategory(file, botId) {
     const { lead } = effectiveLead(file, bot.id);
     if (lead === main.id) {
       const known = (file.categories ?? []).some((c) => c?.id === bot.category);
-      return known ? bot.category : null;
+      return known && CATEGORY_ID.test(bot.category) ? bot.category : null;
     }
     bot = byId.get(lead);
   }
