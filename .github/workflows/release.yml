@@ -9,7 +9,8 @@ name: Release
 #   SHA256SUMS                      its sha256, which `automagik-herdr update` checks
 #
 # and then main moves to the release commit (main holds released commits and nothing else; a
-# prerelease leaves it).
+# prerelease leaves it). The tag's subject records the kind ("Automagik Herdr <v>", or
+# "… (prerelease)"), so a run that resumes a tag publishes it as the kind it was cut as.
 #
 # A push to dev (a merged pull request) cuts one; so does a dispatch:
 #   gh workflow run release.yml --ref dev [--field prerelease=true]
@@ -111,7 +112,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(release): v${version}"
-          git tag -a "v${version}" -m "Automagik Herdr ${version}"
+          git tag -a "v${version}" -m "$(node scripts/version.mjs tag-subject "${version}" "${PRERELEASE:-false}")"
           # Atomic: when dev moved meanwhile (a second merge), neither lands, so no tag names a
           # release commit dev never got. The newer merge's own run (queued behind this one)
           # then releases these changes with it, so this run stops here, cleanly: no version,
@@ -133,8 +134,11 @@ jobs:
           VERSION: ${{ steps.cut.outputs.version || steps.new.outputs.version }}
         run: |
           set -euo pipefail
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse "v${VERSION}^{commit}")" >> "$GITHUB_OUTPUT"
+          sha=$(git rev-parse "v${VERSION}^{commit}")
+          # The kind it was cut as, from the tag: a resumed prerelease stays one.
+          prerelease=$(node scripts/version.mjs prerelease "v${VERSION}")
+          { echo "version=${VERSION}"; echo "sha=${sha}"; echo "prerelease=${prerelease}"; } >> "$GITHUB_OUTPUT"
+          echo "v${VERSION} at ${sha}, prerelease: ${prerelease}"
 
       - name: Pack
         if: steps.release.outputs.version != ''
@@ -152,10 +156,11 @@ jobs:
         if: steps.release.outputs.version != ''
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          KIND_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           set -euo pipefail
           flags=(--latest)
-          [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
+          [[ "${KIND_PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
@@ -163,7 +168,7 @@ jobs:
             --generate-notes
 
       - name: main moves to the release
-        if: steps.release.outputs.version != '' && env.PRERELEASE != 'true'
+        if: steps.release.outputs.version != '' && steps.release.outputs.prerelease != 'true'
         env:
           SHA: ${{ steps.release.outputs.sha }}
         run: |

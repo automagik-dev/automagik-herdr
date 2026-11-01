@@ -13,6 +13,8 @@
  *                                           shipping since it is a fix, else 0.(N+1).0; 0.1.0 first
  *   node scripts/version.mjs ships          yes when something since the newest release ships, else no
  *   node scripts/version.mjs last           the newest release tag (v0.N.P), or nothing
+ *   node scripts/version.mjs tag-subject <version> <true|false>   the release tag's subject; true: a prerelease
+ *   node scripts/version.mjs prerelease <tag>   true when the tag's subject marks a prerelease, else false
  *   node scripts/version.mjs plan <yes|no>  what release.yml does, given whether the newest tag's
  *                                           GitHub release exists: `cut`, `resume <version>` or `none`
  *
@@ -103,6 +105,10 @@ export function nextVersion(tags, subjects = []) {
   return `${MAJOR}.${minor + 1}.0`;
 }
 
+/** A release tag's subject: the kind travels with the tag, so a run that resumes it publishes the same kind. */
+export const tagSubject = (version, prerelease = false) => `Automagik Herdr ${version}${prerelease ? " (prerelease)" : ""}`;
+export const isPrereleaseSubject = (subject) => / \(prerelease\)$/.test(String(subject ?? "").trim());
+
 /**
  * What a release run does: `{ action: "resume", version }` when the newest tag `last` has no GitHub
  * release (`published` false: its run pushed the tag, then failed to publish), else
@@ -140,6 +146,12 @@ if (invoked) {
   } else if (command === "ships") {
     const last = lastReleaseTag(tagsOf(ROOT));
     console.log(!last || shipping(subjectsSince(last, ROOT)).length > 0 ? "yes" : "no");
+  } else if (command === "tag-subject" && arg && VERSION.test(arg)) {
+    console.log(tagSubject(arg, process.argv[4] === "true"));
+  } else if (command === "prerelease" && arg) {
+    const subject = git(["tag", "--list", "--format=%(contents:subject)", arg], ROOT).trim();
+    if (!subject) { console.error(`version: no annotated tag ${arg}`); process.exit(1); }
+    console.log(isPrereleaseSubject(subject) ? "true" : "false");
   } else if (command === "last") {
     console.log(lastReleaseTag(tagsOf(ROOT)) ?? "");
   } else if (command === "plan" && (arg === "yes" || arg === "no")) {
@@ -147,7 +159,7 @@ if (invoked) {
     const plan = planRelease({ last, published: arg === "yes", subjects: subjectsSince(last, ROOT) });
     console.log(plan.action === "resume" ? `resume ${plan.version}` : plan.action);
   } else {
-    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no>");
+    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no> | tag-subject <version> <true|false> | prerelease <tag>");
     process.exit(2);
   }
 }

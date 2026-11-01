@@ -5,7 +5,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIX, NOT_SHIPPING, VERSION, drift, lastReleaseTag, nextVersion, planRelease, setVersion, shipping } from "../scripts/version.mjs";
+import { FIX, NOT_SHIPPING, VERSION, drift, isPrereleaseSubject, lastReleaseTag, nextVersion, planRelease, setVersion, shipping, tagSubject } from "../scripts/version.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/version.mjs", import.meta.url));
 
@@ -108,6 +108,28 @@ test("the CLI over git: ships, next, set and check as release.yml runs them", ()
     assert.equal(cli(root, "next"), "0.2.0");
     writeFileSync(join(root, "mods", "spaces-agents", "VERSION"), "0.0.9\n");
     assert.throws(() => cli(root, "check"), /Command failed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the tag's subject carries the release kind, and a resume reads it back", () => {
+  assert.equal(tagSubject("0.2.0"), "Automagik Herdr 0.2.0");
+  assert.equal(tagSubject("0.2.1", true), "Automagik Herdr 0.2.1 (prerelease)");
+  assert.ok(isPrereleaseSubject(tagSubject("0.2.1", true)));
+  assert.ok(!isPrereleaseSubject(tagSubject("0.2.0")));
+  assert.ok(!isPrereleaseSubject("Automagik Herdr 0.2.0 (prerelease) notes"));
+  const root = scratchRepo();
+  try {
+    git(root, "init", "-q", "-b", "dev");
+    commit(root, "feat: the pack");
+    assert.equal(cli(root, "tag-subject", "0.1.0", "false"), "Automagik Herdr 0.1.0");
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.0", "-m", cli(root, "tag-subject", "0.1.0", "false"));
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.1", "-m", cli(root, "tag-subject", "0.1.1", "true"));
+    assert.equal(cli(root, "prerelease", "v0.1.0"), "false");
+    assert.equal(cli(root, "prerelease", "v0.1.1"), "true");
+    assert.throws(() => cli(root, "prerelease", "v9.9.9"), /Command failed/, "no such tag");
+    assert.throws(() => cli(root, "tag-subject", "1.0.0", "true"), /Command failed/, "not a version");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
