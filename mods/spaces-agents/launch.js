@@ -2,10 +2,12 @@
 // pane is the terminal carrying `bot=<id>` with an agent in front. The argument building
 // and messages live in launchArgs.js. Apache-2.0.
 
-import { hc, terminals, spaces, focused, run, knownAgents, readTextFile } from "herdr";
+import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTextFile, exec, appHome, notify, home } from "herdr";
 import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
 import { keyOf, rememberProject } from "./bots.js";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal } from "./launchArgs.js";
+import { installHook } from "./briefingText.mjs";
+import { configPaths, knownModelsFrom, modelArgs } from "./models.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
 
@@ -44,8 +46,41 @@ export async function liveTerminalOf(botId) {
   return { terminal: pick?.address ?? live[0], duplicate: true };
 }
 
-/** Called after a pane is tied to a bot, with the folder its session runs in. Group 4 fills it. */
-export async function afterBind(_bot, _sessionFolder) {}
+/**
+ * The per-turn briefing for a Claude bot (DESIGN Approach "Group 3", Decision 9): merges the
+ * hook entry, if absent, into `<sessionFolder>/.claude/settings.local.json` (never the shared
+ * settings.json) and keeps that file out of git through the clone's exclude file. Writes
+ * nothing, and tells the owner the README fix, when the pack's briefing.mjs isn't at the path
+ * computed from appHome(). `claude`: whether the session is Claude Code (other agents get
+ * nothing). Never throws: a failure is a notification, never a refused Start or Attach.
+ * Resolves with { written } (true when the hook entry was added or updated).
+ */
+export async function afterBind(bot, sessionFolder, claude = bot?.agent === "claude") {
+  if (!claude || !sessionFolder) return { written: false };
+  const folder = sessionFolder.length > 1 ? sessionFolder.replace(/\/+$/, "") : sessionFolder;
+  const io = {
+    git: async (args, cwd) => { try { return await exec("git", args, { cwd }); } catch { return null; } },
+    read: (path) => readTextFile(path),
+    write: (path, text, before) => writeTextFile(path, text, before),
+    mkdir: async (dir) => {
+      const r = await exec("mkdir", ["-p", dir]);
+      if (r.code !== 0) throw new Error(`couldn't make ${dir}: ${r.stderr.trim()}`);
+    },
+  };
+  // The same flow as the CLI's (briefingText.mjs installHook); warnings become notifications.
+  const { written, warnings } = await installHook(bot.name, folder, appHome(), io);
+  for (const body of warnings) notify({ title: "Bots", body, level: "warning", timeout: 15000 });
+  return { written };
+}
+
+// The agents' own config texts (models.js configPaths), for the model pin list.
+async function modelTexts() {
+  const out = {};
+  for (const [name, path] of Object.entries(configPaths(home()))) {
+    try { out[name] = await readTextFile(path); } catch { out[name] = null; }
+  }
+  return out;
+}
 
 // Where a started bot opens: the first space of this computer whose folder keys to the
 // project, else the shown space; in that space's active tab.
@@ -108,7 +143,17 @@ async function startOnce(projectKey, botId) {
   const parent = parentArgs(file, botId, (id) => (id === lead ? leadLive : null));
   const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
   const { space, tab } = await placeFor(projectKey);
-  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: agent.run });
+  // A12: a pinned model goes to the agent with its own flag, as the CLI passes it; a pin the
+  // agent doesn't list (an old free-text model) is skipped, and the owner told.
+  let pin = [];
+  if (bot.model) {
+    if (knownModelsFrom(agent.key, await modelTexts()).includes(bot.model)) pin = modelArgs(agent.key, bot.model);
+    else notify({ title: "Bots", level: "warning", timeout: 15000,
+      body: `${bot.name} is pinned to "${bot.model}", which isn't a ${agent.name ?? agent.key} model this computer lists; it starts on the agent's default. Edit the bot to pick a listed model, or clear the pin.` });
+  }
+  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin] });
+  // The briefing hook goes in before the session starts, so Claude Code reads it at startup.
+  await afterBind(bot, projectKey, agent.key === "claude");
   let r;
   try { r = await hc(args); } catch (e) { return { refused: `hc run failed: ${e?.message ?? e}` }; }
   if (r.code !== 0) return { refused: `hc run failed: ${(r.stderr || r.stdout).trim()}` };
@@ -117,7 +162,6 @@ async function startOnce(projectKey, botId) {
   if (!terminal) return { refused: `hc run gave no terminal address: ${r.stdout.trim()}` };
   started.set(botId, { terminal, at: Date.now() });
   rememberProject(projectKey);
-  await afterBind(bot, projectKey);
   return { terminal };
 }
 
@@ -165,6 +209,12 @@ export async function attachBot(projectKey, botId, terminal) {
       : `hc ${args.join(" ")} failed: ${why}` };
   }
   rememberProject(projectKey);
-  await afterBind(bot, sessionFolder);
+  // Only a Claude pane: its session folder is the one the check above tied to the project.
+  const { written } = await afterBind(bot, sessionFolder, isClaude(row, get));
+  if (written) {
+    notify({ title: "Bots", level: "info", timeout: 15000,
+      body: `${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no `
+        + "briefing, open /hooks once in that session to load it." });
+  }
   return { ok: true };
 }
