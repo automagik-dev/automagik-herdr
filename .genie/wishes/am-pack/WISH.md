@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `am-pack` |
 | **Date** | 2026-11-01 |
 | **Author** | herdr-bots coordinator, from the owner's rulings |
@@ -370,7 +370,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
 
 **Interfaces:**
 - Consumes: Group 3's ownership record and `update.mjs`; Group 5b's sidebar (space-icon inside it).
-- Produces: `RENAMES: Record<string,string>`, `KEY_RENAMES: Record<string,string>`, `plan(home: string) → { folders: [from,to][], layouts: {file, edits}[], keys: [from,to][], shared: [from,to][], paths: [from,to][] }`, `apply(plan, { backupDir }) → { done, skipped: {item, reason}[] }`, `revert(backupDir) → { restored: string[] }`.
+- Produces: `RENAMES: Record<string,string>`, `KEY_RENAMES: Record<string,string>`, `plan(home: string) → { folders: [from,to][], layouts: {file, edits}[], keys: [from,to][], shared: [from,to][], paths: [from,to][] }`, `apply(plan, { backupDir }) → { done, skipped: {item, reason}[] }`, `revert(backupDir) → { restored: string[] }`. `apply` writes a change journal (`journal.json`: every edit it made, file and before/after) into `backupDir`, and `revert` reads only that journal, so references the person added after the upgrade are never touched.
 
 **Acceptance Criteria:**
 - [ ] On the owner-shaped scratch home, after the migration: Cmd+V's binding names `am-sidebar.paste`; `main-agents.json` names `am-sidebar` and `am-footer`, and its backup exists; the bots, icons, colours and collapsed state survive; `mods/pocket-link` and every non-pack folder are byte-identical.
@@ -495,6 +495,29 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Plan review — 2026-11-01 — APPROVED at f7bfd23
+
+- **Reviewer:** g8-review (read-only).
+- **Round 1, e003ac3: FIX-FIRST.**
+  - H1: the bridge can't finish the upgrade.
+  - H2: aliases are impossible in Herdr's command model.
+  - H3: the migration map missed the CLI link, the briefing hooks, the projects file, pets, edited layouts and data/.
+  - H4: ownership came from folder names.
+  - M1–M6 and L1–L5.
+- **Owner decisions folded in:**
+  - D5: Bots tab with a popup, through openOverlay.
+  - D12: folders and titles renamed, with migration; layouts migrated with backups.
+  - D11: no bridge; rerun the installer.
+  - am-automations name.
+  - t187's corrections: three MIT forks, am-quota wiring moves to G2, 8 icons.
+- **Rounds 2–4 (0b65782, 6610e49, 99bfbb3): FIX-FIRST**, narrowing to:
+  - rollback across the rename (revert);
+  - Herdr-owned files (shared keys only through in-mod shims);
+  - references following ownership;
+  - targeted inverse edits;
+  - `.prev/` holding only pack releases, with adopted folders in `backup/`.
+- **f7bfd23: APPROVED.** One builder note, folded in: `apply` writes a change journal that `revert` reads.
 
 ---
 
