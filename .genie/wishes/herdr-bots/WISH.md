@@ -587,6 +587,43 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - CodeRabbit (Minor): a lookup that throws, such as hc being unavailable, is reported as "labels weren't updated" instead of "could not be checked".
 - **Merged into `dev`:** PR #4, a86c89f. 218/218 tests, `node --check` clean, CI checks pass.
 
+
+### Groups 8, 9 and 11 — v0.2.0 released — 2026-11-01
+
+- **G8 release automation (A14):** g8-release; criteria g8-review.
+  - SHIP after 2 fix loops (3aeb9d3..4ea72c7).
+  - 967d2f4: the briefing flake fixed by scaling test times only. The real 2 s budget is pinned by a test, and 10 of 10 parallel runs pass at load 81–92.
+  - df937dd: the first release is 0.2.0 (A19).
+- **G9 rename and README (A15):** g7-form; SHIP at de69ee7.
+- **G11 one-command installer (A17, A18):** g3-fix; criteria g8-review, quality g7-quality.
+  - Round 1: FIX-FIRST, both reviewers. The quality finding was MEDIUM: the marker was written on a no-op run.
+  - Loop 1, 84f30ac..7ff76ab:
+    - before-install copy;
+    - main() wrapper;
+    - layout inside the pack;
+    - traps;
+    - RELEASE_URL allowlist;
+    - prompt edits.
+  - Re-check: quality FIX, MEDIUM. The allowlist was escaped with `..`, which curl collapses.
+  - Loop 2, b142284..e7e5014:
+    - `..` and `%` refused, `--path-as-is`;
+    - `layout=added` in the marker;
+    - atomic before-install copy;
+    - a symlinked pack refused;
+    - the switch offered on every run via `herdr-app status`;
+    - A18: place `"none"` and the `automagik` layout;
+    - v0.2.0 strings.
+  - Final: criteria SHIP, quality PASS. LOW polish 7d54767: a failed copy stops the install, and there is no switch away from a layout that already draws the pack. Coordinator verified the diff.
+- **Integration:** branch `wish/herdr-bots-release` = G11 + G8 + dev.
+  - The README conflict with G10's pane-label docs was resolved by keeping both sides.
+  - 817e010: the form test names `automagik-herdr`.
+  - On the merged head: 282 of 282 tests pass, `node --check` is clean, version check 0.0.0, `version.mjs next` gives 0.2.0, `sh -n` and `shellcheck -s sh` are clean.
+- **Merged:** PR #5 → dev eb2f985. Release run 41353497279: success.
+  - GitHub release `v0.2.0` (Latest, not a prerelease) with `automagik-herdr-0.2.0.tgz` and `SHA256SUMS`. Tag 0360275, `main` at 350961d.
+  - `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh` serves the installer.
+  - Draft PR #2 shows as merged, because its commits are in #5.
+- **Not yet done:** the live install of v0.2.0 against a scratch `HERDR_APP_HOME`, and the owner's click-through.
+
 ---
 
 ## Files to Create/Modify
