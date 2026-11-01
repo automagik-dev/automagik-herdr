@@ -57,9 +57,9 @@ This wish turns that branch into the product:
 | D1 | The bot mod is **`am-sidebar`**. It draws the whole sidebar, and Bots is one section. | Owner ruling 1. mod-manager switches mods by folder, so "am-bots" off would hide the spaces too. |
 | D2 | **No split.** The bot tree stays under its project's space (herdr-bots A8, C2, C7). | Owner ruling 2. Two mods cannot interleave rows in one list. |
 | D3 | **One download.** A release is `automagik-herdr-pack-<v>.tgz` (every mod folder plus `layouts/automagik.json`) and `SHA256SUMS`. Install, update and rollback treat the pack as one unit. | Owner ruling 4. |
-| D4 | **Eight mods:** `am-sidebar` (spaces-agents + space-icon), `am-footer` (sidebar-chrome), `am-markdown` (md-menu + markdown-browser), `am-tabs` (auto-tabs), `am-new-menu` (new-menu-tui), `am-mods` (mod-manager), `am-quota` (new code against CLIProxyAPI), `am-automations` (automations). | Owner rulings 5, 8 and 10. `am-automations` follows the am- scheme; the owner can rename it before Group 7. |
+| D4 | **Eight mods:** `am-sidebar` (spaces-agents + space-icon), `am-footer` (sidebar-chrome), `am-markdown` (md-menu + markdown-browser), `am-tabs` (auto-tabs), `am-new-menu` (new-menu-tui), `am-mods` (mod-manager), `am-quota` (new code against CLIProxyAPI), `am-automations` (automations). | Owner rulings 5, 8 and 10. `am-automations` confirmed (t187 for the owner, 2026-11-01). |
 | D5 | **New bot leaves the sidebar body.** The footer gets a Bots tab that runs `run("spaces-agents.new-bot")` and `run("spaces-agents.edit")` (the existing pick popup). The sidebar's "New bot" row is removed. The bot management suite is the sidebar's existing dialogs, reached from the footer; no bot code is copied into the footer mod. | Owner ruling 6. `spaces-agents/main.js:682-695` already accepts these mod commands from any caller (`create.js` already runs `spaces-agents.refresh`), and Herdr mods cannot import across folders. |
-| D6 | **Every mod is Apache-2.0.** markdown-browser (ohneda) and mod-manager (jacksonpires) ship under Apache-2.0 as derived works, with the upstream MIT copyright and permission notice verbatim in `LICENSE-upstream` and NOTICE. | Owner ruling 7. MIT permits this; the notice is its one condition. |
+| D6 | **Every mod is Apache-2.0.** The three MIT forks, automations (DnzzL), markdown-browser (ohneda) and mod-manager (jacksonpires), ship under Apache-2.0 as derived works, with the upstream MIT copyright and permission notice verbatim in `LICENSE-upstream` and NOTICE. | Owner ruling 7. MIT permits this; the notice is its one condition. |
 | D7 | **am-quota is clean-room.** No line comes from 0xRowdy/herdr-cliproxy, which has no licence. | Owner ruling on cliproxy, and copyright law. |
 | D8 | **One layout, `automagik`.** The pack's root `layouts/automagik.json` replaces v0.2.0's bots-only `mods/spaces-agents/layouts/automagik.json`. The installer replaces an installed copy only when it is byte-identical to the v0.2.0 file; otherwise it keeps it and prints a note. Every mod keeps `place: "none"`. | Owner ruling 9 and herdr-bots A18. |
 | D9 | **Integration branch.** Groups merge into `wish/am-pack`; `dev` receives one merge, which cuts one release, **v0.3.0**. | Every shipping merge into `dev` cuts a release (herdr-bots A14). Landing the groups one by one would publish half-built packs. |
@@ -102,7 +102,7 @@ This wish turns that branch into the product:
 - [ ] `automagik-herdr update --rollback` returns that install to v0.2.0 working.
 - [ ] The footer's Bots tab opens New bot and the bot picker. The sidebar body has no New bot row.
 - [ ] `grep -rn "0xRowdy\|herdr-cliproxy"` finds only NOTICE's credit line. A reviewer's diff of `mods/am-quota` against the upstream repo shows no shared lines.
-- [ ] Every mod folder has `LICENSE` (Apache-2.0). The two MIT-derived mods also have `LICENSE-upstream`.
+- [ ] Every mod folder has `LICENSE` (Apache-2.0). All three MIT-derived mods also have `LICENSE-upstream`.
 
 ## Execution Strategy
 
@@ -153,8 +153,8 @@ This wish turns that branch into the product:
    - README: keep v0.2.0's structure and append the pack sections.
    - `mods/spaces-agents/RECIPE.md`: G5's version wins.
    - Drop the root `layouts/bots.json`.
-2. Prune `mods/sidebar-chrome` to the icons `main.js` uses: puzzle, clock, settings, plus, smartphone, search, sidebar. Keep `gpui-kit.d.ts` and `jsconfig.json` out of git in every mod (`.gitignore`).
-3. Apache-2.0 `LICENSE` in every mod. markdown-browser and mod-manager get `LICENSE-upstream`, holding the MIT text verbatim. NOTICE credits each upstream.
+2. Prune `mods/sidebar-chrome` to the 8 icons `main.js` uses: puzzle, clock, layers, smartphone, settings, plus (rail), search, sidebar (brand row); `image("frame/welcome/herdr.png")` is Herdr's own frame and stays referenced. Exclude `mods/am-quota`, `test/am-quota-*.test.mjs`, the `am-quota-panel` block in `layouts/automagik.json` and the footer's Quota tab: they land with Group 2 (the installer refuses a layout that places a mod nobody installs). Keep `gpui-kit.d.ts` and `jsconfig.json` out of git in every mod (`.gitignore`).
+3. Apache-2.0 `LICENSE` in every mod. The three MIT forks (automations, markdown-browser, mod-manager) each keep a separate `LICENSE-upstream` holding the MIT text verbatim; markdown-browser's and mod-manager's current `LICENSE` (the MIT text) moves to `LICENSE-upstream`. NOTICE credits each upstream.
 4. `catalog/index.json` regenerated with `scripts/catalog.mjs`: pack name `automagik-herdr`, branch `dev`, no `headCommit` pinned to a local commit.
 5. Pocket Link absent: no folder, no catalog entry other than an external link to automagik-pocket. The installer refuses foreign folders (pack commits c3606e0, e5b4dd9).
 6. Land as two PRs into `wish/am-pack`, each within the band: (a) sidebar-chrome, auto-tabs, new-menu-tui, keys.json; (b) md-menu, markdown-browser, space-icon, automations, mod-manager, catalog, scripts/catalog.mjs, NOTICE, RECIPE.md, README.
@@ -166,7 +166,7 @@ This wish turns that branch into the product:
 **Acceptance Criteria:**
 - [ ] `herdr-app check` passes on a scratch copy of every mod folder.
 - [ ] No `pocket-link` folder; `git grep -n pocket-link -- mods scripts catalog` finds only the footer tab's `mod.open` and the catalog's external link.
-- [ ] Every `mods/*/LICENSE` is Apache-2.0. Both MIT-derived mods have `LICENSE-upstream` with the original copyright line.
+- [ ] Every `mods/*/LICENSE` is Apache-2.0. All three MIT-derived mods have `LICENSE-upstream` with the original copyright line.
 - [ ] `node scripts/catalog.mjs --check` passes.
 
 **Validation:**
@@ -188,7 +188,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
    - the panel;
    - the switch.
    It reads quotas and accounts from one configurable base URL plus a management key held in a file or the environment.
-2. The footer Quota tab, opening `mod.open("am-quota")`.
+2. The footer Quota tab and the `am-quota-panel` block in `layouts/automagik.json` (both deferred here from Group 1).
 3. Tests: the policy edges, the API translation, and the credential write.
 
 **Interfaces:**
@@ -298,12 +298,12 @@ node --test 'test/*.test.mjs' && node --check mods/sidebar-chrome/main.js && nod
 **Goal:** One mod does what md-menu and markdown-browser do today: right-click a terminal for the Markdown files it printed, and preview one in a pane.
 
 **Deliverables:**
-1. `mods/markdown/` (Group 7 renames it): md-menu's terminal menu plus markdown-browser's renderer in one folder. markdown-browser's MIT notice moves into `LICENSE-upstream`. The old two folders are deleted.
+1. Code-only merge into `mods/md-menu/` (Group 7 renames it `am-markdown`): md-menu's terminal menu plus markdown-browser's renderer in one folder; current names and `markdown-browser.*` shared keys stay for Groups 6–7 to move. markdown-browser's MIT notice moves into md-menu's `LICENSE-upstream`, and `mods/markdown-browser` is deleted.
 2. `layouts/automagik.json`'s `terminal_menu` entry points at the merged mod. Catalog and NOTICE are updated.
 
 **Interfaces:**
 - Consumes: Group 1's `mods/md-menu`, `mods/markdown-browser`.
-- Produces: `mods/markdown/{main.js,mod.json,LICENSE,LICENSE-upstream,RECIPE.md}`.
+- Produces: `mods/md-menu/{main.js,mod.json,LICENSE,LICENSE-upstream,RECIPE.md}` with the renderer inside.
 
 **Acceptance Criteria:**
 - [ ] On a scratch home, right-clicking a terminal that printed a `.md` path lists it, and clicking it opens the preview. The test and recipe say how this was checked.
@@ -311,7 +311,7 @@ node --test 'test/*.test.mjs' && node --check mods/sidebar-chrome/main.js && nod
 
 **Validation:**
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/markdown/*.js; do node --check "$f" || exit 1; done
+node --test 'test/*.test.mjs' && for f in mods/md-menu/*.js; do node --check "$f" || exit 1; done
 ```
 
 **depends-on:** Group 1
@@ -355,6 +355,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
    - `space.colors` → `am.space-colors`
    - `sidebar.collapsed` → `am.sidebar-collapsed`
    - `sidebar.width` → `am.sidebar-width`
+   - every `markdown-browser.*` key → `am.markdown.*`
    It exports `plan(installed)` → the list of moves. Both `update.mjs` and `install.sh` (through node) apply it: folders are moved aside per D10; `shared.json` keys are copied (never deleted, for one release); `.prev`/`.before-install` are renamed; layout references to old mod names are rewritten only in the pack's own unedited layout.
 2. The mods read the new key first, then the old one.
 
