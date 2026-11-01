@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { AGENTS, agentArgv, agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, shownModel, withOverrides } from "../mods/spaces-agents/models.js";
+import { AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, shownModel, withOverrides } from "../mods/spaces-agents/models.js";
 
 const files = (map) => ({ home: "/h", read: (p) => map[p] ?? null });
 
@@ -108,4 +108,17 @@ test("withOverrides: programs.json overrides run and adds agents with a run", ()
   assert.equal(t.nope, undefined);
   assert.deepEqual(withOverrides("{bad").claude.run, ["claude"]);
   assert.deepEqual(AGENTS.claude.run, ["claude"], "the shipped table is untouched");
+});
+
+test("the *From variants take pre-read texts (the mod's async readTextFile), by configPaths' names", () => {
+  const p = configPaths("/h");
+  assert.equal(p.claudeSettings, "/h/.claude/settings.json");
+  assert.equal(p.codexModels, "/h/.codex/models_cache.json");
+  assert.equal(defaultModelFrom("claude", { claudeSettings: '{"model":"opus"}' }), "opus");
+  assert.equal(defaultModelFrom("codex", { codexConfig: 'model = "gpt-6-luna"' }), "gpt-6-luna");
+  assert.equal(defaultModelFrom("claude", {}), null);
+  assert.deepEqual(knownModelsFrom("codex", { codexModels: '{"models":[{"slug":"a"}]}', codexConfig: 'model = "b"' }), ["a", "b"]);
+  assert.ok(knownModelsFrom("claude").includes("claude-opus-5-5"));
+  // A Promise where a text belongs (an un-awaited async read) is no text, never a throw.
+  assert.equal(defaultModelFrom("claude", { claudeSettings: Promise.resolve("{}") }), null);
 });

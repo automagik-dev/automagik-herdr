@@ -500,7 +500,9 @@ async function cmdRm(opts, [ref]) {
   writeBotsFile(project.key, last ? null : raw, project.text);
   const notes = [];
   if (last) notes.push(`${bot.name} was the project's last bot: ${under(project.key, BOTS_PATH)} was deleted.`);
-  const { holders } = bot.planned ? { holders: [] } : await panesOf(bot.id, { localOnly: true });
+  // The file is written already: hc missing or failing only drops the label note.
+  let holders = [];
+  if (!bot.planned) { try { ({ holders } = await panesOf(bot.id, { localOnly: true })); } catch { holders = []; } }
   if (holders.length) notes.push(`${holders.join(", ")} still carr${holders.length > 1 ? "y" : "ies"} its label; herdr-bots can't detach a removed bot, so run: ${holders.map((t) => `hc label ${t} ${BOT_LABEL}=`).join("; ")}`);
   for (const n of notes) process.stderr.write(`herdr-bots: ${n}\n`);
   return opts.json ? { removed: bot.id, project: project.key, deletedFile: last, labelledTerminals: holders } : `${bot.name} (${bot.id}) removed.`;

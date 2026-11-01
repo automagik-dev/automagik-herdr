@@ -140,29 +140,54 @@ function tomlTopModel(text) {
 }
 
 /**
+ * The agents' own config files this module reads, by name, under a home folder. A caller
+ * whose file reads are async (the mod's readTextFile) reads these first and passes the
+ * texts to defaultModelFrom / knownModelsFrom.
+ */
+export function configPaths(home) {
+  return {
+    claudeSettings: `${home}/.claude/settings.json`,
+    codexConfig: `${home}/.codex/config.toml`,
+    codexModels: `${home}/.codex/models_cache.json`,
+    geminiSettings: `${home}/.gemini/settings.json`,
+  };
+}
+
+// Every config text (null when missing) through a synchronous `read(path)`.
+function textsOf(home, read) {
+  const out = {};
+  for (const [name, path] of Object.entries(configPaths(home))) {
+    try { out[name] = read(path) ?? null; } catch { out[name] = null; }
+  }
+  return out;
+}
+
+const parseJson = (t) => { try { return typeof t === "string" && t ? JSON.parse(t) : null; } catch { return null; } };
+
+/**
  * The model an agent runs when its command line names none: its own configured default,
  * when that is one cheap local file (Claude Code: `~/.claude/settings.json` `model`; Codex:
  * `~/.codex/config.toml` top-level `model`; Gemini: `~/.gemini/settings.json` `model.name`
  * or `model`). Null for every other agent, or when the file or key is missing.
- * `read(path)` resolves a file's text or null; `home` is the user's home folder.
+ * `texts`: configPaths' names mapped to each file's text (null or absent: no file).
  */
-export function defaultModel(agentKey, { home, read }) {
-  const json = (path) => { try { const t = read(path); return t ? JSON.parse(t) : null; } catch { return null; } };
+export function defaultModelFrom(agentKey, texts = {}) {
   if (agentKey === "claude") {
-    const m = json(`${home}/.claude/settings.json`)?.model;
+    const m = parseJson(texts.claudeSettings)?.model;
     return typeof m === "string" && m ? m : null;
   }
-  if (agentKey === "codex") {
-    let t = null;
-    try { t = read(`${home}/.codex/config.toml`); } catch { t = null; }
-    return t ? tomlTopModel(t) : null;
-  }
+  if (agentKey === "codex") return typeof texts.codexConfig === "string" ? tomlTopModel(texts.codexConfig) : null;
   if (agentKey === "gemini") {
-    const m = json(`${home}/.gemini/settings.json`)?.model;
+    const m = parseJson(texts.geminiSettings)?.model;
     const name = typeof m === "string" ? m : m?.name;
     return typeof name === "string" && name ? name : null;
   }
   return null;
+}
+
+/** defaultModelFrom over a synchronous `read(path) => string | null` under `home` (the CLI). */
+export function defaultModel(agentKey, { home, read }) {
+  return defaultModelFrom(agentKey, textsOf(home, read));
 }
 
 // Claude Code: the aliases `claude --help` names ("an alias for the latest model (e.g.
@@ -173,20 +198,24 @@ const CLAUDE_MODELS = ["opus", "sonnet", "haiku", "claude-fable-5-1", "claude-op
  * The models a bot running `agentKey` may be pinned to (A12: picked from a list, never
  * typed). Claude Code: CLAUDE_MODELS above. Codex: the slugs in its own model cache,
  * `~/.codex/models_cache.json` `.models[].slug`, which Codex refreshes itself. Any agent:
- * plus its configured default (defaultModel). Others: empty (no pin offered).
+ * plus its configured default (defaultModelFrom). Others: empty (no pin offered).
+ * `texts` as for defaultModelFrom.
  */
-export function knownModels(agentKey, { home, read } = {}) {
+export function knownModelsFrom(agentKey, texts = {}) {
   const out = [];
   const add = (m) => { if (typeof m === "string" && m && !out.includes(m)) out.push(m); };
   if (agentKey === "claude") CLAUDE_MODELS.forEach(add);
-  if (agentKey === "codex" && read) {
-    try {
-      const cache = JSON.parse(read(`${home}/.codex/models_cache.json`) ?? "null");
-      for (const m of Array.isArray(cache?.models) ? cache.models : []) add(m?.slug ?? m?.id);
-    } catch { /* no cache: no list */ }
+  if (agentKey === "codex") {
+    const cache = parseJson(texts.codexModels);
+    for (const m of Array.isArray(cache?.models) ? cache.models : []) add(m?.slug ?? m?.id);
   }
-  if (read && home) add(defaultModel(agentKey, { home, read }));
+  add(defaultModelFrom(agentKey, texts));
   return out;
+}
+
+/** knownModelsFrom over a synchronous `read(path)` under `home` (the CLI); no reader: the static list. */
+export function knownModels(agentKey, { home, read } = {}) {
+  return knownModelsFrom(agentKey, read && home ? textsOf(home, read) : {});
 }
 
 /** The arguments that start `agentKey` on `model` (A12), [] when there is no pin or no known flag. */
