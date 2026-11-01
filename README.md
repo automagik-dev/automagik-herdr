@@ -104,6 +104,23 @@ The create form writes bots. Category order, titles and subtitles are edited by 
 main bot's view lists categories in the order of the `categories` array, each with its
 `title` and its muted `sub`.
 
+## Create, Start and Attach
+
+- **New bot** at the foot of the sidebar opens the form: project folder, name, character and
+  colour (or the Omni look, the octopus in deepseek), role, instructions (at most 4,000
+  characters), coding agent, model, whom it reports to, category, and whether it is planned.
+  A project's first bot is its main bot. The form writes `.herdr/bots.json` in the project's
+  main checkout, on this computer only.
+- **Start** opens the bot's coding agent as a new pane in the project's space, labelled
+  `bot=<id>`. A bot that is already running is focused instead; a planned bot can't start.
+  A member started while its lead runs gets the lead's terminal as its hc parent, so
+  herdr-core types its `blocked`, `error` and exit notes into the lead's pane.
+- **Attach as bot…** (right-click an agent in the sidebar) ties a running pane to a bot
+  without restarting it. A Claude pane is refused, with nothing written, when its session
+  runs outside the bot's project.
+- Mod commands: `spaces-agents.new-bot`, `spaces-agents.edit`, `spaces-agents.start` and
+  `spaces-agents.attach`. Bound to a key, they act on the focused pane and its bot.
+
 ## Develop
 
 ```bash

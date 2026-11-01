@@ -281,3 +281,54 @@ test("label key", () => {
   assert.equal(BOT_LABEL, "bot");
   assert.equal(MAX_INSTRUCTIONS, 4000);
 });
+
+// ---- the Create form's write-back (applyBotEdit) ----
+import { applyBotEdit, newCategoryId, OMNI_LOOK } from "../mods/spaces-agents/model.js";
+
+test("create: the first bot of a project, from no file, is a valid file", () => {
+  const out = applyBotEdit(null, bot(ID.main, "main", { look: { ...OMNI_LOOK }, lead: ID.cap, category: "eng" }));
+  assert.deepEqual(out.categories, []);
+  assert.equal(out.bots[0].lead, undefined);
+  assert.equal(out.bots[0].category, undefined);
+  assert.deepEqual(checkBots(out), []);
+});
+
+test("edit: clears planned, keeps unknown keys and the entries parseBots left out", () => {
+  const source = sample((f) => { f.bots[4].extra = "kept"; f.bots.push({ name: "nobody", kind: "member" }); return f; });
+  const { raw, file } = parseBots(text(source));
+  const was = file.bots[4];
+  const { extra, ...shown } = was; // the form edits the fields it knows, not "extra"
+  assert.equal(extra, "kept");
+  const out = applyBotEdit(raw, { ...shown, agent: "codex", planned: undefined, model: "" });
+  const edited = out.bots.find((b) => b.id === ID.plan);
+  assert.equal(edited.planned, undefined);
+  assert.equal(edited.agent, "codex");
+  assert.equal("model" in edited, false);
+  assert.equal(edited.extra, "kept");
+  assert.equal(out.bots.length, 6); // the left-out entry survives
+  assert.equal(raw.bots[4].planned.wave, 3); // raw itself untouched
+});
+
+test("edit: a lead equal to the main bot is stored as none; another lead drops the category", () => {
+  const { raw } = parseBots(text(sample()));
+  const cap = raw.bots[1];
+  assert.equal(applyBotEdit(raw, { ...cap, lead: ID.main }).bots[1].lead, undefined);
+  const moved = applyBotEdit(raw, { ...cap, lead: ID.tst }).bots[1];
+  assert.equal(moved.lead, ID.tst);
+  assert.equal(moved.category, undefined);
+});
+
+test("create: a new category is added with a unique id and used", () => {
+  const { raw } = parseBots(text(sample()));
+  const out = applyBotEdit(raw, bot("b-ffffffffff", "member"), { title: "Engineering", sub: " the builders " });
+  assert.deepEqual(out.categories.at(-1), { id: "engineering", title: "Engineering", sub: "the builders" });
+  assert.equal(out.bots.at(-1).category, "engineering");
+  assert.equal(newCategoryId("Engineering", out.categories), "engineering-2");
+  assert.deepEqual(checkBots(out), []);
+});
+
+test("create: instructions over 4,000 characters can't be written", () => {
+  const { raw } = parseBots(text(sample()));
+  const out = applyBotEdit(raw, bot("b-ffffffffff", "member", { instructions: "x".repeat(MAX_INSTRUCTIONS + 1) }));
+  assert.ok(checkBots(out).some((e) => /4000/.test(e)));
+});
