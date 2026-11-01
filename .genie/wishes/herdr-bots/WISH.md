@@ -372,6 +372,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Quality pass: PASS.** LOW: a colour named like `__proto__` blanks a picture; a failed picture write is never retried; keyboard handles keyed by list position.
 - **Route:** fix after Group 6, together with the detected model in rows (A12) and CLI-created projects showing in the sidebar.
 
+### Group 3 review — 2026-11-01 (rounds 2–3, merged)
+
+- **Fix loop 1** (g3-fix, integration with Groups 4 and 6, the detected model in rows, CLI-created projects): criteria **SHIP**.
+- **Quality pass: FIX-FIRST → PASS.** The MEDIUM was a lost update in `spaces-agents-projects.json` when CLIs run at once. It is fixed in 6c4687c with an exclusive lock plus a re-read. In 20 parallel writers × 3 runs, the old code kept 20/16/18 keys and the new code 20/20/20. The three LOWs were fixed in 3dff08c (argv cached per `created_ms`, at most 3 `hc get` per refresh, a notice once on a failed picture write, a README line).
+- **Re-check LOWs fixed in ff42d76:** a wrapper `sh -c` argv is asked again until an agent is in front, and a lock holder removes only its own lock (pid + token; stale takeover by rename aside, put back with link).
+- **Validation:** coordinator-run gate on ff42d76: `node --test` 156/156, `node --check` loop clean; after the merge, `node --test` on dev 156/156.
+- **Merged:** PR #1 → dev as efa21e6.
+- **Open:** live checks: screenshots against mockup v9, C7's poses, typing after a fold. They are CLI- and `herdr-app shot`-driven only; nothing drives the owner's window.
+
 ### Group 6 review — owner decisions A11/A12 — 2026-11-01
 
 - **Branch:** `wish/herdr-bots-g6` from 9a48489: f971244, d7bcab6, fixes 8c01b8a, b9857da, 865432d; worker g6-engineer; `node --test` 126/126; `node --check` clean incl. `bin/`; read-only real-host runs: `herdr-bots ls --all --json` wrote nothing; `detectModel` on `t1bw` foreground argv → `claude-opus-5-5`.
