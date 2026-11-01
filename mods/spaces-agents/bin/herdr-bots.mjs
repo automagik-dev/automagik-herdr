@@ -707,7 +707,11 @@ async function cmdStart(opts, [ref]) {
     const fresh = loadProject(key).file;
     if (fresh.bots.some((b) => b.id === bot.id && !b.planned)) {
       const words = relabelWords(labels, paneLabels(fresh, bot.id), labels);
-      if (words.length && (await hc(["label", terminal, ...words])).code !== 0) hook.warnings.push(`${terminal}'s labels ${words.join(" ")} weren't set.`);
+      if (words.length && (await hc(["label", terminal, ...words])).code !== 0) {
+        const warning = `${terminal}'s labels ${words.join(" ")} weren't set.`;
+        hook.warnings.push(warning);
+        report([warning]); // the hook's warnings were printed before hc run
+      }
     }
   } catch { /* the file can't be read now: the labels it started with stand */ }
   if (!place) {

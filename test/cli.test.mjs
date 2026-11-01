@@ -810,3 +810,25 @@ test("attach leaves the pane matching the bot: a stale role or category from its
   assert.equal(s.cli(["attach", "Dev", "t8"]).code, 0);
   assert.deepEqual(labelsIn(s).t8, { squad: "ops", bot: ID.dev, category: "eng" });
 });
+
+test("start: an edit landing during hc run relabels the new pane; a failed relabel reaches stderr", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const edited = team();
+  edited.bots.find((b) => b.id === ID.dev).rank = "reviewer";
+  const st = s.hcState();
+  st.onRunWrite = { path: s.botsPath, text: `${JSON.stringify(edited, null, 2)}\n` };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const ok = s.cli(["start", "Dev"]);
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(labelsIn(s).t100.role, "reviewer");
+  // Again, with the new pane refusing the label.
+  s.seed(team());
+  const st2 = s.hcState();
+  st2.terminals = [];
+  st2.failLabel = "t101";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st2));
+  const r = s.cli(["start", "Dev"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /t101's labels role=reviewer weren't set\./);
+});
