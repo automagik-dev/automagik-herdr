@@ -313,6 +313,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Round 2: APPROVED.** All round-1 findings verified resolved; no new contradiction, broken interface or size-band breach (Group 1 ≈ 1,900 insertions, tight; Group 2 ≈ 1,000). Three LOW wording notes repaired after the verdict: Group 1's `writeBots` check reworded, Decision 3's live rule added to `liveTerminalOf`, command → project lookup stated in A10.
 - **Verdict on disk:** APPROVED. `genie wish lint` OK.
 
+### Group 1 review — 2026-11-01
+
+- **Branch:** `wish/herdr-bots-g1` (6 commits, bf36909..8cbffda); worker g1-engineer; validation `node --test` 26/26 + `node --check` clean; `herdr-app check` passed on a scratch copy.
+- **Size note:** 2,236 insertions, of which ~1,306 are copied files (clone byte copy ~732, two licences 402, layout 172); new code, tests and README ~930.
+- **Criteria review, round 1: FIX-FIRST.** HIGH: `bots.js` uses `fs.access`, absent from Herdr's `fs/promises` (readFile, writeFile, readdir, exists, unlink, rmdir, mkdir), so the non-git key rule and local `watchFolder` are dead inside Herdr; tests miss it because they load Node's `fs`. MEDIUM: `fs.mkdir` of `<project>/.herdr` may be refused (Herdr fs writes only under its app home). LOW: first-read parse failure vanishes silently; remote key cached across an outage; README change notice omits `mod.json`; no remote-space `on` test; remote empty-folder space skipped. Passed: byte copy (cmp), interfaces, `defaultLook` = Automagik `lookOf` on 3,000 ids, Decision 15 (plus `--show-toplevel` fallback for non-`.git` common dirs), discovery forget rule, rename map, README items, layout, LICENSE, scope.
+- **Quality pass, round 1: FIX-FIRST.** MEDIUM: a rejected git call cached as "not git" for 60 s; `writeBots` without `expected` re-reads before writing, so the snapshot guard never fires (and `parseBots` drops entries a write-back would delete). LOW: overlapping watchers, out-of-order refreshes, redraw every tick, rename-map type unchecked. Clean: injection (argv array), prototype pollution, type checks.
+- **Route:** all findings sent to g1-engineer as fix loop 1 of 2 (quality loop 1 of 1).
+- **Pending live (owner approval asked of t1m):** pack install over the owner's clone, rename-map edit within 15 s, in-Herdr `writeBots`/`discoverProjects` dedupe.
+
 ---
 
 ## Files to Create/Modify
