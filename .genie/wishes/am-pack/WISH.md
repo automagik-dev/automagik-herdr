@@ -58,7 +58,7 @@ This wish turns that branch into the product:
 | D2 | **No split.** The bot tree stays under its project's space (herdr-bots A8, C2, C7). | Owner ruling 2. Two mods cannot interleave rows in one list. |
 | D3 | **One download.** A release is `automagik-herdr-pack-<v>.tgz` (every mod folder plus `layouts/automagik.json`) and `SHA256SUMS`. Install, update and rollback treat the pack as one unit. | Owner ruling 4. |
 | D4 | **Eight mods:** `am-sidebar` (spaces-agents + space-icon), `am-footer` (sidebar-chrome), `am-markdown` (md-menu + markdown-browser), `am-tabs` (auto-tabs), `am-new-menu` (new-menu-tui), `am-mods` (mod-manager), `am-quota` (new code against CLIProxyAPI), `am-automations` (automations). | Owner rulings 5, 8 and 10. `am-automations` confirmed (t187 for the owner, 2026-11-01). |
-| D5 | **New bot leaves the sidebar body.** The footer gets a Bots tab that runs `run("spaces-agents.new-bot")` and `run("spaces-agents.edit")` (the existing pick popup). The sidebar's "New bot" row is removed. The bot management suite is the sidebar's existing dialogs, reached from the footer; no bot code is copied into the footer mod. | Owner ruling 6. `spaces-agents/main.js:682-695` already accepts these mod commands from any caller (`create.js` already runs `spaces-agents.refresh`), and Herdr mods cannot import across folders. |
+| D5 | **New bot leaves the sidebar body; the footer gets one Bots tab.** The Bots tab (a robot glyph) is placed first in the rail: Bots, Mods, Automations, Quota, Pocket Link. Clicking it opens a small popup owned by sidebar-chrome, which closes on Esc, with "New bot" and "Bot settings". Each entry runs `openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, props: { form: "create" } })` or `props: { form: "pick" }` respectively. The tab works with no bot defined. The sidebar's wide "+ New bot" row (`spaces-agents/main.js:1073-1078`) is removed. The bot management suite is the sidebar's existing dialogs, and no bot code is copied. | Owner via t187, 2026-11-01: the action must not appear twice, and the menu offers both New bot and the bot settings pane. A mod cannot call another mod's `nextCommand` handler; `spaces-agents` `init` reads `props()` first and returns a `BotForm` (`main.js:119-124`). |
 | D6 | **Every mod is Apache-2.0.** The three MIT forks, automations (DnzzL), markdown-browser (ohneda) and mod-manager (jacksonpires), ship under Apache-2.0 as derived works, with the upstream MIT copyright and permission notice verbatim in `LICENSE-upstream` and NOTICE. | Owner ruling 7. MIT permits this; the notice is its one condition. |
 | D7 | **am-quota is clean-room.** No line comes from 0xRowdy/herdr-cliproxy, which has no licence. | Owner ruling on cliproxy, and copyright law. |
 | D8 | **One layout, `automagik`.** The pack's root `layouts/automagik.json` replaces v0.2.0's bots-only `mods/spaces-agents/layouts/automagik.json`. The installer replaces an installed copy only when it is byte-identical to the v0.2.0 file; otherwise it keeps it and prints a note. Every mod keeps `place: "none"`. | Owner ruling 9 and herdr-bots A18. |
@@ -100,7 +100,7 @@ This wish turns that branch into the product:
 - [ ] On a scratch `HERDR_APP_HOME` with plain Herdr, the curl one-liner installs the eight `am-*` mods and `layouts/automagik.json`, `herdr-app check` passes for each, and after the layout switch Herdr shows the sidebar, footer rail, tab bar and `+` menu with no mod errors.
 - [ ] A v0.2.0 install (spaces-agents, its before-install copy, `.prev`, shared keys, `automagik.json` layout) runs `automagik-herdr update` and ends on v0.3.0. It has the eight `am-*` folders, its shared keys under `am.*`, and its layout replaced only if unedited. Nothing outside the pack's folders has changed: Pocket Link's folder is byte-identical.
 - [ ] `automagik-herdr update --rollback` returns that install to v0.2.0 working.
-- [ ] The footer's Bots tab opens New bot and the bot picker. The sidebar body has no New bot row.
+- [ ] The footer's Bots tab, first in the rail, opens a popup with New bot and Bot settings. The sidebar body has no New bot row.
 - [ ] `grep -rn "0xRowdy\|herdr-cliproxy"` finds only NOTICE's credit line. A reviewer's diff of `mods/am-quota` against the upstream repo shows no shared lines.
 - [ ] Every mod folder has `LICENSE` (Apache-2.0). All three MIT-derived mods also have `LICENSE-upstream`.
 
@@ -272,16 +272,16 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 **Goal:** The footer rail carries a Bots tab that opens New bot and the bot picker, and the sidebar body no longer spends a row on New bot.
 
 **Deliverables:**
-1. `mods/sidebar-chrome/main.js`: a Bots tab (a bot glyph SVG). Click runs `run("spaces-agents.new-bot")`. Its right-click, or a second "Bots" entry, runs `run("spaces-agents.edit")`, which opens the existing pick popup. The tab shows only while `mods/spaces-agents/mod.json` exists.
-2. `mods/spaces-agents/main.js`: the New bot row (`:1077`) removed. The `new-bot` command and the bot-row menus are unchanged.
-3. README: New bot is in the footer.
+1. `mods/sidebar-chrome/main.js` and `mods/sidebar-chrome/bot.svg`: the Bots tab, first in the rail. It opens a popup (sidebar-chrome props `{ botsMenu: true }`) listing "New bot" (`openOverlay` of `spaces-agents` with `props.form "create"`) and "Bot settings" (`props.form "pick"`). The tab shows only while `mods/spaces-agents/mod.json` exists, and it works for a project with no bots.
+2. `mods/spaces-agents/main.js`: the wide "+ New bot" row (`:1073-1078`) is removed. Bot-row menus and keys are unchanged. If `pick` with no bots defined shows an empty list, it shows one "New bot" line instead.
+3. README and the mod's RECIPE: New bot and Bot settings live in the footer.
 
 **Interfaces:**
-- Consumes: mod commands `spaces-agents.new-bot` and `spaces-agents.edit`, handled in `spaces-agents/main.js` `botCommand`.
+- Consumes: `openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, props: { form: "create" | "pick" } })`, the forms `spaces-agents` `init` already returns.
 - Produces: footer tab id `bots`.
 
 **Acceptance Criteria:**
-- [ ] A `herdr-app shot` cropped to the footer shows the Bots tab. Clicking it, by `herdr-app do` of the mod command, opens the Create form. The sidebar shows no New bot row.
+- [ ] A `herdr-app shot` cropped to the footer shows the Bots tab first. On a scratch home, its popup's two entries open the Create form and the bot picker, including with no bots defined. The sidebar shows no "+ New bot" row.
 - [ ] `herdr-app check` passes for both mods.
 
 **Validation:**
