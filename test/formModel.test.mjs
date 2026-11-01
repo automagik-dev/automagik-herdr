@@ -251,9 +251,9 @@ test("rank: a stored rank outside the set is a problem until changed; the line n
   assert.match(commandOf(create({ rank: "tester" }), { key: KEY, file: FILE }), / --rank=tester /);
   assert.doesNotMatch(commandOf(create(), { key: KEY, file: FILE }), /--rank/);
   const initial = { ...edit("b-devaaaaaaa"), rank: "dev" };
-  assert.equal(commandOf(initial, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --project=/Users/x/brain-v3");
-  assert.equal(commandOf({ ...initial, rank: "pm" }, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --rank=pm --project=/Users/x/brain-v3");
-  assert.equal(commandOf({ ...initial, rank: "" }, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --rank= --project=/Users/x/brain-v3");
+  assert.equal(commandOf(initial, { key: KEY, file: FILE, initial }), "automagik-herdr edit b-devaaaaaaa --project=/Users/x/brain-v3");
+  assert.equal(commandOf({ ...initial, rank: "pm" }, { key: KEY, file: FILE, initial }), "automagik-herdr edit b-devaaaaaaa --rank=pm --project=/Users/x/brain-v3");
+  assert.equal(commandOf({ ...initial, rank: "" }, { key: KEY, file: FILE, initial }), "automagik-herdr edit b-devaaaaaaa --rank= --project=/Users/x/brain-v3");
   assert.equal(editChanged({ ...initial, rank: "pm" }, initial), true);
 });
 
