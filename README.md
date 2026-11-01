@@ -22,7 +22,7 @@ so while Herdr shows another one the installer asks before switching (or prints 
 `herdr-app do layout.switch` command when it can't ask). Running it again is safe, and
 `--uninstall` puts back the pack that was there before the first install and removes the
 layout if the installer added it and you haven't changed it. Add options after `bash -s --`: `--yes`
-answers every question, `--version 0.1.0` installs that release (v0.1.0 or later),
+answers every question, `--version 0.2.0` installs that release (v0.2.0 or later),
 `--uninstall` undoes the install.
 
 ### Paste this to your agent

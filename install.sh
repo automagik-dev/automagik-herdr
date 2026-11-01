@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.1.0 or later) instead of the latest
+#   ... | bash -s -- --version 1.2.3  a given release (v0.2.0 or later) instead of the latest
 #   ... | bash -s -- --uninstall      put the pack that was there before back
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
@@ -50,7 +50,7 @@ main() {
     case $1 in
       --yes|-y) YES=1 ;;
       --uninstall) UNINSTALL=1 ;;
-      --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.1.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
+      --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
       *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -91,7 +91,7 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.1.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.2.0 or later.
 EOF
 }
 
