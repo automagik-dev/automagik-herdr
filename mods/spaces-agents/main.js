@@ -15,7 +15,7 @@ import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
-import { BotForm } from "./create.js";
+import { BotForm, FORM_SIZE } from "./create.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -26,7 +26,7 @@ import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, proj
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
     ? { mod: "spaces-agents", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
-    : { mod: "spaces-agents", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? { width: 1000, height: 840 } : { width: 560, height: 0.85 }), props: form });
+    : { mod: "spaces-agents", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
 }
 
 // Agent naming, as in the agents mod.

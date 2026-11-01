@@ -11,7 +11,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button } from "gpui-base";
-import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run, home, appHome, settings, hc } from "herdr";
+import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, parseBots, newBotId, applyBotEdit } from "./model.js";
 import { configPaths, detectModel } from "./models.js";
@@ -34,6 +34,9 @@ function icon(p, size, color) {
   if (!p?.icon) return null;
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
+
+// "Not saved: <why>", once: bots.js's writeBots says "Not saved:" itself.
+const notSaved = (why) => (/^Not saved:/.test(String(why)) ? String(why) : `Not saved: ${why}`);
 
 // The form's text fields, read into the plain state formModel works on.
 const TEXT = ["name", "role", "note", "catTitle", "catSub"];
@@ -73,13 +76,19 @@ export class BotForm {
     this.pop = null; // the open list: "models" | "leads"
     this.copied = false;
     this.pets = new Set();
+    this.petsFailed = new Set(); // written once and failed: not tried again (as main.js)
+    this.petsNoticed = false;
     this.petsBusy = false;
+    this.models = new Map(); // agent -> modelInfo, read once from this.texts
+    this.agentsError = null;
     this.dark = isDark(theme().background);
     cx.spawn(async (cx) => {
-      try { this.agents = (await knownAgents()).sort((a, b) => Number(b.installed) - Number(a.installed)); } catch {}
+      try { this.agents = (await knownAgents()).sort((a, b) => Number(b.installed) - Number(a.installed)); }
+      catch (e) { this.agentsError = `Herdr couldn't list its coding agents (${e?.message ?? e}).`; }
       for (const [name, path] of Object.entries(configPaths(home()))) {
         try { this.texts[name] = await readTextFile(path); } catch { this.texts[name] = null; }
       }
+      this.models.clear();
       try { await this.open(cx); } catch (e) { this.error = String(e?.message ?? e); }
       this.ensurePets(cx);
       cx.notify();
@@ -159,6 +168,12 @@ export class BotForm {
     } catch { this.live = null; }
   }
 
+  // An agent's default model and pin list, read once from the config texts (formModel).
+  modelInfo(agent) {
+    if (!this.models.has(agent)) this.models.set(agent, modelInfo(agent, this.texts));
+    return this.models.get(agent);
+  }
+
   // ---- character pictures ----
 
   // Every picture the form shows now: the preview and the grid in the chosen colour, the
@@ -171,28 +186,41 @@ export class BotForm {
     return out.filter(([c, k]) => c && k);
   }
 
-  // Writes the pictures not written yet, then redraws (until then each is an empty box).
+  // Writes the pictures not written yet, then redraws (until then each is an empty box). A
+  // picture that fails to write is not tried again, and one notice names the folder.
+  missingPets() {
+    return this.wantedPets().filter(([c, k, pose]) => {
+      const file = characterFile(c, k, pose, this.dark);
+      return !this.pets.has(file) && !this.petsFailed.has(file);
+    });
+  }
+
   ensurePets(cx) {
-    const todo = this.wantedPets().filter(([c, k, pose]) => !this.pets.has(characterFile(c, k, pose, this.dark)));
+    const todo = this.missingPets();
     if (!todo.length || this.petsBusy) return;
     this.petsBusy = true;
+    const folder = `${appHome()}/${PETS}`;
     cx.spawn(async (cx) => {
-      try {
-        await fs.mkdir(`${appHome()}/${PETS}`, { recursive: true });
-        for (const [c, k, pose] of todo) {
-          const file = characterFile(c, k, pose, this.dark);
-          const svgText = characterSvg(c, k, pose, this.dark);
-          try {
-            const had = await fs.readFile(`${appHome()}/${PETS}/${file}`, "utf8").catch(() => null);
-            if (had !== svgText) await fs.writeFile(`${appHome()}/${PETS}/${file}`, svgText);
-            this.pets.add(file);
-          } catch {}
-        }
-      } catch {}
+      let why = null;
+      try { await fs.mkdir(folder, { recursive: true }); } catch (e) { why = e; }
+      for (const [c, k, pose] of todo) {
+        const file = characterFile(c, k, pose, this.dark);
+        if (why) { this.petsFailed.add(file); continue; }
+        const svgText = characterSvg(c, k, pose, this.dark);
+        try {
+          const had = await fs.readFile(`${folder}/${file}`, "utf8").catch(() => null);
+          if (had !== svgText) await fs.writeFile(`${folder}/${file}`, svgText);
+          this.pets.add(file);
+        } catch (e) { this.petsFailed.add(file); why ??= e; }
+      }
+      if (why && !this.petsNoticed) {
+        this.petsNoticed = true;
+        notify({ title: "Bots: character pictures not written", body: `Can't write to ${folder} (${why?.message ?? why}); the form shows empty boxes instead.`, level: "warning" });
+      }
       this.petsBusy = false;
       cx.notify();
-      // A colour picked while writing: its pictures next.
-      if (this.wantedPets().some(([c, k, pose]) => !this.pets.has(characterFile(c, k, pose, this.dark)))) this.ensurePets(cx);
+      // A colour picked while writing: its pictures next (failed ones are not retried).
+      if (this.missingPets().length) this.ensurePets(cx);
     });
   }
 
@@ -214,11 +242,11 @@ export class BotForm {
   save(cx, andStart = false) {
     if (this.busy) return;
     const state = this.snapshot();
-    const info = modelInfo(state.agent, this.texts);
+    const info = this.modelInfo(state.agent);
     // A stored pin left alone is written back as it was, listed or not (changes only).
     const pinKept = this.initial && state.pin === this.initial.pin && state.agent === this.initial.agent;
     const why = problemOf(state, { key: this.key, loadError: this.loadError, file: this.file, info: pinKept ? null : info });
-    if (why) { this.error = `Not saved: ${why}`; cx.notify(); return; }
+    if (why) { this.error = notSaved(why); cx.notify(); return; }
     if (this.mode === "edit" && !editChanged(state, this.initial)) { closeOverlay(this.p.overlay); return; }
     const { entry, newCategory } = entryOf(state, this.file);
     this.busy = true;
@@ -226,24 +254,28 @@ export class BotForm {
     cx.spawn(async (cx) => {
       try {
         await writeBots(this.key, applyBotEdit(this.raw, entry, newCategory), this.text);
-        if (andStart) {
-          const r = await startBot(this.key, entry.id);
-          if (r?.refused) {
-            // Saved, not started: say so, and don't offer to create it a second time.
-            this.error = `Saved, not started: ${r.refused}`;
-            this.busy = false;
-            this.saved = true;
-            run("spaces-agents.refresh");
-            cx.notify();
-            return;
-          }
-        }
-        run("spaces-agents.refresh");
-        closeOverlay(this.p.overlay);
       } catch (e) {
         const msg = String(e?.message ?? e);
-        this.error = `Not saved: ${/stale/i.test(msg) ? `${this.key}/${BOTS_PATH} changed since this form opened; close it and open it again.` : msg}`;
+        this.error = notSaved(/stale/i.test(msg) ? `${this.key}/${BOTS_PATH} changed since this form opened; close it and open it again.` : msg);
+        this.busy = false;
+        cx.notify();
+        return;
       }
+      run("spaces-agents.refresh");
+      if (andStart) {
+        // Saved either way from here: a refused or failed Start says so, and the form
+        // stops offering to create the bot a second time.
+        let refused = null;
+        try { refused = (await startBot(this.key, entry.id))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
+        if (refused) {
+          this.error = `Saved, not started: ${refused}`;
+          this.saved = true;
+          this.busy = false;
+          cx.notify();
+          return;
+        }
+      }
+      closeOverlay(this.p.overlay);
       this.busy = false;
       cx.notify();
     });
@@ -349,12 +381,14 @@ export class BotForm {
     const state = this.snapshot();
     const file = this.file;
     const agent = this.agents.find((a) => a.key === state.agent) ?? null;
-    const info = modelInfo(state.agent, this.texts);
+    const info = this.modelInfo(state.agent);
     const live = this.live && this.live.model ? this.live : null;
     const model = modelLine({ agentName: agent?.name ?? state.agent, pin: state.pin, info, detected: live?.model ?? null, terminal: live?.terminal ?? null });
     const place = placeOf(state, file);
     const cli = commandOf(state, { key: this.key, file, initial: this.initial });
-    const v = { t, state, agent, info, model, place, cli, mono: settings()?.font_family ?? "JetBrains Mono" };
+    const pinKept = this.initial && state.pin === this.initial.pin && state.agent === this.initial.agent;
+    const refusal = problemOf(state, { key: this.key, loadError: this.loadError, file, info: pinKept ? null : info });
+    const v = { t, state, agent, info, model, place, cli, refusal, mono: settings()?.font_family ?? "JetBrains Mono" };
     return v_flex().id("bot-form").size_full().min_h(0).rounded(14).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(this.header(v))
@@ -394,7 +428,7 @@ export class BotForm {
         .on_click((_e, cx) => cx.spawn(async (cx) => {
           const dir = await pickFolder({ prompt: "Use this project" });
           if (dir) {
-            try { await this.load(await keyOf(dir)); this.error = null; this.ensurePets(cx); } catch (e) { this.error = `Not saved: ${e?.message ?? e}`; }
+            try { await this.load(await keyOf(dir)); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
           }
           cx.notify();
         })))
@@ -482,8 +516,11 @@ export class BotForm {
   // is shown dimmed and can't be picked. Then the model line and the pin list.
   runsOn(v) {
     const { t, state, info, model } = v;
-    const listed = [...this.agents];
-    if (state.agent && !listed.some((a) => a.key === state.agent)) listed.push({ key: state.agent, name: state.agent, installed: false, icon: null });
+    // Installed agents only, plus the bot's own agent when it isn't installed (shown dimmed).
+    const listed = this.agents.filter((a) => a.installed);
+    if (state.agent && !listed.some((a) => a.key === state.agent)) {
+      listed.push(this.agents.find((a) => a.key === state.agent) ?? { key: state.agent, name: state.agent, installed: false, icon: null });
+    }
     const cards = listed.map((a) => {
       const on = a.key === state.agent;
       const can = a.installed || on;
@@ -520,14 +557,15 @@ export class BotForm {
       .when(open, (el) => el.content(list));
     return v_flex().gap(10)
       .child(this.label(t, "Runs on"))
-      .child(v_flex().gap(6).children(rows.length ? rows : [div().text_size(12).text_color(t.muted).child("Finding Herdr's coding agents…")]))
+      .child(v_flex().gap(6).children(rows.length ? rows : [div().text_size(12).text_color(this.agentsError ? t.ansi1 : t.muted)
+        .child(this.agentsError ?? (this.agents.length ? "No coding agent is installed on this computer." : "Finding Herdr's coding agents…"))]))
       .child(h_flex().gap(10).px(12).py(10).items_center().rounded(10).border_1().border_color(t.border).bg(t.surface ?? t.background)
         .child(div().flex_none().text_color(t.accent).child("◷"))
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(h_flex().gap(4).text_size(13).font_medium().child("Model:")
             .child(div().min_w(0).truncate().font_family(v.mono).text_color(t.accent).child(model.shown)))
           .child(div().text_size(11).text_color(t.muted).child(model.note)))
-        .when(info.models.length > 0, (el) => el.child(pin)));
+        .when(info.models.length > 0 || Boolean(state.pin), (el) => el.child(pin)));
   }
 
   // "Place in the team": kind, lead, category (A1, A2) and planned (A3).
@@ -633,7 +671,7 @@ export class BotForm {
   }
 
   footer(v) {
-    const { t, state, cli } = v;
+    const { t, state, cli, refusal } = v;
     const creating = this.mode === "create";
     const done = this.saved === true; // created, Start refused: nothing left to create
     const save = creating ? (state.planned ? "Create planned bot" : "Create") : "Save";
@@ -650,8 +688,12 @@ export class BotForm {
           .child(div().flex_none().font_family(v.mono).text_size(11).text_color(t.muted).child("$"))
           .child(div().flex_1().min_w(0).truncate().font_family(v.mono).text_size(11).text_color(t.foreground).tooltip(cli).child(cli))
           .child(h_flex().id("bot-copy").flex_none().gap(5).px(8).py(4).items_center().rounded(6).bg(t.raised).text_size(11)
-            .text_color(t.foreground).cursor_pointer().hover((s) => s.bg(t.hover)).accessibility_label("Copy the command")
-            .on_click((_e, cx) => { cx.write_to_clipboard(cli); this.copied = true; cx.notify(); })
+            .text_color(t.foreground).accessibility_label("Copy the command")
+            // A line the form would refuse to save is never copied: the refusal shows instead.
+            .when(!refusal, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
+              .on_click((_e, cx) => { cx.write_to_clipboard(cli); this.copied = true; cx.notify(); }))
+            .when(Boolean(refusal), (el) => el.opacity(0.5).cursor_not_allowed().tooltip(`Not copied: ${refusal}`)
+              .on_click((_e, cx) => { this.error = `Not copied: ${refusal}`; cx.notify(); }))
             .child(this.copied ? "Copied" : "Copy")))
         .child(btn("bot-cancel", done ? "Close" : "Cancel", () => closeOverlay(this.p.overlay), "ghost"))
         .when(!done, (el) => el.child(btn("bot-save", this.busy ? "Saving…" : save, (cx) => this.save(cx), "raised")))
