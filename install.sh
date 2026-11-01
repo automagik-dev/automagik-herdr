@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.1.0 or later) instead of the latest
+#   ... | bash -s -- --version 1.2.3  a given release (v0.2.0 or later) instead of the latest
 #   ... | bash -s -- --uninstall      put the pack that was there before back
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
@@ -50,7 +50,7 @@ main() {
     case $1 in
       --yes|-y) YES=1 ;;
       --uninstall) UNINSTALL=1 ;;
-      --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.1.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
+      --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
       *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -91,7 +91,7 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.1.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.2.0 or later.
 EOF
 }
 
@@ -129,6 +129,11 @@ offer_switch() {
   [ -f "$LAYOUT" ] || return 0
   shown=$(shown_layout)
   [ "$shown" != automagik ] || return 0
+  # A layout that already shows the pack (the person's own, like main-agents): nothing to do.
+  if [ -n "$shown" ] && [ -f "$APP_HOME/layouts/$shown.json" ] \
+    && grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$APP_HOME/layouts/$shown.json"; then
+    return 0
+  fi
   if [ -z "$shown" ] || [ ! -f "$PACK/layouts/automagik.json" ] || ! cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
     HINT=yes
     return 0
@@ -266,7 +271,11 @@ install() {
     for f in update.mjs release.js; do
       { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
     done
-    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; copied=yes; fi
+    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then
+      { cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; } \
+        || { rm -rf "$BEFORE.tmp"; fail "could not keep a copy of $PACK: nothing was installed."; }
+      copied=yes
+    fi
     if ! out=$(node "$TMP/x/spaces-agents/update.mjs" install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>&1); then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
       if [ "$copied" = yes ]; then rm -rf "$BEFORE"; fi

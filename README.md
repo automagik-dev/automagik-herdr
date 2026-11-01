@@ -22,7 +22,7 @@ so while Herdr shows another one the installer asks before switching (or prints 
 `herdr-app do layout.switch` command when it can't ask). Running it again is safe, and
 `--uninstall` puts back the pack that was there before the first install and removes the
 layout if the installer added it and you haven't changed it. Add options after `bash -s --`: `--yes`
-answers every question, `--version 0.1.0` installs that release (v0.1.0 or later),
+answers every question, `--version 0.2.0` installs that release (v0.2.0 or later),
 `--uninstall` undoes the install.
 
 ### Paste this to your agent
@@ -229,16 +229,19 @@ Without the installer, from a release tarball or a checkout:
 
 ```bash
 cp -R mods/spaces-agents ~/.config/herdr-app/mods/
-mkdir -p ~/.local/bin
+mkdir -p ~/.config/herdr-app/layouts ~/.local/bin
+cp mods/spaces-agents/layouts/automagik.json ~/.config/herdr-app/layouts/
+herdr-app do layout.switch '{"name":"automagik"}'
 ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
 ```
 
 Herdr never overwrites a mod folder that is already there. If you run your own
 `spaces-agents` clone, move it out of `mods/` first, and keep the backup outside `mods/`,
 or Herdr loads it as a second mod. A rename map in `<app home>/sidebar-agents.json` is read
-as before. `mods/spaces-agents/layouts/automagik.json` is Herdr's `main` layout with the pack in
-place of the `spaces` and `agents` sidebars; copy it to `~/.config/herdr-app/layouts/` and run
-`herdr-app do layout.switch '{"name":"automagik"}'` to use it (the installer does both, asking first).
+as before. The sidebar docks nowhere by itself (its `mod.json` place is `none`): it shows only
+in a layout that names it. `automagik.json` is Herdr's `main` layout with the pack in place of
+the `spaces` and `agents` sidebars, so copying it and switching to it are required steps. If
+your own layout already names `spaces-agents`, keep it and skip those two lines.
 
 ### Upgrading from herdr-bots
 

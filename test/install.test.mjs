@@ -212,7 +212,7 @@ test("not macOS: explains and exits 1; Node too old with no brew: says where to 
 test("--help and an unknown option", (t) => {
   const s = scratch(t);
   assert.match(s.run("--help").out, /install\.sh --uninstall/);
-  assert.match(s.run("--help").out, /needs v0\.1\.0 or later/);
+  assert.match(s.run("--help").out, /needs v0\.2\.0 or later/);
   assert.equal(s.run("--nope").code, 2);
 });
 
@@ -324,6 +324,20 @@ test("the switch is offered again while Herdr shows another layout: a --yes re-r
   assert.doesNotMatch(quiet.out, /layout\.switch|sidebar appears/);
 });
 
+test("a layout already showing the pack (the owner's main-agents): --yes switches nothing, prints nothing", (t) => {
+  const s = scratch(t);
+  s.addHerdrApp();
+  s.show("main-agents");
+  const own = join(s.appHome, "layouts", "main-agents.json");
+  mkdirSync(dirname(own), { recursive: true });
+  writeFileSync(own, JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "spaces-agents" } }] }, null, 2));
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.herdrCalls(), []);
+  assert.doesNotMatch(r.out, /layout\.switch|sidebar appears/);
+});
+
 test("no herdr-app, or no status from it: the command is printed and nothing else is tried", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
@@ -363,6 +377,28 @@ test("--uninstall refuses a pack folder that is a symlink, and changes nothing",
   assert.equal(lstatSync(s.pack).isSymbolicLink(), true);
   assert.equal(existsSync(join(s.appHome, "automagik-herdr", "installed-by-install.sh")), true);
   assert.equal(lstatSync(s.link).isSymbolicLink(), true);
+});
+
+test("a before-install copy that fails stops the install: no marker, no kept line, the pack unchanged", (t) => {
+  const s = scratch(t);
+  cpSync(PACK_SRC, s.pack, { recursive: true });
+  writeFileSync(join(s.pack, "VERSION"), "1.0.0\n");
+  const secret = join(s.pack, "secret");
+  writeFileSync(secret, "x");
+  chmodSync(secret, 0o000); // cp -RP can't read it
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /could not keep a copy of .*: nothing was installed/);
+  assert.doesNotMatch(r.out, /kept in|Installed the pack/);
+  const state = join(s.appHome, "automagik-herdr");
+  assert.equal(existsSync(join(state, "installed-by-install.sh")), false);
+  assert.equal(existsSync(join(state, "spaces-agents.before-install")), false);
+  assert.equal(existsSync(join(state, "spaces-agents.before-install.tmp")), false);
+  assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8"), "1.0.0\n");
+  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), readFileSync(join(PACK_SRC, "main.js"), "utf8"));
+  assert.equal(existsSync(secret), true);
+  chmodSync(secret, 0o644);
 });
 
 test("a before-install copy cut short (.tmp) is cleared, then made whole", (t) => {
