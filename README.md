@@ -186,14 +186,7 @@ as before. `layouts/bots.json` is Herdr's `main` layout with the pack in place o
 
 ### Upgrading from herdr-bots
 
-The command is now `automagik-herdr`. The old `herdr-bots` name still runs the same command
-and prints a one-line notice. Point your link at the new name:
-
-```bash
-ln -sf ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
-```
-
-The mod folder (`spaces-agents`), the `bot` label and `.herdr/bots.json` are unchanged.
+If you ran `herdr-bots` from a clone, use `automagik-herdr` in its place.
 
 ## Develop
 

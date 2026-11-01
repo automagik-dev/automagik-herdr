@@ -1,6 +1,6 @@
 // The mod's update check (A14, updateCheck.js) and the CLI's `update` (A15): which node runs
 // update.mjs, what its answer means, when to look again, one notice per version; and
-// `automagik-herdr update` over a fake GitHub, plus the old `herdr-bots` name still working.
+// `automagik-herdr update` over a fake GitHub.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -128,14 +128,4 @@ test("the program: update --check --json with updates off touches no network", (
   const r = run("automagik-herdr.mjs", ["update", "--check", "--json"], { HERDR_APP_HOME: root, AUTOMAGIK_HERDR_NO_UPDATE: "1" });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), { current: "0.1.0", latest: null, update: null, disabled: true });
-});
-
-test("herdr-bots, the old name, says so on stderr and runs the same command", () => {
-  const r = run("herdr-bots.mjs", ["--help"]);
-  assert.equal(r.status, 0);
-  assert.equal(r.stderr, "herdr-bots is now automagik-herdr; this name still works for now.\n");
-  assert.match(r.stdout, /^automagik-herdr: Automagik Herdr's bots and updates/);
-  const bad = run("herdr-bots.mjs", ["nope"]);
-  assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /automagik-herdr: unknown command "nope"/);
 });
