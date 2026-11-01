@@ -23,12 +23,14 @@ async function readProject(projectKey) {
 }
 
 /**
- * A bot's live pane (Decision 3): a terminal carrying its label with an agent in front,
- * by `terminals()`' `program.agent`, else `hc get`'s foreground. When several do, the
- * newest by created_ms (read with `hc get` for those only), flagged `duplicate`.
+ * A bot's live pane (Decision 3): a terminal of this computer carrying its label with an
+ * agent in front, by `terminals()`' `program.agent`, else `hc get`'s foreground. When several
+ * do, the newest by created_ms (read with `hc get` for those only), flagged `duplicate`.
+ * Only this computer's terminals count: Start and Attach work here only, and Attach could
+ * not take a label off another machine's terminal.
  */
 export async function liveTerminalOf(botId) {
-  const rows = terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && t.state === "live");
+  const rows = terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && t.state === "live" && local(t.address));
   const live = [];
   for (const row of rows) {
     const says = rowIsAgent(row);
@@ -58,21 +60,37 @@ async function placeFor(projectKey) {
   return { space: space?.id ?? null, tab: tab?.id ?? null };
 }
 
+// Bots being started now, and the terminal each got lately: its agent may not be in front
+// yet, so a second Start right after would pass the live check and open a twin.
+const starting = new Set();
+const started = new Map(); // bot id -> { terminal, at }
+const STARTED_GRACE = 60_000;
+
 /**
  * Starts a bot as a new pane on this computer, or focuses its live pane. Refuses a planned
- * bot, one with no agent, and a project folder that doesn't key to itself.
+ * bot, one with no agent, a project folder that doesn't key to itself, and a bot already
+ * being started.
  */
 export async function startBot(projectKey, botId) {
+  if (starting.has(botId)) return { refused: `${botId} is already starting.` };
+  starting.add(botId);
+  try { return await startOnce(projectKey, botId); } finally { starting.delete(botId); }
+}
+
+async function startOnce(projectKey, botId) {
   let file;
   try { file = await readProject(projectKey); } catch (e) { return { refused: `Can't read ${projectKey}/${BOTS_PATH}: ${e?.message ?? e}` }; }
   if (!file) return { refused: `No ${BOTS_PATH} in ${projectKey}.` };
   const why = startRefusal(file, botId);
   if (why) return { refused: why };
   const bot = file.bots.find((b) => b.id === botId);
-  const live = await liveTerminalOf(botId);
+  const recent = started.get(botId);
+  const fresh = recent && Date.now() - recent.at < STARTED_GRACE
+    && terminals().some((t) => t?.address === recent.terminal && t.state === "live" && t.labels?.[BOT_LABEL] === botId);
+  const live = (await liveTerminalOf(botId))?.terminal ?? (fresh ? recent.terminal : null);
   if (live) {
-    run("agent.focus", { terminal: live.terminal });
-    return { focused: live.terminal };
+    run("agent.focus", { terminal: live });
+    return { focused: live };
   }
   // The same check as Attach, on the folder Start launches in.
   let key;
@@ -97,6 +115,7 @@ export async function startBot(projectKey, botId) {
   let terminal = null;
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch {}
   if (!terminal) return { refused: `hc run gave no terminal address: ${r.stdout.trim()}` };
+  started.set(botId, { terminal, at: Date.now() });
   rememberProject(projectKey);
   await afterBind(bot, projectKey);
   return { terminal };
@@ -116,6 +135,11 @@ export async function attachBot(projectKey, botId, terminal) {
   if (bot.planned) return { refused: `${bot.name} is planned (wave ${bot.planned.wave}); clear "planned" before attaching it.` };
   const row = terminals().find((t) => t?.address === terminal);
   if (!row || row.state !== "live") return { refused: `${terminal} isn't a live terminal.` };
+  const other = row.labels?.[BOT_LABEL];
+  if (other && other !== botId) {
+    const name = file.bots.find((b) => b.id === other)?.name;
+    return { refused: `${terminal} already plays ${name ? `${name} (${other})` : `bot ${other}`}; nothing was attached. Attach that bot elsewhere, or remove its label, first.` };
+  }
   const get = await hcGet(terminal);
   let sessionFolder = get?.foreground?.cwd ?? row.cwd ?? null;
   if (isClaude(row, get)) {
@@ -127,10 +151,18 @@ export async function attachBot(projectKey, botId, terminal) {
     if (refusal) return { refused: refusal };
   }
   const holders = terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && local(t.address)).map((t) => t.address);
-  for (const args of labelMoves(holders, terminal, botId)) {
-    let r;
-    try { r = await hc(args); } catch (e) { return { refused: `hc ${args.join(" ")} failed: ${e?.message ?? e}` }; }
-    if (r.code !== 0) return { refused: `hc ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}` };
+  const moves = labelMoves(holders, terminal, botId);
+  for (const [i, args] of moves.entries()) {
+    let why = null;
+    try {
+      const r = await hc(args);
+      if (r.code !== 0) why = (r.stderr || r.stdout).trim();
+    } catch (e) { why = String(e?.message ?? e); }
+    if (why === null) continue;
+    // The label already came off its old pane: say so, rather than a bare hc error.
+    const lost = i === moves.length - 1 && moves.length > 1;
+    return { refused: lost ? `${bot.name} has no pane now (its label came off ${holders.filter((h) => h !== terminal).join(", ")}); attach again. hc said: ${why}`
+      : `hc ${args.join(" ")} failed: ${why}` };
   }
   rememberProject(projectKey);
   await afterBind(bot, sessionFolder);

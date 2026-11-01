@@ -198,3 +198,46 @@ test("attachBot: a Claude session in the project's worktree passes; the label mo
   assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t3", "bot="], ["label", "t1m", `bot=${ID.main}`]]);
   assert.deepEqual(await attachBot(main, ID.main, "far/t9"), { refused: "Attach works on this computer's panes only; far/t9 is on another machine." });
 });
+
+// ---- fix loop 1 ----
+
+test("startBot: two Starts at once open one pane; a Start right after focuses the new one", async (t) => {
+  reset();
+  const { main } = await project(t);
+  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
+  const [a, b] = await Promise.all([startBot(main, ID.main), startBot(main, ID.main)]);
+  assert.equal(state.hcCalls.filter((x) => x[0] === "run").length, 1);
+  assert.deepEqual([a, b].map((r) => Object.keys(r)[0]).sort(), ["refused", "terminal"]);
+  assert.match((a.refused ?? b.refused), /already starting/);
+  // The new pane has the label but no agent in front yet: focused, not started twice.
+  state.terminals = [row("t42", { bot: ID.main }, { program: { key: "shell", agent: false } })];
+  assert.deepEqual(await startBot(main, ID.main), { focused: "t42" });
+  assert.equal(state.hcCalls.filter((x) => x[0] === "run").length, 1);
+});
+
+test("attachBot: a pane already playing another bot is refused, naming it", async (t) => {
+  reset();
+  const { main } = await project(t);
+  state.terminals = [row("t5", { bot: ID.cap }, { cwd: main })];
+  gets.t5 = { address: "t5", foreground: { argv: ["claude"], cwd: main } };
+  const r = await attachBot(main, ID.main, "t5");
+  assert.match(r.refused, /t5 already plays Captain \(b-bbbbbbbbbb\)/);
+  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), []);
+});
+
+test("attachBot: when the label came off the old pane but the new write fails, it says the bot has no pane", async (t) => {
+  reset();
+  const { main } = await project(t);
+  state.terminals = [row("t1", {}, { cwd: main }), row("t3", { bot: ID.main })];
+  gets.t1 = { address: "t1", foreground: { argv: ["claude"], cwd: main } };
+  const answer = state.hcAnswer;
+  state.hcAnswer = (args) => (args[0] === "label" && args[1] === "t1" ? { code: 1, stdout: "", stderr: "core away" } : answer(args));
+  const r = await attachBot(main, ID.main, "t1");
+  assert.match(r.refused, /^Genie has no pane now \(its label came off t3\); attach again\. hc said: core away$/);
+});
+
+test("liveTerminalOf: another machine's labelled terminal doesn't count", async () => {
+  reset();
+  state.terminals = [row("far/t2", { bot: ID.main })];
+  assert.equal(await liveTerminalOf(ID.main), null);
+});
