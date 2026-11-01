@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
+import { PROJECTS_FILE } from "../mods/spaces-agents/model.js";
 const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/spaces-agents/bots.js");
 
 const run = promisify(execFile);
@@ -90,7 +91,8 @@ test("discoverProjects: an open space on another machine is asked there, with on
   const found = await discoverProjects();
   assert.deepEqual(found.map((p) => [p.key, p.machine]), [[join(root, "srv"), "far"]]);
   const git = state.calls.filter((c) => c.kind === "exec" && c.command === "git");
-  const reads = state.calls.filter((c) => c.kind === "read");
+  // Every read but this computer's own app home (the CLI's project list) goes to "far".
+  const reads = state.calls.filter((c) => c.kind === "read" && !c.path.startsWith(`${state.appHome}/`));
   assert.ok(git.length >= 1);
   assert.ok(reads.some((c) => c.path === join(root, "srv", ".herdr", "bots.json")));
   for (const c of [...git, ...reads]) assert.equal(c.on, "far", JSON.stringify(c));
@@ -149,4 +151,33 @@ test("discoverProjects: a remembered project with no space is found; forgotten o
   const gone = await discoverProjects();
   assert.deepEqual(gone.map((p) => p.machine), ["far"]);
   assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: "far" }]);
+});
+
+test("discoverProjects: the CLI's project list is found with no space; a gone one is hidden, the list left alone", async (t) => {
+  reset();
+  const { root, main, tree } = await repo(t);
+  put(main, sample());
+  const app = join(root, "app");
+  mkdirSync(app);
+  const list = join(app, PROJECTS_FILE);
+  const text = JSON.stringify([main, join(root, "gone"), 7, "relative"]);
+  writeFileSync(list, text);
+  const appHome = state.appHome;
+  state.appHome = app;
+  t.after(() => { state.appHome = appHome; });
+  // Listed, and also open as a worktree space: one entry, under that space.
+  state.spaces = [{ id: "s1", folder: tree }];
+  const found = await discoverProjects();
+  assert.deepEqual(found.map((p) => [p.key, p.spaces]), [[main, ["s1"]]]);
+  state.spaces = [];
+  assert.deepEqual((await discoverProjects()).map((p) => [p.key, p.spaces]), [[main, []]]);
+  // Its file gone: not shown; the CLI's file untouched and nothing remembered or forgotten.
+  unlinkSync(join(main, ".herdr", "bots.json"));
+  assert.deepEqual(await discoverProjects(), []);
+  assert.equal(readFileSync(list, "utf8"), text);
+  assert.equal(state.setSharedCalls, 0);
+  // A list that doesn't parse lists nothing.
+  put(main, sample());
+  writeFileSync(list, "{nope");
+  assert.deepEqual(await discoverProjects(), []);
 });

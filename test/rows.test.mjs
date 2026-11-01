@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, visibleRows, botFold, categoryFold, knownBots, projectId,
+  secondLine, argvToAsk, argvEntry,
 } from "../mods/spaces-agents/rows.js";
 import { parseBots } from "../mods/spaces-agents/model.js";
 
@@ -41,7 +42,7 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   ];
   const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
   assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-devdevdevd", "b-mainmainma", "b-pmpmpmpmpm"]);
-  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, status: "idle", status_ms: NOW - 1000, program: undefined });
+  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
   assert.equal(live["b-mainmainma"].duplicate, false);
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
@@ -180,4 +181,67 @@ test("placeTrees: after the first shown space of a project, once; projects with 
   const { at, rest } = placeTrees(["s1", "wt", "x", "s9"], trees);
   assert.deepEqual([...at], [["s1", projectId({ key: "/a" })], ["s9", projectId({ key: "/c", machine: "box" })]]);
   assert.deepEqual(rest, [projectId({ key: "/b" })]);
+});
+
+test("secondLine: the model a live pane runs (its command line, else the agent's default), never typed text", () => {
+  const texts = { claudeSettings: JSON.stringify({ model: "sonnet" }) };
+  const cap = file.bots.find((b) => b.id === "b-captaincap"); // pinned to an old free-text "GPT-6.1 Terra"
+  const main = file.bots.find((b) => b.id === "b-mainmainma");
+  const tree = { key: "/repo/proj/" };
+  const row = (bot, kind, node = {}) => ({ kind, node: { bot, live: null, argv: null, ...node } });
+  const live = { live: { terminal: "t7", duplicate: false } };
+  // The row carries the command line: the model it names; with none named, the default.
+  assert.equal(secondLine(row(cap, "bot", { ...live, argv: ["claude", "--model", "claude-opus-5-5"] }), tree, { texts }), "Captain · claude-opus-5-5");
+  assert.equal(secondLine(row(cap, "bot", { ...live, argv: ["claude", "--resume", "x"] }), tree, { texts }), "Captain · sonnet");
+  assert.equal(secondLine(row(cap, "bot", { ...live, argv: ["claude"] }), tree), "Captain");
+  // Read with hc get by the caller (argvOf); not known yet: no model rather than a guess.
+  assert.equal(secondLine(row(cap, "bot", live), tree, { texts, argvOf: (a) => (a === "t7" ? ["claude", "--model=opus"] : null) }), "Captain · opus");
+  assert.equal(secondLine(row(cap, "bot", live), tree, { texts }), "Captain");
+  // Stopped: A4's shape, no model (and never the pin's free text).
+  assert.equal(secondLine(row(cap, "bot"), tree, { texts }), "not running · Captain");
+  assert.equal(secondLine(row(main, "main"), tree, { texts }), "Main bot · not running · proj");
+  assert.equal(secondLine(row(main, "main", { ...live, argv: ["claude", "--model", "haiku"] }), tree, { texts }), "Main bot · haiku · proj");
+  const planned = file.bots.find((b) => b.id === "b-plannedpla");
+  assert.equal(secondLine(row(planned, "planned"), tree, { texts }), "waits for auth v2");
+  for (const kind of ["bot", "main"]) assert.doesNotMatch(secondLine(row(cap, kind, live), tree, { texts }), /GPT-6\.1 Terra/);
+});
+
+test("liveFrom and buildTree carry the live pane's foreground command line when the row has it", () => {
+  const rows = [T("t1", { labels: { bot: "b-captaincap" }, foreground: { argv: ["claude", "--model", "opus"] } }), T("t2", { labels: { bot: "b-mainmainma" } })];
+  const live = liveFrom(rows);
+  assert.deepEqual([live["b-captaincap"].argv, live["b-mainmainma"].argv], [["claude", "--model", "opus"], null]);
+  const [tree] = buildTree({ projects: [{ key: KEY, file }], live, terminals: rows, now: NOW });
+  const cap = tree.categories.find((c) => c.id === "eng").bots.find((n) => n.bot.id === "b-captaincap");
+  assert.deepEqual(cap.argv, ["claude", "--model", "opus"]);
+  assert.equal(tree.main.argv, null);
+});
+
+test("argvToAsk: live known-bot panes without a command line, not read for the same pane, three at most", () => {
+  const known = new Set(["b-a", "b-b", "b-c", "b-d", "b-e"]);
+  const rows = [
+    T("t1", { labels: { bot: "b-a" }, created_ms: 10 }),
+    T("t2", { labels: { bot: "b-b" }, created_ms: 20 }),
+    T("t3", { labels: { bot: "b-c" }, foreground: { argv: ["claude"] } }), // the row has it
+    T("t4", { labels: { bot: "b-zz" } }), // not a known bot
+    T("t5", { labels: { bot: "b-d" }, state: "exited" }),
+    T("box/t6", { labels: { bot: "b-d" }, created_ms: 60 }),
+    T("t7", { labels: { bot: "b-e" }, created_ms: 70 }),
+  ];
+  assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [] });
+  // Read already for the same pane: skipped; a new pane at an old address: asked again.
+  const cached = new Map([["t1", { argv: ["claude"], created: 10, settled: true }], ["t2", { argv: ["claude"], created: 19, settled: true }], ["t9", { argv: ["x"], created: 1, settled: true }]]);
+  assert.deepEqual(argvToAsk(rows, known, cached), { ask: ["t2", "box/t6", "t7"], gone: ["t9"] });
+  assert.deepEqual(argvToAsk(rows, known, cached, 1).ask, ["t2"]);
+});
+
+test("argvEntry + argvToAsk: a pane read in its sh -c wrapper is asked again on the next refresh", () => {
+  const known = new Set(["b-a"]);
+  const rows = [T("t1", { labels: { bot: "b-a" }, created_ms: 10 })];
+  const wrapper = argvEntry({ foreground: { argv: ["sh", "-c", "claude --model opus"] } }, 10);
+  assert.deepEqual(wrapper, { argv: ["sh", "-c", "claude --model opus"], created: 10, settled: false });
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", wrapper]])).ask, ["t1"]);
+  const agent = argvEntry({ foreground: { argv: ["claude", "--model", "opus"] } }, 10);
+  assert.equal(agent.settled, true);
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", agent]])).ask, []);
+  assert.deepEqual(argvEntry({}, undefined), { argv: null, created: null, settled: false });
 });

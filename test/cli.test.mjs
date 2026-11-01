@@ -3,13 +3,13 @@
 // each call and answers from a state file. The real hc is never run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/spaces-agents/model.js";
-import { writeBotsFile, findBot, CliError } from "../mods/spaces-agents/bin/herdr-bots.mjs";
+import { writeBotsFile, findBot, CliError, listProject } from "../mods/spaces-agents/bin/herdr-bots.mjs";
 
 const CLI = new URL("../mods/spaces-agents/bin/herdr-bots.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -304,6 +304,71 @@ test("ls: a shell in front is not live; two live panes: the newest counts, flagg
   assert.deepEqual(all.map((p) => p.project), [s.project, other]);
 });
 
+test("create, edit, category, start and attach list their project for the sidebar; ls --all reads the list", (t) => {
+  const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
+  const list = join(s.app, "spaces-agents-projects.json");
+  const listed = () => JSON.parse(readFileSync(list, "utf8"));
+  writeFileSync(list, JSON.stringify(["/elsewhere"]));
+  assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
+  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  // Once each, the newest last.
+  writeFileSync(list, JSON.stringify([s.project, "/elsewhere"]));
+  assert.equal(s.cli(["edit", "Genie", "--role", "lead"]).code, 0);
+  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  writeFileSync(list, "[]");
+  assert.equal(s.cli(["category", "add", "--title", "Eng"]).code, 0);
+  assert.deepEqual(listed(), [s.project]);
+  writeFileSync(list, "[]");
+  assert.equal(s.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(listed(), [s.project]);
+  // ls --all adds a listed project the sidebar never remembered.
+  const other = join(s.root, "other");
+  mkdirSync(join(other, ".herdr"), { recursive: true });
+  writeFileSync(join(other, ".herdr/bots.json"), JSON.stringify({ version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] }));
+  writeFileSync(list, JSON.stringify([other]));
+  assert.deepEqual(s.cli(["ls", "--all", "--json"]).json().projects.map((p) => p.project), [s.project, other]);
+  // Reading leaves the list alone; a read-only command adds nothing.
+  assert.equal(s.cli(["show", "Genie"]).code, 0);
+  assert.deepEqual(listed(), [other]);
+});
+
+test("twenty CLIs listing projects at once lose none of them", async (t) => {
+  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-list-")));
+  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const writer = `import { listProject } from ${JSON.stringify(CLI)};\nprocess.exitCode = listProject(process.argv[1], process.argv[2]) ? 0 : 1;`;
+  const keys = Array.from({ length: 20 }, (_, i) => `/p/${i}`);
+  const codes = await Promise.all(keys.map((key) => new Promise((done) => {
+    execFile(process.execPath, ["--input-type=module", "-e", writer, key, app], (err) => done(err ? err.code ?? 1 : 0));
+  })));
+  assert.deepEqual(codes, keys.map(() => 0));
+  const listed = JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8"));
+  assert.deepEqual([...listed].sort(), [...keys].sort());
+  assert.equal(existsSync(join(app, "spaces-agents-projects.json.lock")), false);
+});
+
+test("a stale project-list lock (a CLI killed mid-write) is taken over, and nothing is left behind", (t) => {
+  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-lock-")));
+  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const lock = join(app, "spaces-agents-projects.json.lock");
+  writeFileSync(lock, "999999 someone-else");
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  assert.equal(listProject("/p/a", app), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8")), ["/p/a"]);
+  assert.deepEqual(readdirSync(app), ["spaces-agents-projects.json"]);
+});
+
+test("with no app home, nothing is listed and the command still succeeds; an unwritable list only warns", (t) => {
+  const s = scene(t);
+  rmSync(s.app, { recursive: true, force: true });
+  assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
+  assert.equal(existsSync(s.app), false);
+  mkdirSync(join(s.app, "spaces-agents-projects.json"), { recursive: true }); // a folder where the file goes
+  const r = s.cli(["edit", "Genie", "--role", "lead"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /couldn't list .* so the sidebar shows it only once a space is open on it/);
+});
+
 // ---- start ----
 
 test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the pinned model; never --no-notify; the hook written and excluded", (t) => {
@@ -344,6 +409,15 @@ test("start a member: parent is its lead's live terminal, outliving it; else --n
   const runs = s.calls().filter((c) => c[0] === "run");
   assert.equal(runs.length, 2);
   assert.ok(runs[1].includes("--no-parent"));
+});
+
+test("start: --tab without --space is a usage mistake (exit 2), nothing started", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const r = s.cli(["start", "Genie", "--tab", "tb2"]);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /--tab needs --space/);
+  assert.equal(runCall(s.calls()), undefined);
 });
 
 test("start: the main bot not live gives --no-parent; planned and agentless bots are refused; a missing briefing script only warns", (t) => {
@@ -510,7 +584,7 @@ test("start places the pane in the space of a live terminal in the project; with
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {
   const f = team();
   f.bots[0].model = "Opus 5.5";
-  const s = scene(t, { terminals: [term("t30", { bot: ID.cap, argv: ["sh", "-c", "claude"], app: "starting", created: Date.now() })] });
+  const s = scene(t, { terminals: [term("t30", { bot: ID.cap, argv: ["sh", "-c", "claude"], app: "sh", created: Date.now() })] });
   s.seed(f);
   const r = s.cli(["start", "Genie"]);
   assert.equal(r.code, 1);
@@ -543,13 +617,14 @@ test("a failing hc never reads as 'no pane': start, attach and detach refuse; ls
   assert.equal(s.cli(["brief", "Genie"]).code, 0, "the briefing still prints, members unreachable");
 });
 
-test("a row whose program is a shell is never asked with hc get", (t) => {
+test("a row whose program is a shell is asked with hc get (its age), yet never counts as live", (t) => {
   const s = scene(t, { terminals: [term("t1", { bot: ID.main, argv: ["zsh"], app: "zsh" }), term("t2", { bot: ID.cap })] });
   s.seed(team());
-  s.cli(["ls", "--json"]);
+  const bots = s.cli(["ls", "--json"]).json().projects[0].bots;
   const gets = s.calls().filter((c) => c[0] === "get").map((c) => c[1]);
-  assert.ok(gets.includes("t2"));
-  assert.equal(gets.includes("t1"), false);
+  assert.ok(gets.includes("t2") && gets.includes("t1"));
+  assert.equal(bots.find((b) => b.id === ID.main).terminal ?? null, null);
+  assert.equal(bots.find((b) => b.id === ID.cap).terminal, "t2");
 });
 
 test("attach: a terminal argument that looks like an option is refused; a claude wrapper counts as a Claude pane", (t) => {
