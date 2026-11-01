@@ -129,3 +129,13 @@ export function characterFile(character, colour, pose, dark = true) {
   const safe = (s) => String(s).replace(/[^a-z0-9-]/gi, "_");
   return `${safe(character)}-${safe(colour)}-${safe(pose)}-${dark ? "dark" : "light"}.svg`;
 }
+
+/** Whether a #rrggbb (or #rrggbbaa) background is dark, by its relative luminance. */
+export function isDark(background) {
+  if (!/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(String(background ?? ""))) return true;
+  const lum = [1, 3, 5]
+    .map((i) => parseInt(background.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+  return lum < 0.4;
+}
