@@ -271,6 +271,12 @@ test("look: defaultLook is stable per id and names Automagik characters and colo
   assert.deepEqual(defaultLook("b-77777777ab"), { character: "moon", colour: "yellow" });
 });
 
+test("characters: Automagik's 21, in its order", () => {
+  assert.equal(CHARACTERS.length, 21);
+  assert.equal(new Set(CHARACTERS).size, 21);
+  assert.deepEqual(CHARACTERS.slice(9, 12), ["peanut", "saucer", "bunny"]);
+});
+
 test("label key", () => {
   assert.equal(BOT_LABEL, "bot");
   assert.equal(MAX_INSTRUCTIONS, 4000);

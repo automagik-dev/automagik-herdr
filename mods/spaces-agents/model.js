@@ -14,7 +14,7 @@ export const KINDS = ["main", "member"];
 // Automagik's characters and colours, by name (apps/bots-dsh/src/client/characters.js and
 // inks.js). Only the names: the drawing comes with the characters themselves (Group 3).
 export const CHARACTERS = ["whale", "octopus", "star", "moon", "wave", "squircle", "zed", "hex", "gumdrop", "peanut",
-  "bunny", "kitty", "beacon", "plus", "magnet", "acorn", "pebbles", "cushion", "ring", "gem"];
+  "saucer", "bunny", "kitty", "beacon", "plus", "magnet", "acorn", "pebbles", "cushion", "ring", "gem"];
 export const COLOURS = ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray",
   "aurora", "deepseek", "charcoal", "graphite", "rose", "sky", "tangerine", "cobalt"];
 const DEFAULT_CHARACTERS = ["star", "moon", "gumdrop", "peanut", "bunny", "kitty", "acorn"];
