@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { INKS, CHARACTER_NAMES, POSES, characterSvg, characterFile, inkOf, mix } from "../mods/spaces-agents/characters.js";
+import { INKS, CHARACTER_NAMES, POSES, characterSvg, characterFile, inkOf, mix, isDark } from "../mods/spaces-agents/characters.js";
 import { CHARACTERS, COLOURS, OMNI_LOOK } from "../mods/spaces-agents/model.js";
 
 test("the drawn characters are the 21 model.js offers, and every offered colour has an ink", () => {
@@ -68,4 +68,11 @@ test("inkOf: Automagik's light ink, black and unknown read as gray", () => {
 test("file names are safe and say character, colour, pose and ink", () => {
   assert.equal(characterFile("octopus", "deepseek", "needs-you"), "octopus-deepseek-needs-you-dark.svg");
   assert.equal(characterFile("../x", "a/b", "idle", false), "___x-a_b-idle-light.svg");
+});
+
+test("isDark: a sidebar's appearance from its chrome colour", () => {
+  assert.equal(isDark("#0E1117"), true);
+  assert.equal(isDark("#f7f7f7"), false);
+  assert.equal(isDark("#ffffffcc"), false);
+  assert.equal(isDark("rgb(0,0,0)"), true, "not a hex colour: dark, the common case");
 });
