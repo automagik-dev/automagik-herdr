@@ -39,6 +39,7 @@ jobs:
           for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do
             node --check "$f"
           done
+          sh -n install.sh
 
       - name: One version
         run: node scripts/version.mjs check
