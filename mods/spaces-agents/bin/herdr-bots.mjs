@@ -546,12 +546,16 @@ async function placementOf(key) {
 }
 
 async function cmdStart(opts, [ref]) {
+  if (opts.tab && !opts.space) throw new CliError("--tab needs --space (the space that tab is in).", 2);
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
   const bot = findBot(file, ref);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
+  // launch.js checks the folder Start launches in against the project (attachRefusal on
+  // keyOf(projectKey)). Here that folder is `key`, which keyOf already returned, and a key
+  // keys to itself, so the check can't refuse: it is left out, not forgotten.
   // One terminal plays a bot: a live one is reported, never a second start. So is a pane
   // started under a minute ago whose agent may not be in front yet (launch.js' grace).
   const mine = await panesOf(bot.id, { localOnly: true });

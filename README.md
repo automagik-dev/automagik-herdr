@@ -184,10 +184,12 @@ herdr-bots brief <bot>
   terminal as its hc parent (and outlives it); every other bot starts with no parent. A bot
   that is already running is not started twice: `start` prints its terminal. A planned bot
   is refused, and so is a pin the agent doesn't list. A bot whose pane started less than a
-  minute ago counts as running. The pane opens in the Herdr space (and tab) of a running
-  terminal in the project's folder. With none, Herdr gives the pane no place in its window:
-  `start` says so, and `hc attach <terminal>` shows it. Open a space on the project first, or
-  pass `--space <id>` (and `--tab <id>`).
+  minute ago counts as running. Placement is best effort: the pane opens in the Herdr space
+  (and tab) of a running terminal in the project's folder, which may be a space other than
+  the one you think of as the project's, if its terminal works there. With none, Herdr gives
+  the pane no place in its window: `start` says so, and `hc attach <terminal>` shows it.
+  Open a space on the project first, or pass `--space <id>` (and `--tab <id>`; `--tab`
+  alone is a usage mistake).
 - `attach` labels a running pane on this computer as the bot and takes the label off any
   other pane first. A pane that already plays another bot is refused. A Claude pane whose
   session runs outside the bot's project is refused, with both folders named.

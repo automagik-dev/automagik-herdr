@@ -78,7 +78,7 @@ export function inkOf(colour, dark = false) {
 
 // The body's paint: lit from the top left, a paler ink through the ink to a deeper one.
 function stopsOf(colour, dark) {
-  if (GRADIENTS[colour]) return GRADIENTS[colour];
+  if (Object.hasOwn(GRADIENTS, colour)) return GRADIENTS[colour];
   const ink = INKS[known(colour) ? colour : "gray"][dark ? 1 : 0];
   return [[0, mix(ink, "#ffffff", 0.58)], [0.5, ink], [1, mix(ink, "#000000", 0.72)]];
 }
@@ -110,7 +110,7 @@ const FACES = {
  */
 export function characterSvg(character, colour, pose, dark = true) {
   const c = CHARACTERS[Object.hasOwn(CHARACTERS, character) ? character : "gumdrop"];
-  const face = FACES[FACE[pose] ?? "open"];
+  const face = FACES[Object.hasOwn(FACE, pose) ? FACE[pose] : "open"];
   const stops = stopsOf(colour, dark).map(([offset, value]) => `<stop offset="${offset}" stop-color="${value}"/>`).join("");
   const gradient = `<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="18" y1="8" x2="80" y2="95">${stops}</linearGradient></defs>`;
   const layers = [

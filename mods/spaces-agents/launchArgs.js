@@ -123,13 +123,12 @@ export const UNANSWERED = Symbol.for("herdr-bots.unanswered");
 /** `hc ls --json`'s rows, whichever shape it printed. */
 export const rowsOf = (ls) => (Array.isArray(ls?.terminals) ? ls.terminals : Array.isArray(ls) ? ls : []);
 
-/** True for an `hc ls` row whose reported program is a shell: no agent in front (Decision 3). */
-export const rowIsShell = (row) => typeof row?.agent === "string" && SHELLS.has(base(row.agent));
-
 /**
  * A bot's pane by the live rule (DESIGN Decision 3): the terminals carrying `bot=<id>`
- * (`hc ls --label`), each asked with `hc get` unless its row reports a shell, live when an
- * agent is in front; among several, the newest by created_ms, flagged `duplicate`.
+ * (`hc ls --label`), each asked with `hc get`, live when an agent is in front; among
+ * several, the newest by created_ms, flagged `duplicate`. A row reporting a shell is asked
+ * too: `hc ls` rows carry no created_ms, and a pane still in its `sh -c` wrapper is the one
+ * youngPane must see (the label's holders are few, so this is a call or two).
  * `ask(args)` runs `hc <args> --json` and resolves with the parsed answer, null when hc
  * failed, or UNANSWERED when it ran out of time; it may also throw (the CLI does when hc
  * fails, so a failure never reads as "no pane"). `localOnly` keeps this computer's
@@ -144,7 +143,7 @@ export async function paneOf(botId, ask, { localOnly = false } = {}) {
   if (ls === UNANSWERED) return { ...none, unreachable: true };
   const rows = rowsOf(ls).filter((r) => r?.address && r.state !== "finished" && (!localOnly || !r.address.includes("/")));
   const addresses = rows.map((r) => r.address);
-  const answers = await Promise.all(rows.filter((r) => !rowIsShell(r)).map((r) => ask(["get", r.address])));
+  const answers = await Promise.all(rows.map((r) => ask(["get", r.address])));
   // A pane that didn't answer may be the newest: no address beats a stale one.
   if (answers.includes(UNANSWERED)) return { ...none, addresses, unreachable: true };
   const gets = answers.filter((g) => g && typeof g === "object");

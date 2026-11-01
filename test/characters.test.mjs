@@ -58,6 +58,15 @@ test("unknown character, colour or pose still draws", () => {
   assert.equal(characterSvg("whale", "red", "nope"), characterSvg("whale", "red", "idle"));
 });
 
+test("a colour, character or pose named like an Object property draws as an unknown one", () => {
+  for (const odd of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    assert.equal(characterSvg("whale", odd, "idle"), characterSvg("whale", "gray", "idle"), `colour ${odd}`);
+    assert.equal(characterSvg(odd, "red", "idle"), characterSvg("gumdrop", "red", "idle"), `character ${odd}`);
+    assert.equal(characterSvg("whale", "red", odd), characterSvg("whale", "red", "idle"), `pose ${odd}`);
+    assert.equal(inkOf(odd), inkOf("gray"));
+  }
+});
+
 test("inkOf: Automagik's light ink, black and unknown read as gray", () => {
   assert.equal(inkOf("deepseek"), "#0891B2");
   assert.equal(inkOf("deepseek", true), "#22D3EE");

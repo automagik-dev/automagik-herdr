@@ -346,6 +346,15 @@ test("start a member: parent is its lead's live terminal, outliving it; else --n
   assert.ok(runs[1].includes("--no-parent"));
 });
 
+test("start: --tab without --space is a usage mistake (exit 2), nothing started", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const r = s.cli(["start", "Genie", "--tab", "tb2"]);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /--tab needs --space/);
+  assert.equal(runCall(s.calls()), undefined);
+});
+
 test("start: the main bot not live gives --no-parent; planned and agentless bots are refused; a missing briefing script only warns", (t) => {
   const s = scene(t, { briefing: false });
   s.seed(team());
@@ -510,7 +519,7 @@ test("start places the pane in the space of a live terminal in the project; with
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {
   const f = team();
   f.bots[0].model = "Opus 5.5";
-  const s = scene(t, { terminals: [term("t30", { bot: ID.cap, argv: ["sh", "-c", "claude"], app: "starting", created: Date.now() })] });
+  const s = scene(t, { terminals: [term("t30", { bot: ID.cap, argv: ["sh", "-c", "claude"], app: "sh", created: Date.now() })] });
   s.seed(f);
   const r = s.cli(["start", "Genie"]);
   assert.equal(r.code, 1);
@@ -543,13 +552,14 @@ test("a failing hc never reads as 'no pane': start, attach and detach refuse; ls
   assert.equal(s.cli(["brief", "Genie"]).code, 0, "the briefing still prints, members unreachable");
 });
 
-test("a row whose program is a shell is never asked with hc get", (t) => {
+test("a row whose program is a shell is asked with hc get (its age), yet never counts as live", (t) => {
   const s = scene(t, { terminals: [term("t1", { bot: ID.main, argv: ["zsh"], app: "zsh" }), term("t2", { bot: ID.cap })] });
   s.seed(team());
-  s.cli(["ls", "--json"]);
+  const bots = s.cli(["ls", "--json"]).json().projects[0].bots;
   const gets = s.calls().filter((c) => c[0] === "get").map((c) => c[1]);
-  assert.ok(gets.includes("t2"));
-  assert.equal(gets.includes("t1"), false);
+  assert.ok(gets.includes("t2") && gets.includes("t1"));
+  assert.equal(bots.find((b) => b.id === ID.main).terminal ?? null, null);
+  assert.equal(bots.find((b) => b.id === ID.cap).terminal, "t2");
 });
 
 test("attach: a terminal argument that looks like an option is refused; a claude wrapper counts as a Claude pane", (t) => {
