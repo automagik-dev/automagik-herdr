@@ -1,3 +1,6 @@
+// Changed from Herdr's `spaces` 0.1.7 (cloned as spaces-agents) by the herdr-bots pack;
+// see the repository history for each change. Apache-2.0.
+//
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
 // its first terminal is in now, only where unusual: branch, ahead/behind. Click to
@@ -116,7 +119,7 @@ export default class Spaces extends View {
     // Hermes reports no status to the core: read its screen for the question footer.
     this.screen = {}; // terminal address -> "blocked" | null
     cx.timer.every(2500, (cx) => this.scanHermes(cx));
-    cx.timer.every(15000, cx => this.refreshMachines(cx));
+    cx.timer.every(15000, cx => { this.refreshMachines(cx); this.loadExtra(cx); });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
@@ -136,13 +139,14 @@ export default class Spaces extends View {
         cx.notify();
       }
     });
-    // Names for terminals listed though they report no status: sidebar-agents.json, by
-    // full address ({name, program, tab}). Saving it reloads this mod.
+    // Names for terminals listed though they report no status: sidebar-agents.json in the
+    // app home (outside mods/, so saving it reloads nothing), by full address ({name,
+    // program, tab}). Read now and on the 15-second timer.
     this.extra = {};
+    this.loadExtra(cx);
     // Hermes's own icon from the program table (its process shows as Python).
     this.hermes = { key: "hermes", name: "Hermes", icon: "icons/hermes.svg", tint: true };
     cx.spawn(async (cx) => {
-      try { this.extra = JSON.parse((await readTextFile(`${appHome()}/mods/spaces-agents/sidebar-agents.json`)) ?? "{}"); } catch { this.extra = {}; }
       try { this.known = await knownAgents(); this.hermes = this.known.find((a) => a.key === "hermes" && a.icon) ?? this.hermes; } catch {}
       cx.notify();
     });
@@ -368,6 +372,18 @@ export default class Spaces extends View {
         this.screen = next;
         if (changed) cx.notify();
       } finally { this.scanning = false; }
+    });
+  }
+
+  // The rename map: an absent file is an empty map; one that can't be read or parsed
+  // (mid-save, say) keeps the last map until the next look.
+  loadExtra(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const text = await readTextFile(`${appHome()}/sidebar-agents.json`);
+        this.extra = text === null ? {} : JSON.parse(text) ?? {};
+      } catch {}
+      cx.notify();
     });
   }
 
