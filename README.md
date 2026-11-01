@@ -16,9 +16,12 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/
 The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
 missing (it asks first). It installs the latest release's pack, checksum verified, into
 `~/.config/herdr-app/mods/spaces-agents`, keeps a copy of any pack already there, and links
-the `automagik-herdr` command into `~/.local/bin`. Running it again is safe, and `--uninstall`
-puts the old pack back. Add options after `bash -s --`: `--yes` answers every question,
-`--version 1.2.3` installs that release, `--uninstall` undoes the install.
+the `automagik-herdr` command into `~/.local/bin`. It adds the `bots` layout (Herdr's main
+layout with the bot view) when you have none, and asks before switching Herdr to it. Running
+it again is safe, and `--uninstall` puts back the pack that was there before the first install
+and removes the layout if you haven't changed it. Add options after `bash -s --`: `--yes`
+answers every question, `--version 0.1.0` installs that release (v0.1.0 or later),
+`--uninstall` undoes the install.
 
 ### Paste this to your agent
 
@@ -27,8 +30,10 @@ Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/ag
 ```text
 Install Automagik Herdr on this Mac and set up my first bot.
 
-1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash -s -- --yes
-   If it stops (no Node, no Herdr, not a Mac), tell me what it printed and stop.
+1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
+   If it stops to ask something (install Node or Herdr, switch the layout), ask me; if I say
+   yes, run it again with: ... | bash -s -- --yes
+   If it stops for anything else (not a Mac), tell me what it printed and stop.
 2. Check the install. Both must succeed:
    automagik-herdr --version
    herdr-app check ~/.config/herdr-app/mods/spaces-agents
@@ -37,7 +42,8 @@ Install Automagik Herdr on this Mac and set up my first bot.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
    (claude, codex, gemini…). Characters: whale, octopus, star, moon, wave, squircle, zed,
    hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
-   ring, gem. With no answer, use the octopus (--omni).
+   ring, gem. If I don't pick a character, use --omni (the octopus); never guess the folder,
+   name or agent.
 4. In that folder, create and start it:
    automagik-herdr create --kind=main --name=<name> --agent=<agent> --character=<character>
    automagik-herdr start <name>
@@ -191,8 +197,9 @@ ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bi
 Herdr never overwrites a mod folder that is already there. If you run your own
 `spaces-agents` clone, move it out of `mods/` first, and keep the backup outside `mods/`,
 or Herdr loads it as a second mod. A rename map in `<app home>/sidebar-agents.json` is read
-as before. `layouts/bots.json` is Herdr's `main` layout with the pack in place of the
-`spaces` and `agents` sidebars; copy it to `~/.config/herdr-app/layouts/` to use it.
+as before. `mods/spaces-agents/layouts/bots.json` is Herdr's `main` layout with the pack in
+place of the `spaces` and `agents` sidebars; copy it to `~/.config/herdr-app/layouts/` and run
+`herdr-app do layout.switch '{"name":"bots"}'` to use it (the installer does both, asking first).
 
 ### Upgrading from herdr-bots
 
