@@ -129,6 +129,11 @@ offer_switch() {
   [ -f "$LAYOUT" ] || return 0
   shown=$(shown_layout)
   [ "$shown" != automagik ] || return 0
+  # A layout that already shows the pack (the person's own, like main-agents): nothing to do.
+  if [ -n "$shown" ] && [ -f "$APP_HOME/layouts/$shown.json" ] \
+    && grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$APP_HOME/layouts/$shown.json"; then
+    return 0
+  fi
   if [ -z "$shown" ] || [ ! -f "$PACK/layouts/automagik.json" ] || ! cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
     HINT=yes
     return 0
@@ -266,7 +271,11 @@ install() {
     for f in update.mjs release.js; do
       { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
     done
-    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; copied=yes; fi
+    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then
+      { cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; } \
+        || { rm -rf "$BEFORE.tmp"; fail "could not keep a copy of $PACK: nothing was installed."; }
+      copied=yes
+    fi
     if ! out=$(node "$TMP/x/spaces-agents/update.mjs" install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>&1); then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
       if [ "$copied" = yes ]; then rm -rf "$BEFORE"; fi
