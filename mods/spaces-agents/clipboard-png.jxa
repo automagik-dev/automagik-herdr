@@ -1,0 +1,24 @@
+// Writes the clipboard's image as a real PNG to argv[0], reading the clipboard only:
+// its PNG data as is, else its TIFF (or any NSImage type) re-encoded by AppKit.
+// argv[1] (tests): read that image file instead of the clipboard.
+// osascript -l JavaScript clipboard-png.jxa <out.png> [in-file]
+ObjC.import("AppKit");
+function run(argv) {
+  const out = argv[0];
+  if (!out) throw new Error("usage: clipboard-png.jxa <out.png> [in-file]");
+  let data = null;
+  if (argv[1]) {
+    data = $.NSData.dataWithContentsOfFile(argv[1]);
+  } else {
+    const pb = $.NSPasteboard.generalPasteboard;
+    const png = pb.dataForType($.NSPasteboardTypePNG);
+    if (!png.isNil()) data = png;
+    else data = pb.dataForType($.NSPasteboardTypeTIFF);
+  }
+  if (!data || data.isNil()) throw new Error("no image on the clipboard");
+  const rep = $.NSBitmapImageRep.imageRepWithData(data);
+  if (!rep || rep.isNil()) throw new Error("the clipboard image could not be read");
+  const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({}));
+  if (!png || png.isNil() || !png.writeToFileAtomically(out, true)) throw new Error("could not write the PNG");
+  return out;
+}

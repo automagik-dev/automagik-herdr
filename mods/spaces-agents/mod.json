@@ -1,0 +1,8 @@
+{
+  "place": "left",
+  "title": "Spaces",
+  "cloned_from": {
+    "name": "spaces",
+    "version": "0.1.7"
+  }
+}
