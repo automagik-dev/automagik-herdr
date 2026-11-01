@@ -25,7 +25,7 @@ The source is branch `pack/vendor-on-dev` at 0722de1: nine mods vendored on dev 
    | `am-markdown` | md-menu + markdown-browser | One mod. |
    | `am-tabs` | auto-tabs | |
    | `am-new-menu` | new-menu-tui | |
-   | `am-pocket` | pocket-link | |
+   | ~~`am-pocket`~~ | pocket-link | **Removed** (item 10): owned by automagik-pocket. |
    | `am-mods` | mod-manager | |
    | `am-quota` | cliproxy | The owner wants it changed. Today it does nothing useful; the owner uses the CLIProxyAPI in other ways. |
 
@@ -55,3 +55,15 @@ The source is branch `pack/vendor-on-dev` at 0722de1: nine mods vendored on dev 
   - tests
   - README
 - **Keep** the pane-label marker `automagik-herdr.squad=<squad>`. Brain routing reads it.
+
+## Later rulings
+
+10. **Pocket Link is not in the pack** (owner, 2026-11-01, via the herdr-pocket coordinator: "you should have sovereignty over your mod").
+    - `mods/pocket-link`, the `dev.herdr.pocket-link` LaunchAgent and its state belong to automagik-pocket (`desktop/pocket-link/`).
+    - The pack never vendors, installs, updates, removes or restarts it. To offer it, the pack links to automagik-pocket's own installer or release.
+    - The cause was the pack installer's 18:40 run against the live home. It `rm -rf`'d every mod folder, which erased Pocket Link's pairing key.
+11. **The pack installer writes only the mods the pack owns.**
+    - It moves a live folder aside to `<app home>/automagik-herdr/backup/<mod>-<timestamp>` instead of deleting it.
+    - It keeps `.state/`, other dotfiles and `node_modules`.
+    - It refuses any other folder.
+    - Install tests run against a scratch `HERDR_APP_HOME` only.
