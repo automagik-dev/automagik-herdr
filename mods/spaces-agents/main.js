@@ -510,7 +510,7 @@ export default class Spaces extends View {
     const live = n.live;
     if (live) this.order.push(live.terminal);
     const second = planned ? (b.planned.note || "planned")
-      : main ? ["Main bot", b.model, base(tree.key)].filter(Boolean).join(" · ")
+      : main ? ["Main bot", live ? b.model : "not running", base(tree.key)].filter(Boolean).join(" · ")
         : live ? [b.role, b.model].filter(Boolean).join(" · ")
           : ["not running", b.role].filter(Boolean).join(" · ");
     const s = n.status === "error" ? "blocked" : n.status;
