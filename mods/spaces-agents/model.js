@@ -14,7 +14,7 @@ export const KINDS = ["main", "member"];
 // Automagik's characters and colours, by name (apps/bots-dsh/src/client/characters.js and
 // inks.js). Only the names: the drawing comes with the characters themselves (Group 3).
 export const CHARACTERS = ["whale", "octopus", "star", "moon", "wave", "squircle", "zed", "hex", "gumdrop", "peanut",
-  "bunny", "kitty", "beacon", "plus", "magnet", "acorn", "pebbles", "cushion", "ring", "gem"];
+  "saucer", "bunny", "kitty", "beacon", "plus", "magnet", "acorn", "pebbles", "cushion", "ring", "gem"];
 export const COLOURS = ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray",
   "aurora", "deepseek", "charcoal", "graphite", "rose", "sky", "tangerine", "cobalt"];
 const DEFAULT_CHARACTERS = ["star", "moon", "gumdrop", "peanut", "bunny", "kitty", "acorn"];
@@ -231,4 +231,70 @@ export async function projectKeyOf(folder, git, exists) {
     if (dir === "/" || !dir.includes("/")) break;
   }
   return start;
+}
+
+/** The bots under `botId` at any depth (by effective lead): none of them can be its lead. */
+export function descendantsOf(file, botId) {
+  const out = new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of file.bots) {
+      if (out.has(b.id) || b.id === botId || b.kind !== "member") continue;
+      const { lead } = effectiveLead(file, b.id);
+      if (lead === botId || out.has(lead)) { out.add(b.id); grew = true; }
+    }
+  }
+  return out;
+}
+
+/** `planned` from the form: wave and note from it, the stored object's other keys kept. */
+export function plannedOf(stored, wave, note) {
+  const out = { ...(stored ?? {}), wave };
+  if (note) out.note = note; else delete out.note;
+  return out;
+}
+
+/** Automagik's Omni look: the octopus in deepseek. */
+export const OMNI_LOOK = Object.freeze({ character: "octopus", colour: "deepseek" });
+
+/** A category id for a new title, unique among `categories`. */
+export function newCategoryId(title, categories = []) {
+  const slug = String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "category";
+  const taken = new Set(categories.map((c) => c?.id));
+  let id = slug;
+  for (let n = 2; taken.has(id); n += 1) id = `${slug}-${n}`;
+  return id;
+}
+
+/**
+ * A copy of `raw` (parseBots' raw file, or a new one) with one bot created or edited, the
+ * Create form's write-back. `entry` holds every field the form edits; an optional one it
+ * leaves out or empty is removed (planned, lead, category, agent, model); other keys the
+ * stored entry had are kept.
+ * A lead equal to the main bot is stored as no lead; a category goes only with the main bot
+ * as lead; `newCategory` ({ title, sub }) is added to the categories and used.
+ */
+export function applyBotEdit(raw, entry, newCategory = null) {
+  const out = JSON.parse(JSON.stringify(raw ?? { version: 1, categories: [], bots: [] }));
+  out.version ??= 1;
+  if (!Array.isArray(out.categories)) out.categories = [];
+  if (!Array.isArray(out.bots)) out.bots = [];
+  const bot = { ...entry };
+  if (newCategory?.title?.trim()) {
+    const cat = { id: newCategoryId(newCategory.title, out.categories), title: newCategory.title.trim() };
+    if (newCategory.sub?.trim()) cat.sub = newCategory.sub.trim();
+    out.categories.push(cat);
+    bot.category = cat.id;
+  }
+  const main = out.bots.find((b) => b?.kind === "main" && b.id !== bot.id);
+  if (bot.kind === "main" || (main && bot.lead === main.id)) delete bot.lead;
+  if (bot.kind === "main" || bot.lead) delete bot.category;
+  const i = out.bots.findIndex((b) => b?.id === bot.id);
+  const merged = i >= 0 ? { ...out.bots[i], ...bot } : bot;
+  for (const k of ["planned", "lead", "category", "agent", "model"]) {
+    if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
+  }
+  if (i >= 0) out.bots[i] = merged; else out.bots.push(merged);
+  return out;
 }

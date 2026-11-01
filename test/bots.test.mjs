@@ -4,23 +4,13 @@
 // remembered project is forgotten on a null read, never on a rejected one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerHooks } from "node:module";
 import { execFile } from "node:child_process";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-const stubs = {
-  herdr: new URL("./herdr-stub.mjs", import.meta.url).href,
-  "fs/promises": new URL("./fs-stub.mjs", import.meta.url).href,
-};
-const fromPack = (context) => context.parentURL?.includes("/mods/spaces-agents/");
-registerHooks({
-  resolve: (specifier, context, next) =>
-    (stubs[specifier] && (specifier === "herdr" || fromPack(context)) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
-});
-const { state } = await import(stubs.herdr);
+import { state } from "./use-stubs.mjs";
 const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/spaces-agents/bots.js");
 
 const run = promisify(execFile);

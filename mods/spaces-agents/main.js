@@ -9,11 +9,22 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, appHome, knownAgents, notify } from "herdr";
+import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, appHome, knownAgents, notify, props } from "herdr";
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
+import { BOT_LABEL } from "./model.js";
+import { BotForm } from "./create.js";
+import { startBot, attachBot } from "./launch.js";
+import { parseCommand } from "./launchArgs.js";
+
+// The pack itself as a dialog: the bot form (create.js), or the attach picker as a popup.
+function openBotForm(form, kind = "dialog") {
+  openOverlay(kind === "popup"
+    ? { mod: "spaces-agents", kind: "popup", width: 300, height: 360, props: form }
+    : { mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: form });
+}
 
 // Agent naming, as in the agents mod.
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -99,7 +110,10 @@ export function tone(t, status) {
 }
 
 export default class Spaces extends View {
-  init(_props, cx) {
+  init(given, cx) {
+    // Opened as a dialog (New bot, Edit, Attach as bot…): the form only, no sidebar.
+    const p = props() ?? given;
+    if (p?.form) { this.form = new BotForm(p, cx); return; }
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -130,8 +144,12 @@ export default class Spaces extends View {
     // image; Ctrl+V stays terminal.paste_image. The terminal is the one focused at the key.
     cx.spawn(async (cx) => {
       for (;;) {
-        const c = await nextCommand();
-        if (c === "paste" || c === "paste_image") {
+        const { name: c, args } = parseCommand(await nextCommand());
+        if (["new-bot", "edit", "start", "attach", "refresh"].includes(c)) {
+          // A throw here must not end this loop (paste and every command would stop).
+          try { await this.botCommand(c, args, cx); } catch (e) { notify({ title: "Bots", body: String(e?.message ?? e), level: "error" }); }
+        }
+        else if (c === "paste" || c === "paste_image") {
           const address = focused()?.terminal;
           const image = await imageOnly();
           if (image && remote(address)) await pngPaste(address);
@@ -255,6 +273,8 @@ export default class Spaces extends View {
         .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
         // Not in agents() (no status, or a renamed machine): agent.focus wouldn't know it; its pane does.
         .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : run("agent.focus", { terminal: a.address })))
+        // "Attach as bot…": the clone has no terminal menu of its own, so the row's right-click.
+        .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address }, "popup")))
         .when(Boolean(pic), (el) => el.child(pic))
         .child(div().flex_1().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(a.extra ? a.name : this.agentName(a)))
         .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
@@ -397,6 +417,29 @@ export default class Spaces extends View {
       this.extra = map;
       cx.notify();
     });
+  }
+
+  // Bot commands (A10). Herdr hands nextCommand() only the name, so arguments come after
+  // it as JSON or key=value when a caller can send them; bare, they act on the focused pane.
+  async botCommand(c, args, cx) {
+    if (c === "refresh") return this.refreshBots(cx);
+    if (c === "new-bot") return openBotForm({ form: "create" });
+    const terminal = args.terminal ?? focused()?.terminal ?? null;
+    const bot = args.bot ?? terminals().find((k) => k.address === terminal)?.labels?.[BOT_LABEL] ?? null;
+    const title = { edit: "Edit bot", start: "Start bot", attach: "Attach as bot" }[c];
+    if (c === "attach" && !terminal) return notify({ title, body: "Focus the pane to attach first.", level: "warning" });
+    // Attach with no bot named: the picker, for the pane.
+    if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal });
+    // No bot named and the focused pane isn't one: the Bots list, to pick one.
+    if (!bot) return openBotForm({ form: "pick" }, "popup");
+    if (c === "edit") return openBotForm({ form: "edit", bot });
+    // A bot's project: looked up by its id (ids are random, so it is one project).
+    const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
+    const project = this.bots.find(has) ?? (await discoverProjects()).find(has);
+    if (!project) return notify({ title, body: `No project on this computer defines ${bot}.`, level: "warning" });
+    const r = c === "start" ? await startBot(project.key, bot) : await attachBot(project.key, bot, terminal);
+    if (r.refused) notify({ title, body: r.refused, level: "warning", timeout: 12000 });
+    this.refreshBots(cx);
   }
 
   refreshBots(cx) {
@@ -683,7 +726,8 @@ export default class Spaces extends View {
       .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
   }
 
-  render() {
+  render(cx) {
+    if (this.form) return this.form.render(cx);
     const t = theme();
     const collapsed = shared("sidebar.collapsed") === true;
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
@@ -709,6 +753,14 @@ export default class Spaces extends View {
       // An id keeps the scroll position across renders (hover, live data).
       .child(v_flex().id("space-list").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(list));
+        .children(list))
+      // A10: "New bot" at the foot of the list (mockup v9).
+      .when(!collapsed, (el) => el.child(h_flex().flex_none().px(8).pb(8)
+        .child(h_flex().id("bot-new").w_full().h(34).px(10).gap(10).items_center().rounded(8).cursor_pointer()
+          .bg(t.raised).text_color(t.foreground).text_size(13).font_semibold().hover((s) => s.bg(t.hover))
+          .on_click(() => openBotForm({ form: "create" }))
+          // Right-click: this computer's bots, to Edit or Start (the bot rows come in Group 3).
+          .on_mouse_down("right", () => openBotForm({ form: "pick" }, "popup"))
+          .child(div().text_size(15).child("+")).child("New bot"))));
   }
 }
