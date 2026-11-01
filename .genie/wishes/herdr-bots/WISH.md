@@ -645,6 +645,17 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Leftovers, filed as automagik-herdr#11:** hb-proj is still remembered, and the deleted demo path stays in `spaces-agents-projects.json` (hidden in the sidebar).
 - **G7 stays open** for the owner's click-through of the form, which needs typing in a frontmost Herdr window.
 
+
+### Group 7 owner click-through — 2026-11-01
+
+- **Owner, on the installed v0.2.0: "form ok".** Five steps:
+  1. "+ New bot" opens the form.
+  2. The form fits the window, the character pictures show, and the Agent and Model dropdowns open.
+  3. For a member, the rank chips appear and one can be selected.
+  4. Right-click a bot row, then Edit: the form opens prefilled.
+  5. Agent icons are visible in both light and dark.
+- Group 7 closed.
+
 ---
 
 ## Files to Create/Modify
