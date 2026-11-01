@@ -327,6 +327,12 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Quality pass, round 2: PASS.** All six findings fixed, nothing broken.
 - **Merged into `dev`:** 6a02ba3 (`--no-ff`); on merged `dev` `node --test 'test/*.test.mjs'` 32/32 pass, `node --check` clean.
 - **Card:** stays open until the three live in-Herdr checks run (owner approval pending); code dependency for Group 2 is met.
+- **Live checks (owner approved 2026-11-01), all PASS:**
+  1. Install per README over the owner's clone (backup `~/herdr-mods-backup/spaces-agents-20261101-122719`, rename map moved to the app home): `herdr-app status` `"errors": []`.
+  2. Rename-map edit: a temporary entry for live terminal `g10/t8` showed `ZZ-live-check` in the cropped sidebar shot 15.13 s after the write; map restored (`cmp` identical, 263 B).
+  3. In-Herdr `writeBots(keyOf(<worktree>), …, null)` on a scratch repo with no `.herdr/`: `live/proj/.herdr/bots.json` created via `mkdir -p`, nothing in the worktree; `discoverProjects` returned the project once with both space ids. Installed `main.js` restored (`cmp`), result file removed, scratch spaces closed, status errors `[]`.
+  - Side note (clone behaviour, not Group 1's): the rename map applies only to live non-agent terminals whose `command(argv)` is `hermes`; a `space.new` argv wrapped as `/bin/zsh -lic` reads as `zsh`. Two stale map entries (`g10/t2`, `g10/t3`) point at terminals that no longer exist.
+- **Group 1: done.**
 
 ---
 
