@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, visibleRows, botFold, categoryFold, knownBots, projectId,
+  secondLine,
 } from "../mods/spaces-agents/rows.js";
 import { parseBots } from "../mods/spaces-agents/model.js";
 
@@ -41,7 +42,7 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   ];
   const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
   assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-devdevdevd", "b-mainmainma", "b-pmpmpmpmpm"]);
-  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, status: "idle", status_ms: NOW - 1000, program: undefined });
+  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
   assert.equal(live["b-mainmainma"].duplicate, false);
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
@@ -180,4 +181,37 @@ test("placeTrees: after the first shown space of a project, once; projects with 
   const { at, rest } = placeTrees(["s1", "wt", "x", "s9"], trees);
   assert.deepEqual([...at], [["s1", projectId({ key: "/a" })], ["s9", projectId({ key: "/c", machine: "box" })]]);
   assert.deepEqual(rest, [projectId({ key: "/b" })]);
+});
+
+test("secondLine: the model a live pane runs (its command line, else the agent's default), never typed text", () => {
+  const texts = { claudeSettings: JSON.stringify({ model: "sonnet" }) };
+  const cap = file.bots.find((b) => b.id === "b-captaincap"); // pinned to an old free-text "GPT-6.1 Terra"
+  const main = file.bots.find((b) => b.id === "b-mainmainma");
+  const tree = { key: "/repo/proj/" };
+  const row = (bot, kind, node = {}) => ({ kind, node: { bot, live: null, argv: null, ...node } });
+  const live = { live: { terminal: "t7", duplicate: false } };
+  // The row carries the command line: the model it names; with none named, the default.
+  assert.equal(secondLine(row(cap, "bot", { ...live, argv: ["claude", "--model", "claude-opus-5-5"] }), tree, { texts }), "Captain · claude-opus-5-5");
+  assert.equal(secondLine(row(cap, "bot", { ...live, argv: ["claude", "--resume", "x"] }), tree, { texts }), "Captain · sonnet");
+  assert.equal(secondLine(row(cap, "bot", { ...live, argv: ["claude"] }), tree), "Captain");
+  // Read with hc get by the caller (argvOf); not known yet: no model rather than a guess.
+  assert.equal(secondLine(row(cap, "bot", live), tree, { texts, argvOf: (a) => (a === "t7" ? ["claude", "--model=opus"] : null) }), "Captain · opus");
+  assert.equal(secondLine(row(cap, "bot", live), tree, { texts }), "Captain");
+  // Stopped: A4's shape, no model (and never the pin's free text).
+  assert.equal(secondLine(row(cap, "bot"), tree, { texts }), "not running · Captain");
+  assert.equal(secondLine(row(main, "main"), tree, { texts }), "Main bot · not running · proj");
+  assert.equal(secondLine(row(main, "main", { ...live, argv: ["claude", "--model", "haiku"] }), tree, { texts }), "Main bot · haiku · proj");
+  const planned = file.bots.find((b) => b.id === "b-plannedpla");
+  assert.equal(secondLine(row(planned, "planned"), tree, { texts }), "waits for auth v2");
+  for (const kind of ["bot", "main"]) assert.doesNotMatch(secondLine(row(cap, kind, live), tree, { texts }), /GPT-6\.1 Terra/);
+});
+
+test("liveFrom and buildTree carry the live pane's foreground command line when the row has it", () => {
+  const rows = [T("t1", { labels: { bot: "b-captaincap" }, foreground: { argv: ["claude", "--model", "opus"] } }), T("t2", { labels: { bot: "b-mainmainma" } })];
+  const live = liveFrom(rows);
+  assert.deepEqual([live["b-captaincap"].argv, live["b-mainmainma"].argv], [["claude", "--model", "opus"], null]);
+  const [tree] = buildTree({ projects: [{ key: KEY, file }], live, terminals: rows, now: NOW });
+  const cap = tree.categories.find((c) => c.id === "eng").bots.find((n) => n.bot.id === "b-captaincap");
+  assert.deepEqual(cap.argv, ["claude", "--model", "opus"]);
+  assert.equal(tree.main.argv, null);
 });

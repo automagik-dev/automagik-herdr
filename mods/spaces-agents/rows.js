@@ -6,6 +6,7 @@
 
 import { BOT_LABEL, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
+import { shownModel, defaultModelFrom } from "./models.js";
 
 /** Idle this long is asleep (Automagik's own threshold). */
 export const ASLEEP_MS = 10 * 60 * 1000;
@@ -22,7 +23,8 @@ const agentInFront = (t) => rowIsAgent(t) ?? agentInForeground(t);
  * is live, carries `bot=<id>` for a bot in `known` (every id when `known` is null) and has an
  * agent in front. On any machine: the view shows remote bots too (launch.js' liveTerminalOf
  * is this computer's only, for Start and Attach). Several holders: the newest by
- * `created_ms` counts, flagged `duplicate`.
+ * `created_ms` counts, flagged `duplicate`. `argv`: the pane's foreground command line when
+ * the row carries it (`foreground.argv`), else null (the view reads it with `hc get`).
  */
 export function liveFrom(terminals, known = null) {
   const holders = new Map();
@@ -37,6 +39,7 @@ export function liveFrom(terminals, known = null) {
     live[id] = {
       terminal: addressOf(pick), duplicate: rows.length > 1, status: pick.status ?? null,
       status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
+      argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : null,
     };
   }
   return live;
@@ -116,7 +119,7 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
       const n = {
         bot, planned, pose: poseOf(l, now), members,
         live: l ? { terminal: l.terminal, duplicate: l.duplicate } : null,
-        status: l?.status ?? null, program: l?.program ?? null,
+        status: l?.status ?? null, program: l?.program ?? null, argv: l?.argv ?? null,
         helpers: l ? helpersOf(terminals, l.terminal, known) : [],
       };
       const warning = leads.get(bot.id)?.warning;
@@ -209,6 +212,30 @@ export function visibleRows(tree, open = new Map()) {
   for (const n of tree.uncategorised) botRows(n, ["main"]);
   rows.push(...helperRows(tree.main, tree.main.helpers, ["main"]));
   return rows;
+}
+
+const folderName = (key) => String(key ?? "").replace(/\/+$/, "").split("/").pop();
+
+/**
+ * A bot row's second line (A4, A12). Planned: its note. Main bot: `Main bot · model ·
+ * project`, stopped `Main bot · not running · project`. Member: `role · model`, stopped
+ * `not running · role`. The model is models.js shownModel's for the live pane: the model its
+ * foreground command line names, else the agent's own configured default (`texts`:
+ * configPaths' files read by the caller). Never typed text: a stopped bot's line keeps A4's
+ * shape with no model, and a live pane whose command line isn't known yet shows none rather
+ * than a guess. `argvOf(terminal)`: the command line the caller read with `hc get` for a
+ * row that didn't carry it.
+ */
+export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
+  const n = r.node, b = n.bot;
+  if (r.kind === "planned") return b.planned?.note || "planned";
+  let model = null;
+  if (n.live) {
+    const argv = n.argv ?? argvOf(n.live.terminal) ?? null;
+    if (argv) model = shownModel({ argv, agentKey: b.agent, pinned: b.model, fallback: defaultModelFrom(b.agent, texts) }).model;
+  }
+  if (r.kind === "main") return ["Main bot", n.live ? model : "not running", folderName(tree.key)].filter(Boolean).join(" · ");
+  return (n.live ? [b.role, model] : ["not running", b.role]).filter(Boolean).join(" · ");
 }
 
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */

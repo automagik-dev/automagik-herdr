@@ -16,10 +16,10 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm } from "./create.js";
-import { startBot, attachBot } from "./launch.js";
+import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -140,7 +140,10 @@ export default class Spaces extends View {
     // Hermes reports no status to the core: read its screen for the question footer.
     this.screen = {}; // terminal address -> "blocked" | null
     cx.timer.every(2500, (cx) => this.scanHermes(cx));
-    cx.timer.every(15000, cx => { this.refreshMachines(cx); this.loadExtra(cx); this.refreshBots(cx); });
+    cx.timer.every(15000, cx => {
+      this.refreshMachines(cx); this.loadExtra(cx); this.refreshBots(cx); this.loadModelTexts(cx);
+      this.petsFailed.clear(); // a picture whose write failed is tried again at the next render
+    });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); });
@@ -190,6 +193,12 @@ export default class Spaces extends View {
     this.petsWanted = new Map(); // file -> { look, pose, dark }
     this.petsFailed = new Set();
     this.wakeAt = null;
+    // The model a bot row shows (A12, rows.js secondLine): the agents' own config files, read
+    // now and on the 15-second timer, and each live bot pane's foreground command line by
+    // address, read with hc get after each bot discovery when terminals() didn't carry it.
+    this.modelTexts = {};
+    this.argvOf = new Map();
+    this.loadModelTexts(cx);
     // Hermes's own icon from the program table (its process shows as Python).
     this.hermes = { key: "hermes", name: "Hermes", icon: "icons/hermes.svg", tint: true };
     cx.spawn(async (cx) => {
@@ -355,8 +364,9 @@ export default class Spaces extends View {
 
   // ---- The bot view (Group 3): each project's bots as the approved mockup draws them ----
 
-  // Live bots, poses and trees from this render's terminals() (rows.js decides; no hc get:
-  // terminals() carries program.agent, status, status_ms and created_ms on this host).
+  // Live bots, poses and trees from this render's terminals() (rows.js decides; no hc get
+  // here: terminals() carries program.agent, status, status_ms and created_ms on this host;
+  // a command line it lacks comes from readBotArgv, read off the drawing path).
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
@@ -501,10 +511,7 @@ export default class Spaces extends View {
     const ink = inkOf(b.look?.colour, dark);
     const live = n.live;
     if (live) this.order.push(live.terminal);
-    const second = planned ? (b.planned.note || "planned")
-      : main ? ["Main bot", live ? b.model : "not running", base(tree.key)].filter(Boolean).join(" · ")
-        : live ? [b.role, b.model].filter(Boolean).join(" · ")
-          : ["not running", b.role].filter(Boolean).join(" · ");
+    const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a) ?? null });
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     const onClick = live
@@ -679,10 +686,56 @@ export default class Spaces extends View {
         });
       }
       const seen = JSON.stringify(found);
-      if (seen === this.botsSeen) return;
-      this.botsSeen = seen;
-      this.bots = found;
+      if (seen !== this.botsSeen) {
+        this.botsSeen = seen;
+        this.bots = found;
+        cx.notify();
+      }
+      this.readBotArgv(cx);
+    });
+  }
+
+  // The agents' config files (models.js configPaths) for each bot's default model; redraw on
+  // a change only.
+  loadModelTexts(cx) {
+    cx.spawn(async (cx) => {
+      let texts;
+      try { texts = await modelTexts(); } catch { return; }
+      const seen = JSON.stringify(texts);
+      if (seen === this.modelTextsSeen) return;
+      this.modelTextsSeen = seen;
+      this.modelTexts = texts;
       cx.notify();
+    });
+  }
+
+  // A12: each live bot pane's foreground command line, for the model it runs. terminals()
+  // rows that carry `foreground.argv` need nothing; any other live terminal labelled with a
+  // known bot is asked once per discovery (on load, the 15-second timer and a .herdr change),
+  // never while drawing. A failed ask keeps what was read before.
+  readBotArgv(cx) {
+    if (this.argvBusy) return;
+    const known = knownBots(this.bots);
+    const ask = terminals().filter((k) => k?.address && k.state === "live" && known.has(k.labels?.[BOT_LABEL])
+      && !Array.isArray(k.foreground?.argv)).map((k) => k.address);
+    const wanted = new Set(ask);
+    let changed = false;
+    for (const a of this.argvOf.keys()) if (!wanted.has(a)) { this.argvOf.delete(a); changed = true; }
+    if (!ask.length) { if (changed) cx.notify(); return; }
+    this.argvBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        for (const address of ask) {
+          let argv = null;
+          try {
+            const r = await hc(["get", address, "--json"]);
+            if (r.code === 0) argv = JSON.parse(r.stdout)?.foreground?.argv ?? null;
+          } catch { continue; }
+          if (!Array.isArray(argv)) continue;
+          if (JSON.stringify(argv) !== JSON.stringify(this.argvOf.get(address))) { this.argvOf.set(address, argv); changed = true; }
+        }
+      } finally { this.argvBusy = false; }
+      if (changed) cx.notify();
     });
   }
 
