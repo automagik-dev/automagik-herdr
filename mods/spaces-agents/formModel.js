@@ -15,11 +15,24 @@ export const NEAR_LIMIT = 3600;
 /** The "+ New" category chip's value. */
 export const NEW_CATEGORY = "+new";
 
-/** A word as a POSIX shell reads it: bare when it is plain, else single-quoted. */
+/**
+ * A word as a POSIX shell (and zsh) reads it: bare when it is plain, else single-quoted.
+ * A leading `=` is quoted too: zsh expands a bare `=word` to the path of command `word`.
+ */
 export function shellQuote(value) {
   const v = String(value ?? "");
-  return /^[A-Za-z0-9._/:@%+=,-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
+  return /^[A-Za-z0-9._/:@%+,-][A-Za-z0-9._/:@%+=,-]*$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
 }
+
+/**
+ * One option with its value as one shell word, `--name=<quoted>`. The CLI's parser (node's
+ * strict parseArgs) refuses `--name value` when the value starts with `-` (a markdown list
+ * in the instructions, say); the `=` spelling takes any value.
+ */
+export const opt = (name, value) => `--${name}=${shellQuote(value)}`;
+
+const str = (x, or = "") => (typeof x === "string" ? x : or);
+const isWave = (x) => Number.isInteger(x) && x > 0;
 
 /** 4000 → "4,000" (no Intl: Herdr's runtime may not carry locales). */
 export function thousands(n) {
@@ -34,13 +47,17 @@ export function thousands(n) {
  */
 export function formFrom({ mode = "create", bot = null, file = null, id = null, agent = "" } = {}) {
   if (mode === "edit" && bot) {
+    // Stored values as text only: a hand-edited file may hold anything, and every one of
+    // them ends up in the copied command line.
+    const look = defaultLook(bot.id);
+    const planned = bot.planned && typeof bot.planned === "object" ? bot.planned : null;
     return {
-      mode, id: bot.id, name: bot.name ?? "", kind: bot.kind === "main" ? "main" : "member",
-      character: bot.look?.character ?? defaultLook(bot.id).character, colour: bot.look?.colour ?? defaultLook(bot.id).colour,
-      role: bot.role ?? "", instructions: bot.instructions ?? "", agent: bot.agent ?? "", pin: bot.model ?? "",
-      lead: bot.kind === "main" ? "" : bot.lead ?? "", category: bot.category ?? "", catTitle: "", catSub: "",
-      planned: Boolean(bot.planned), wave: bot.planned?.wave ?? 1, note: bot.planned?.note ?? "",
-      storedPlanned: bot.planned ?? null,
+      mode, id: bot.id, name: str(bot.name), kind: bot.kind === "main" ? "main" : "member",
+      character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
+      role: str(bot.role), instructions: str(bot.instructions), agent: str(bot.agent), pin: str(bot.model),
+      lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
+      planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
+      storedPlanned: planned,
     };
   }
   const look = defaultLook(id);
@@ -236,60 +253,60 @@ export function entryOf(state, file) {
  * The `herdr-bots` line that does what the form will do (A11), shown live in the footer and
  * copied by Copy. Create: every chosen field, in the mockup's order. Edit: `edit <bot>` and
  * only what changed since `initial`, with the CLI's clearing spellings (--no-model,
- * --no-category, --unplanned). A new category is added first with `category add`. The
- * project is named with --project, so the line writes the same file from any folder.
- * Instructions go inline with --instructions (the mockup's `--instructions-file -` would
- * wait on stdin when pasted).
+ * --no-category, --unplanned). A new category is added first with `category add --id`, the
+ * id the create line names. The project is named with --project, so the line writes the
+ * same file from any folder. Every value goes as `--option=<quoted>` (see opt). Instructions
+ * go inline (the mockup's `--instructions-file -` would wait on stdin when pasted).
  */
 export function commandOf(state, { key = null, file = null, initial = null } = {}) {
-  const q = shellQuote;
   const { leadId, byMain } = placeOf(state, file);
-  const project = key ? [`--project ${q(key)}`] : [];
+  const project = key ? [opt("project", key)] : [];
   const cats = file?.categories ?? [];
   const pre = [];
   let categoryId = state.category;
   if (byMain && state.category === NEW_CATEGORY) {
     categoryId = newCategoryId(state.catTitle.trim() || "category", cats);
-    pre.push(["herdr-bots category add", `--title ${q(state.catTitle.trim())}`,
-      ...(state.catSub.trim() ? [`--sub ${q(state.catSub.trim())}`] : []), ...project].join(" "));
+    pre.push(["herdr-bots category add", opt("id", categoryId), opt("title", state.catTitle.trim()),
+      ...(state.catSub.trim() ? [opt("sub", state.catSub.trim())] : []), ...project].join(" "));
   }
   const parts = [];
   const was = state.mode === "edit" && initial ? initial : null;
   const changed = (k) => !was || was[k] !== state[k];
+  const wave = String(state.wave);
   if (!was) {
-    parts.push("herdr-bots create", `--name ${q(state.name.trim() || "new-bot")}`);
-    if (state.kind === "main") parts.push("--kind main");
-    if (state.agent) parts.push(`--agent ${q(state.agent)}`);
-    if (state.role.trim()) parts.push(`--role ${q(state.role.trim())}`);
-    if (state.kind === "member" && leadId) parts.push(`--lead ${q(leadId)}`);
-    if (byMain && categoryId) parts.push(`--category ${q(categoryId)}`);
-    parts.push(`--character ${q(state.character)}`, `--colour ${q(state.colour)}`);
-    if (state.pin) parts.push(`--model ${q(state.pin)}`);
+    parts.push("herdr-bots create", opt("name", state.name.trim() || "new-bot"));
+    if (state.kind === "main") parts.push(opt("kind", "main"));
+    if (state.agent) parts.push(opt("agent", state.agent));
+    if (state.role.trim()) parts.push(opt("role", state.role.trim()));
+    if (state.kind === "member" && leadId) parts.push(opt("lead", leadId));
+    if (byMain && categoryId) parts.push(opt("category", categoryId));
+    parts.push(opt("character", state.character), opt("colour", state.colour));
+    if (state.pin) parts.push(opt("model", state.pin));
     if (state.planned) {
-      parts.push(`--planned-wave ${state.wave}`);
-      if (state.note.trim()) parts.push(`--planned-note ${q(state.note.trim())}`);
+      parts.push(opt("planned-wave", wave));
+      if (state.note.trim()) parts.push(opt("planned-note", state.note.trim()));
     }
     parts.push(...project);
-    if (state.instructions) parts.push(`--instructions ${q(state.instructions)}`);
+    if (state.instructions) parts.push(opt("instructions", state.instructions));
   } else {
-    parts.push(`herdr-bots edit ${q(state.id)}`);
-    if (changed("name")) parts.push(`--name ${q(state.name.trim())}`);
-    if (changed("agent") && state.agent) parts.push(`--agent ${q(state.agent)}`);
-    if (changed("role")) parts.push(`--role ${q(state.role.trim())}`);
+    parts.push(`herdr-bots edit ${shellQuote(state.id)}`);
+    if (changed("name")) parts.push(opt("name", state.name.trim()));
+    if (changed("agent") && state.agent) parts.push(opt("agent", state.agent));
+    if (changed("role")) parts.push(opt("role", state.role.trim()));
     const wasPlace = placeOf(was, file);
-    if (state.kind === "member" && leadId !== wasPlace.leadId) parts.push(`--lead ${q(leadId)}`);
+    if (state.kind === "member" && leadId !== wasPlace.leadId) parts.push(opt("lead", leadId));
     if (byMain && (categoryId !== was.category || !wasPlace.byMain)) {
-      parts.push(categoryId ? `--category ${q(categoryId)}` : "--no-category");
+      parts.push(categoryId ? opt("category", categoryId) : "--no-category");
     }
-    if (changed("character") || changed("colour")) parts.push(`--character ${q(state.character)}`, `--colour ${q(state.colour)}`);
-    if (changed("pin") || (changed("agent") && was.pin)) parts.push(state.pin ? `--model ${q(state.pin)}` : "--no-model");
+    if (changed("character") || changed("colour")) parts.push(opt("character", state.character), opt("colour", state.colour));
+    if (changed("pin") || (changed("agent") && was.pin)) parts.push(state.pin ? opt("model", state.pin) : "--no-model");
     if (!state.planned && was.planned) parts.push("--unplanned");
     if (state.planned && (!was.planned || changed("wave") || changed("note"))) {
-      parts.push(`--planned-wave ${state.wave}`);
-      if (state.note.trim() || was.note) parts.push(`--planned-note ${q(state.note.trim())}`);
+      parts.push(opt("planned-wave", wave));
+      if (state.note.trim() || was.note) parts.push(opt("planned-note", state.note.trim()));
     }
     parts.push(...project);
-    if (changed("instructions")) parts.push(`--instructions ${q(state.instructions)}`);
+    if (changed("instructions")) parts.push(opt("instructions", state.instructions));
   }
   return [...pre, parts.join(" ")].join(" && ");
 }
