@@ -59,8 +59,8 @@ export function agentInForeground(get) {
 }
 
 /**
- * Whether a `terminals()` row is a live agent: `program.agent` when the row says, else
- * `hc get` (fetched by the caller only then). Rows from another machine never count.
+ * Whether a `terminals()` row is a live agent: `program.agent` when the row says, null
+ * when it doesn't (then the caller asks `hc get`).
  */
 export function rowIsAgent(row) {
   return typeof row?.program?.agent === "boolean" ? row.program.agent : null;
