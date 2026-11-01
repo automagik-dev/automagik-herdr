@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -263,22 +263,24 @@ test("a hand-placed pack already at the release's version: no marker, and --unin
   assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev")), false);
 });
 
-test("the bots layout: added when absent, switched to only with a yes; uninstall removes it only unchanged", (t) => {
+test("the automagik layout: added when absent, switched to only with a yes; uninstall removes it only unchanged", (t) => {
   const s = scratch(t);
   s.addHerdrApp();
   s.publish("9.9.0");
-  const layout = join(s.appHome, "layouts", "bots.json");
+  const layout = join(s.appHome, "layouts", "automagik.json");
   // No terminal, no --yes: added, not switched.
   const r = s.run();
   assert.equal(r.code, 0, r.err);
-  assert.equal(readFileSync(layout, "utf8"), readFileSync(join(PACK_SRC, "layouts", "bots.json"), "utf8"));
-  assert.match(r.out, /To use it: herdr-app do layout\.switch/);
+  assert.equal(readFileSync(layout, "utf8"), readFileSync(join(PACK_SRC, "layouts", "automagik.json"), "utf8"));
+  assert.match(r.out, /The Automagik sidebar shows only in the automagik layout\. Switch Herdr to it with:\n  herdr-app do layout\.switch '\{"name":"automagik"\}'\n$/);
   assert.deepEqual(s.herdrCalls(), []);
   assert.equal(s.run("--uninstall").code, 0);
   assert.equal(existsSync(layout), false, "unchanged: removed");
   // --yes: switched.
-  assert.equal(s.run("--yes").code, 0);
-  assert.deepEqual(s.herdrCalls(), ['do layout.switch {"name":"bots"}']);
+  const yes = s.run("--yes");
+  assert.equal(yes.code, 0, yes.err);
+  assert.deepEqual(s.herdrCalls(), ['do layout.switch {"name":"automagik"}']);
+  assert.doesNotMatch(yes.out, /shows only in the automagik layout/, "switched: no hint");
   // Edited by the person: kept on uninstall, never overwritten on install.
   writeFileSync(layout, "{\"mine\":true}\n");
   assert.equal(s.run("--uninstall").code, 0);
@@ -321,4 +323,23 @@ test("a download cut short runs nothing (the body is one function called on the 
   }
   assert.deepEqual(s.brewCalls(), []);
   assert.equal(existsSync(s.pack), false);
+});
+
+test("the sidebar mod docks nowhere by itself; the shipped layout names only it and stock Herdr mods", () => {
+  // place "left" plus a layout that also names spaces-agents made Herdr show two sidebars.
+  const mod = JSON.parse(readFileSync(join(PACK_SRC, "mod.json"), "utf8"));
+  assert.equal(mod.place, "none");
+  const stock = new Set(["changes", "files", "pane", "tabs", "workspace-chrome", "workspace-status", "spaces", "agents"]);
+  const named = [];
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (node && typeof node === "object") {
+      if (typeof node.mod === "string") named.push(node.mod);
+      Object.values(node).forEach(walk);
+    }
+  };
+  walk(JSON.parse(readFileSync(join(PACK_SRC, "layouts", "automagik.json"), "utf8")));
+  assert.ok(named.includes("spaces-agents"));
+  assert.deepEqual(named.filter((m) => m !== "spaces-agents" && !stock.has(m)), []);
+  assert.deepEqual(readdirSync(join(PACK_SRC, "layouts")), ["automagik.json"]);
 });

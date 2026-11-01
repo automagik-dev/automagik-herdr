@@ -16,8 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/
 The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
 missing (it asks first). It installs the latest release's pack, checksum verified, into
 `~/.config/herdr-app/mods/spaces-agents`, keeps a copy of any pack already there, and links
-the `automagik-herdr` command into `~/.local/bin`. It adds the `bots` layout (Herdr's main
-layout with the bot view) when you have none, and asks before switching Herdr to it. Running
+the `automagik-herdr` command into `~/.local/bin`. It adds the `automagik` layout (Herdr's main
+layout with the Automagik sidebar) when you have none, and asks before switching Herdr to it;
+the sidebar shows only in that layout. Running
 it again is safe, and `--uninstall` puts back the pack that was there before the first install
 and removes the layout if you haven't changed it. Add options after `bash -s --`: `--yes`
 answers every question, `--version 0.1.0` installs that release (v0.1.0 or later),
@@ -197,9 +198,9 @@ ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bi
 Herdr never overwrites a mod folder that is already there. If you run your own
 `spaces-agents` clone, move it out of `mods/` first, and keep the backup outside `mods/`,
 or Herdr loads it as a second mod. A rename map in `<app home>/sidebar-agents.json` is read
-as before. `mods/spaces-agents/layouts/bots.json` is Herdr's `main` layout with the pack in
+as before. `mods/spaces-agents/layouts/automagik.json` is Herdr's `main` layout with the pack in
 place of the `spaces` and `agents` sidebars; copy it to `~/.config/herdr-app/layouts/` and run
-`herdr-app do layout.switch '{"name":"bots"}'` to use it (the installer does both, asking first).
+`herdr-app do layout.switch '{"name":"automagik"}'` to use it (the installer does both, asking first).
 
 ### Upgrading from herdr-bots
 

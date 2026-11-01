@@ -9,7 +9,7 @@
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
 # downloads the release's pack and SHA256SUMS, checks the hash, and installs the pack through
 # the pack's own update.mjs (the same entry checks and kept copy as `automagik-herdr update`).
-# It adds the pack's `bots` layout when the app home has none, and links the `automagik-herdr`
+# It adds the pack's `automagik` layout when the app home has none, and links the `automagik-herdr`
 # command into ~/.local/bin. Safe to run again. It never touches a project's .herdr/bots.json
 # or Herdr's settings. Apache-2.0.
 #
@@ -36,7 +36,7 @@ main() {
   STATE=$APP_HOME/automagik-herdr
   MARK=$STATE/installed-by-install.sh
   BEFORE=$STATE/spaces-agents.before-install
-  LAYOUT=$APP_HOME/layouts/bots.json
+  LAYOUT=$APP_HOME/layouts/automagik.json
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
@@ -85,7 +85,7 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the bots layout). --version installs that release; it needs v0.1.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.1.0 or later.
 EOF
 }
 
@@ -111,10 +111,10 @@ before_state() { sed -n 's/^before=//p' "$MARK" 2>/dev/null | head -n 1; }
 uninstall() {
   [ -f "$MARK" ] || { say "Nothing to uninstall: this installer did not install the pack in $MODS."; exit 0; }
   before=$(before_state)
-  # The bots layout goes only when it is still the pack's own (cmp): an edited one stays.
-  if [ -f "$LAYOUT" ] && [ -f "$PACK/layouts/bots.json" ] && cmp -s "$LAYOUT" "$PACK/layouts/bots.json"; then
+  # The automagik layout goes only when it is still the pack's own (cmp): an edited one stays.
+  if [ -f "$LAYOUT" ] && [ -f "$PACK/layouts/automagik.json" ] && cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
     rm -f "$LAYOUT"
-    say "Removed the bots layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
+    say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi
   mkdir -p "$STATE"
   if [ -d "$BEFORE" ]; then
@@ -236,16 +236,18 @@ install() {
     say "The pack in $PACK is already $VERSION and was not installed by this script: it is left as it is, and --uninstall won't move it."
   fi
 
-  # ---- the bots layout: added when the app home has none, switched to when you say so ----
-  if [ -f "$PACK/layouts/bots.json" ] && [ ! -e "$LAYOUT" ]; then
+  # ---- the automagik layout: added when the app home has none, switched to when you say so ----
+  # The sidebar mod has place "none": it shows only in a layout that names it, this one.
+  switched=no
+  if [ -f "$PACK/layouts/automagik.json" ] && [ ! -e "$LAYOUT" ]; then
     mkdir -p "$APP_HOME/layouts"
-    cp "$PACK/layouts/bots.json" "$LAYOUT"
-    say "Added the bots layout ($LAYOUT): Herdr's main layout with the bot view in its sidebar."
-    if command -v herdr-app >/dev/null 2>&1 && ask "Switch Herdr to the bots layout now?"; then
-      if herdr-app do layout.switch '{"name":"bots"}' </dev/null >/dev/null 2>&1; then say "Switched Herdr to the bots layout."
-      else say "Herdr didn't switch (is it open?). Later: herdr-app do layout.switch '{\"name\":\"bots\"}'"; fi
-    else
-      say "To use it: herdr-app do layout.switch '{\"name\":\"bots\"}'"
+    cp "$PACK/layouts/automagik.json" "$LAYOUT"
+    say "Added the automagik layout ($LAYOUT): Herdr's main layout with the Automagik sidebar."
+    if command -v herdr-app >/dev/null 2>&1 && ask "Switch Herdr to the automagik layout now?"; then
+      if herdr-app do layout.switch '{"name":"automagik"}' </dev/null >/dev/null 2>&1; then
+        switched=yes
+        say "Switched Herdr to the automagik layout."
+      else say "Herdr didn't switch (is it open?)."; fi
     fi
   fi
 
@@ -266,6 +268,10 @@ install() {
   # ---- f. next ----
   say "Done: Automagik Herdr $VERSION. Open Herdr (or reload its mods), or in a project folder run:"
   say "  automagik-herdr create --kind=main --name=<name> --agent=claude && automagik-herdr start <name>"
+  if [ "$switched" = no ]; then
+    say "The Automagik sidebar shows only in the automagik layout. Switch Herdr to it with:"
+    say "  herdr-app do layout.switch '{\"name\":\"automagik\"}'"
+  fi
 }
 
 main "$@"

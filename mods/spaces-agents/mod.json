@@ -1,6 +1,6 @@
 {
-  "place": "left",
-  "title": "Spaces",
+  "place": "none",
+  "title": "Automagik Sidebar",
   "cloned_from": {
     "name": "spaces",
     "version": "0.1.7"
