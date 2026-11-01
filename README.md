@@ -62,8 +62,10 @@ herdr-app do layout.switch --name bots
 
 ## Bot definitions: `.herdr/bots.json`
 
-Each project's bots live in `.herdr/bots.json` at the project's root. Commit it with the
-project, so a teammate who opens the project sees the same bots after a pull.
+Each project's bots live in `.herdr/bots.json` at the project's root. The form writes it
+into the main checkout as an uncommitted file. Commit it the way your project takes changes
+(a branch and MR where the default branch is protected), so a teammate who opens the project
+sees the same bots after a pull.
 
 A folder in git belongs to its main checkout. The file is read and written only there,
 never in a worktree, and a worktree's committed copy is ignored. A folder outside git
