@@ -422,7 +422,7 @@ test("detach takes the label off every local pane carrying it", (t) => {
   s.seed(team());
   const r = s.cli(["detach", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json(), { id: ID.cap, detached: ["t1", "t2"] });
+  assert.deepEqual(r.json(), { id: ID.cap, defined: true, detached: ["t1", "t2"] });
   assert.deepEqual(s.hcState().terminals.map((x) => x.labels), [{}, {}]);
   assert.match(s.cli(["detach", "Captain"]).out, /no pane on this computer/);
 });
@@ -576,4 +576,20 @@ test("ls over more bots than the eight-process cap completes, each live pane fou
   const r = s.cli(["ls", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.json().projects[0].bots.map((b) => b.terminal), ids.map((_, i) => `t${i + 1}`));
+});
+
+test("detach takes a removed bot's label off by its bare id; an unknown name is still refused", (t) => {
+  const s = scene(t, { terminals: [term("t1", { bot: ID.dev }), term("t2", { bot: ID.dev, argv: ["zsh"], app: "zsh" })] });
+  s.seed(team());
+  const rm = s.cli(["rm", "Dev"]);
+  assert.equal(rm.code, 0, rm.err);
+  assert.match(rm.err, new RegExp(`take it off with: herdr-bots detach ${ID.dev}`));
+  const r = s.cli(["detach", ID.dev, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json(), { id: ID.dev, defined: false, detached: ["t1", "t2"] });
+  assert.deepEqual(s.hcState().terminals.map((x) => x.labels), [{}, {}]);
+  assert.match(s.cli(["detach", "Ghost"]).err, /No bot "Ghost"/);
+  // No bots.json at all: a bare id still works.
+  rmSync(s.botsPath);
+  assert.equal(s.cli(["detach", ID.dev]).code, 0);
 });

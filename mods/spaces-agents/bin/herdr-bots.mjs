@@ -261,7 +261,7 @@ Usage: herdr-bots <command> [options]      (every command takes --json and --pro
            | rm <id> | order <id>...
   start <bot> [--space ID] [--tab ID]   a new pane on this computer (prints its terminal)
   attach <bot> <terminal>       tie a running pane to the bot
-  detach <bot>                  take the bot's label off its panes
+  detach <bot>                  take the bot's label off its panes (a removed bot: by its id)
   brief <bot>                   print the bot's per-turn briefing as it would be now
 
 A bot is its id or its name in the project. The project is the one the current folder
@@ -467,7 +467,7 @@ async function cmdRm(opts, [ref]) {
   // The file is written already: hc missing or failing only drops the label note.
   let holders = [];
   if (!bot.planned) { try { ({ holders } = await panesOf(bot.id, { localOnly: true })); } catch { holders = []; } }
-  if (holders.length) notes.push(`${holders.join(", ")} still carr${holders.length > 1 ? "y" : "ies"} its label; herdr-bots can't detach a removed bot, so run: ${holders.map((t) => `hc label ${t} ${BOT_LABEL}=`).join("; ")}`);
+  if (holders.length) notes.push(`${holders.join(", ")} still carr${holders.length > 1 ? "y" : "ies"} its label; take it off with: herdr-bots detach ${bot.id}`);
   for (const n of notes) process.stderr.write(`herdr-bots: ${n}\n`);
   return opts.json ? { removed: bot.id, project: project.key, deletedFile: last, labelledTerminals: holders } : `${bot.name} (${bot.id}) removed.`;
 }
@@ -635,14 +635,19 @@ async function cmdAttach(opts, [ref, terminal]) {
 }
 
 async function cmdDetach(opts, [ref]) {
-  const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
-  const { holders } = await panesOf(bot.id, { localOnly: true });
+  // A bare id needs no definition: a bot removed with rm can still have its label taken off.
+  const bareId = /^b-[a-z2-7]{10}$/.test(ref ?? "");
+  let bot = null;
+  try { bot = findBot((await projectFor(opts)).file, ref); } catch (e) { if (!bareId || !(e instanceof CliError)) throw e; }
+  const id = bot?.id ?? ref;
+  const name = bot?.name ?? `bot ${id}`;
+  const { holders } = await panesOf(id, { localOnly: true });
   for (const t of holders) {
     const r = await hc(["label", t, `${BOT_LABEL}=`]);
     if (r.code !== 0) throw new CliError(`hc label ${t} ${BOT_LABEL}= failed: ${(r.stderr || r.stdout).trim()}`);
   }
-  return opts.json ? { id: bot.id, detached: holders } : holders.length ? `${bot.name} detached from ${holders.join(", ")}.` : `${bot.name} has no pane on this computer.`;
+  return opts.json ? { id, defined: Boolean(bot), detached: holders }
+    : holders.length ? `${name} detached from ${holders.join(", ")}.` : `${name} has no pane on this computer.`;
 }
 
 async function cmdBrief(opts, [ref]) {

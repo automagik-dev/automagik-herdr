@@ -192,7 +192,8 @@ herdr-bots brief <bot>
   other pane first. A pane that already plays another bot is refused. A Claude pane whose
   session runs outside the bot's project is refused, with both folders named.
 - `start` and `attach` write the per-turn briefing hook for a Claude bot, as the sidebar does.
-  `detach` takes the bot's label off its panes. `brief` prints the bot's briefing as it would
+  `detach` takes the bot's label off its panes; for a bot already removed with `rm`, give its
+  `b-…` id. `brief` prints the bot's briefing as it would
   be now.
 
 The CLI cannot add a project to the sidebar's remembered list. A bot created from the CLI
