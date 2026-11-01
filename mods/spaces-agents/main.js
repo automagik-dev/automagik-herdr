@@ -13,6 +13,7 @@ import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
+import { discoverProjects, watchProject } from "./bots.js";
 
 // Agent naming, as in the agents mod.
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -119,7 +120,7 @@ export default class Spaces extends View {
     // Hermes reports no status to the core: read its screen for the question footer.
     this.screen = {}; // terminal address -> "blocked" | null
     cx.timer.every(2500, (cx) => this.scanHermes(cx));
-    cx.timer.every(15000, cx => { this.refreshMachines(cx); this.loadExtra(cx); });
+    cx.timer.every(15000, cx => { this.refreshMachines(cx); this.loadExtra(cx); this.refreshBots(cx); });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
@@ -144,6 +145,11 @@ export default class Spaces extends View {
     // program, tab}). Read now and on the 15-second timer.
     this.extra = {};
     this.loadExtra(cx);
+    // Bot definitions (bots.js): every project with a .herdr/bots.json, read now, on the
+    // 15-second timer (another machine's) and on a change under a local project's .herdr/.
+    this.bots = [];
+    this.botWatch = new Set(); // local project keys watched
+    this.refreshBots(cx);
     // Hermes's own icon from the program table (its process shows as Python).
     this.hermes = { key: "hermes", name: "Hermes", icon: "icons/hermes.svg", tint: true };
     cx.spawn(async (cx) => {
@@ -383,6 +389,23 @@ export default class Spaces extends View {
         const text = await readTextFile(`${appHome()}/sidebar-agents.json`);
         this.extra = text === null ? {} : JSON.parse(text) ?? {};
       } catch {}
+      cx.notify();
+    });
+  }
+
+  refreshBots(cx) {
+    cx.spawn(async (cx) => {
+      try { this.bots = await discoverProjects(); } catch {}
+      const local = new Set(this.bots.filter((p) => !p.machine).map((p) => p.key));
+      for (const key of this.botWatch) if (!local.has(key)) this.botWatch.delete(key);
+      for (const key of local) {
+        if (this.botWatch.has(key)) continue;
+        this.botWatch.add(key);
+        cx.spawn(async (cx) => {
+          await watchProject(key, () => this.botWatch.has(key), () => this.refreshBots(cx));
+          this.botWatch.delete(key);
+        });
+      }
       cx.notify();
     });
   }
