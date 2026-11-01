@@ -243,7 +243,7 @@ test("install over a pack, update, uninstall: the pack from before the first ins
   assert.equal(readFileSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev", "VERSION"), "utf8").trim(), "9.10.0");
 });
 
-test("a hand-placed pack already at the release's version: adopted, and --uninstall leaves it", (t) => {
+test("a hand-placed pack already at the release's version: no marker, and --uninstall leaves it in mods/", (t) => {
   const s = scratch(t);
   mkdirSync(s.pack, { recursive: true });
   writeFileSync(join(s.pack, "main.js"), "// hand-placed\n");
@@ -254,11 +254,13 @@ test("a hand-placed pack already at the release's version: adopted, and --uninst
   const first = s.run("--yes");
   assert.equal(first.code, 0, first.err);
   assert.doesNotMatch(first.out, /Downloading/);
-  assert.match(first.out, /a copy is kept in .*spaces-agents\.before-install/);
+  assert.match(first.out, /was not installed by this script: it is left as it is/);
+  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "installed-by-install.sh")), false);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Nothing to uninstall/);
   assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// hand-placed\n");
-  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.before-install")), false);
+  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev")), false);
 });
 
 test("the bots layout: added when absent, switched to only with a yes; uninstall removes it only unchanged", (t) => {

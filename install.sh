@@ -228,14 +228,13 @@ install() {
     say "Installed the pack $VERSION in $PACK."
     if [ "$installed" != none ]; then say "The pack it replaced ($installed) is kept in $STATE/spaces-agents.prev: 'automagik-herdr update --rollback' swaps it back."; fi
     if [ "$copied" = yes ]; then say "The pack from before the first install is kept in $BEFORE: 'install.sh --uninstall' puts it back."; fi
+    # The marker is written only here, by a run that installed the pack, beside the
+    # before-install copy: a pack already at this version (placed by hand) gets no marker,
+    # so --uninstall leaves it in mods/.
+    printf 'version=%s\nbefore=%s\n' "$VERSION" "$first" >"$MARK"
+  elif [ ! -f "$MARK" ]; then
+    say "The pack in $PACK is already $VERSION and was not installed by this script: it is left as it is, and --uninstall won't move it."
   fi
-  # A pack already at this version but not installed by this script (no marker) is adopted:
-  # it is copied too, so --uninstall puts it back instead of moving it out of mods/.
-  if [ "$installed" = "$VERSION" ] && [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then
-    cp -RP "$PACK" "$BEFORE"
-    say "The pack already in $PACK is $VERSION; a copy is kept in $BEFORE: 'install.sh --uninstall' puts it back."
-  fi
-  printf 'version=%s\nbefore=%s\n' "$VERSION" "$first" >"$MARK"
 
   # ---- the bots layout: added when the app home has none, switched to when you say so ----
   if [ -f "$PACK/layouts/bots.json" ] && [ ! -e "$LAYOUT" ]; then
