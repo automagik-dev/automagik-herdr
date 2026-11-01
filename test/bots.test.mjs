@@ -20,7 +20,7 @@ const bot = (id, kind) => ({ id, name: id.slice(2, 5), kind, look: { character: 
 const sample = () => ({ version: 1, categories: [], bots: [bot(ID.main, "main"), bot(ID.dev, "member")] });
 
 function scratch(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-bots-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

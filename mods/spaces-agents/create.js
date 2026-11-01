@@ -3,7 +3,7 @@
 // (props.form "create" | "edit" | "attach" | "pick" | "menu"). The Create / Edit form is
 // drawn to the owner-approved mockup (A13, mockup/create-form.dc.html): a live character
 // preview, look, name and sidebar preview on the left; role, instructions, coding agent and
-// model, place in the team and planned on the right; the matching `herdr-bots` line in the
+// model, place in the team and planned on the right; the matching `automagik-herdr` line in the
 // footer. Its rules live in formModel.js. Text fields are Herdr's Input and Textarea; the two
 // lists are Herdr's Popover. The form reads the project's .herdr/bots.json itself and writes
 // back its raw copy with the text it read as the snapshot, so an entry it can't show, or

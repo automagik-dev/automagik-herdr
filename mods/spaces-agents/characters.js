@@ -5,7 +5,7 @@
 // (Copyright 2026 Namastex Labs and the Automagik contributors, Apache-2.0), whose
 // character drawing comes from DS Bot (Copyright 2026 Fei2411 and the DS Bot contributors,
 // Apache-2.0); see NOTICE and LICENSE-automagik.
-// Changed by the herdr-bots pack: the character table is copied as is; the rest keeps only
+// Changed by the Automagik Herdr pack: the character table is copied as is; the rest keeps only
 // what a still picture needs. Automagik's `color-mix()` gradient stops are resolved here to
 // plain colours (DESIGN Decision 8), the eyes are drawn over the body instead of cut out
 // with a mask, CSS classes and motion are left out (Herdr's own motion moves the picture),

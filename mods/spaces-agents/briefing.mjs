@@ -19,16 +19,21 @@ import { briefingText, directMembers, latestReport } from "./briefingText.mjs";
 // none starts after the 2 s budget, a call that runs out counts as unreachable, and a last
 // guard ends the process silently at 2.4 s. One away machine can't hold the prompt.
 // The clock starts when the script runs as the hook, not when another program imports it.
-const BUDGET_MS = 2000;
-const CALL_MS = 1500;
+// HERDR_BRIEFING_TIME_SCALE (a whole number, 1 to 10) multiplies all three: the tests' slow
+// fakes run on loaded machines. It only ever lengthens them; unset, the times are as above.
+export const BUDGET_MS = 2000;
+export const CALL_MS = 1500;
+export const GUARD_MS = 2400;
+export const timeScale = (raw) => (/^([1-9]|10)$/.test(String(raw ?? "").trim()) ? Number(String(raw).trim()) : 1);
 let until = Infinity;
+let callMs = CALL_MS;
 
 const MAX_HELPERS = 30;
 let hcMissing = false;
 
 // A program's stdout; null when it failed or is missing; UNANSWERED when it ran out of time.
 function run(command, args, cwd) {
-  const timeout = Math.min(CALL_MS, until - Date.now());
+  const timeout = Math.min(callMs, until - Date.now());
   if (timeout <= 0) return Promise.resolve(UNANSWERED);
   return new Promise((resolve) => {
     try {
@@ -54,7 +59,7 @@ const exists = async (path) => { try { await access(path); return true; } catch 
  * The briefing of `bot` in `file`, gathered through `ask` (launchArgs.js paneOf's contract:
  * parsed `hc … --json`, null on failure, UNANSWERED when out of time). `address` is the bot's
  * own live terminal, whose unlabelled children are its helpers (null: no helpers counted).
- * Shared with the CLI's `herdr-bots brief`.
+ * Shared with the CLI's `automagik-herdr brief`.
  */
 export async function gatherBriefing({ file, bot, address, ask }) {
   const team = directMembers(file, bot.id);
@@ -115,8 +120,10 @@ async function helpersOf(all, address, known, ask) {
 // Run as the hook (node briefing.mjs), not when the CLI imports gatherBriefing.
 const invoked = (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href; } catch { return null; } })();
 if (import.meta.url === invoked) {
-  until = Date.now() + BUDGET_MS;
-  const guard = setTimeout(() => process.exit(0), 2400);
+  const scale = timeScale(process.env.HERDR_BRIEFING_TIME_SCALE);
+  until = Date.now() + BUDGET_MS * scale;
+  callMs = CALL_MS * scale;
+  const guard = setTimeout(() => process.exit(0), GUARD_MS * scale);
   guard.unref();
   try {
     const text = await main();
@@ -126,7 +133,7 @@ if (import.meta.url === invoked) {
   } catch (e) {
     // Fail open: no briefing this turn and exit 0, with one line on stderr as a trace.
     clearTimeout(guard);
-    process.stderr.write(`herdr-bots briefing: ${String(e?.message ?? e).split("\n")[0]}\n`);
+    process.stderr.write(`automagik-herdr briefing: ${String(e?.message ?? e).split("\n")[0]}\n`);
   }
   process.exitCode = 0;
 }

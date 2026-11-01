@@ -1,4 +1,4 @@
-// Changed from Herdr's `spaces` 0.1.7 (cloned as spaces-agents) by the herdr-bots pack;
+// Changed from Herdr's `spaces` 0.1.7 (cloned as spaces-agents) by the Automagik Herdr pack;
 // see the repository history for each change. Apache-2.0.
 //
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
@@ -16,6 +16,7 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
+import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -147,6 +148,10 @@ export default class Spaces extends View {
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); });
+    // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
+    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js).
+    this.updates = { node: null };
+    cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
     // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
     // Otherwise as before: Cmd+V pastes text, or gives a local agent its Ctrl+V for an
@@ -375,6 +380,25 @@ export default class Spaces extends View {
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
+  }
+
+  // One update look through `node <pack>/update.mjs check` (Herdr's runtime has no fetch),
+  // one notice per new version, then the next look scheduled by what it found.
+  checkUpdates(cx) {
+    cx.spawn(async (cx) => {
+      let check = { kind: "retry" };
+      try {
+        const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+        const { node, result } = await runCheck(exec, `${appHome()}/mods/spaces-agents/update.mjs`, this.updates.node,
+          { mods: `${appHome()}/mods`, sleep });
+        if (node) this.updates.node = node;
+        check = readCheck(result);
+      } catch {}
+      // The version already announced is shared, so a reload or a second view stays quiet.
+      try { announce(check, shared, setShared, notify); } catch {}
+      const wait = nextCheckIn(check.kind);
+      if (wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
+    });
   }
 
   // On the 250 ms timer: one redraw when the next idle bot reaches its asleep mark, and the

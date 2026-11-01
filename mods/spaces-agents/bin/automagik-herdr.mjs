@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// herdr-bots: the Bots of a project from the command line (A11). The same rules as the
+// automagik-herdr: Automagik Herdr from the command line (A11, A15): a project's bots, and
+// updates of the installed pack (A14, update.mjs). The bots follow the same rules as the
 // sidebar (model.js, launchArgs.js, briefingText.mjs, models.js, briefing.mjs' gathering),
 // with herdr-core reached through `hc` directly. Plain node (≥ 24): no `herdr` or `gpui`
 // import, no Herdr window.
-// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/herdr-bots.mjs ~/.local/bin/herdr-bots
+// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
@@ -23,6 +24,8 @@ import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, 
 import { installHook } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
+import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
+import { NO_UPDATE_ENV } from "../release.js";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
 export class CliError extends Error {
@@ -181,7 +184,7 @@ function withLock(lock, fn) {
     try { writeFileSync(lock, token, { flag: "wx" }); break; } catch (e) {
       if (e?.code !== "EEXIST") throw e;
       takeOverStale(lock);
-      if (Date.now() > until) throw new Error(`${lock} is held by another herdr-bots`);
+      if (Date.now() > until) throw new Error(`${lock} is held by another automagik-herdr`);
       pause(5 + Math.floor(Math.random() * 20));
     }
   }
@@ -213,7 +216,7 @@ export function listProject(key, dir = appHome()) {
       if (listedProjects(read()).includes(key)) return true;
     } catch (e) { why = e?.message ?? String(e); }
   }
-  process.stderr.write(`herdr-bots: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${why}\n`);
+  process.stderr.write(`automagik-herdr: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${why}\n`);
   return false;
 }
 
@@ -232,7 +235,7 @@ export function findBot(file, ref) {
 
 function findCategory(file, ref) {
   const hit = file.categories.find((c) => c.id === ref) ?? file.categories.find((c) => c.title.toLowerCase() === String(ref).toLowerCase());
-  if (!hit) throw new CliError(`No category "${ref}" in this project; add it first: herdr-bots category add --title "${ref}".`);
+  if (!hit) throw new CliError(`No category "${ref}" in this project; add it first: automagik-herdr category add --title "${ref}".`);
   return hit;
 }
 
@@ -299,7 +302,7 @@ export function writeBriefingHook(bot, folder, appHomeDir = appHome()) {
 // ---- arguments ----
 
 const OPTIONS = {
-  json: { type: "boolean" }, all: { type: "boolean" }, help: { type: "boolean", short: "h" },
+  json: { type: "boolean" }, all: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean" },
   project: { type: "string" }, name: { type: "string" }, agent: { type: "string" }, kind: { type: "string" },
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
   lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
@@ -308,11 +311,13 @@ const OPTIONS = {
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
+  check: { type: "boolean" }, rollback: { type: "boolean" },
 };
 
-export const USAGE = `herdr-bots: a project's Bots from the command line
+export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
 
-Usage: herdr-bots <command> [options]      (every command takes --json and --project <folder>)
+Usage: automagik-herdr <command> [options]      (every command takes --json and --project <folder>)
+       automagik-herdr --version                 the installed pack's version
 
   ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, pane, status
   show <bot>                    one bot in full
@@ -328,6 +333,8 @@ Usage: herdr-bots <command> [options]      (every command takes --json and --pro
   attach <bot> <terminal>       tie a running pane to the bot
   detach <bot>                  take the bot's label off its panes (a removed bot: by its id)
   brief <bot>                   print the bot's per-turn briefing as it would be now
+  update [--check | --rollback] install the latest release (checksum verified), only report
+                                current and latest (--check), or put the replaced pack back
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -565,7 +572,7 @@ async function cmdRm(opts, [ref]) {
   }
   const team = [...descendantsOf(file, bot.id)].map((id) => file.bots.find((b) => b.id === id)?.name ?? id);
   const leads = others.filter((b) => b?.lead === bot.id).map((b) => b.name ?? b.id);
-  if (team.length || leads.length) throw new CliError(`${bot.name} leads ${[...new Set([...leads, ...team])].join(", ")}; give them another lead first (herdr-bots edit <bot> --lead …).`);
+  if (team.length || leads.length) throw new CliError(`${bot.name} leads ${[...new Set([...leads, ...team])].join(", ")}; give them another lead first (automagik-herdr edit <bot> --lead …).`);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.bots = raw.bots.filter((b) => b?.id !== bot.id);
   // Only an empty list deletes the file; anything else must pass checkBots (a file left
@@ -578,8 +585,8 @@ async function cmdRm(opts, [ref]) {
   // The file is written already: hc missing or failing only drops the label note.
   let holders = [];
   if (!bot.planned) { try { ({ holders } = await panesOf(bot.id, { localOnly: true })); } catch { holders = []; } }
-  if (holders.length) notes.push(`${holders.join(", ")} still carr${holders.length > 1 ? "y" : "ies"} its label; take it off with: herdr-bots detach ${bot.id}`);
-  for (const n of notes) process.stderr.write(`herdr-bots: ${n}\n`);
+  if (holders.length) notes.push(`${holders.join(", ")} still carr${holders.length > 1 ? "y" : "ies"} its label; take it off with: automagik-herdr detach ${bot.id}`);
+  for (const n of notes) process.stderr.write(`automagik-herdr: ${n}\n`);
   return opts.json ? { removed: bot.id, project: project.key, deletedFile: last, labelledTerminals: holders } : `${bot.name} (${bot.id}) removed.`;
 }
 
@@ -621,7 +628,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   if (verb === "rm") {
     const cat = find(rest[0]);
     const users = project.file.bots.filter((b) => b.category === cat.id).map((b) => b.name);
-    if (users.length) throw new CliError(`${users.join(", ")} ${users.length > 1 ? "are" : "is"} in ${cat.id}; move them first (herdr-bots edit <bot> --category … or --no-category).`);
+    if (users.length) throw new CliError(`${users.join(", ")} ${users.length > 1 ? "are" : "is"} in ${cat.id}; move them first (automagik-herdr edit <bot> --category … or --no-category).`);
     raw.categories = raw.categories.filter((c) => c?.id !== cat.id);
     save();
     return opts.json ? { project: project.key, removed: cat.id } : `${cat.id} removed.`;
@@ -637,7 +644,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   throw new CliError(`category ${verb}: unknown; use ls, add, edit, rm or order.`, 2);
 }
 
-const report = (warnings) => { for (const w of warnings) process.stderr.write(`herdr-bots: ${w}\n`); };
+const report = (warnings) => { for (const w of warnings) process.stderr.write(`automagik-herdr: ${w}\n`); };
 
 /**
  * Where Herdr shows a bot started here (DESIGN: the space whose folder keys to the project):
@@ -677,7 +684,7 @@ async function cmdStart(opts, [ref]) {
   // A12: a pin that isn't one of the agent's listed models (an old free-text model) is refused.
   if (bot.model && !knownModels(bot.agent, modelIo()).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
-      + `Pick one with herdr-bots edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
+      + `Pick one with automagik-herdr edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
   }
   const agent = agentTable()[bot.agent];
   if (!agent?.run?.length) throw new CliError(`${bot.name}'s coding agent "${bot.agent}" isn't one Herdr can start.`);
@@ -724,7 +731,7 @@ async function cmdStart(opts, [ref]) {
 }
 
 async function cmdAttach(opts, [ref, terminal]) {
-  if (!terminal) throw new CliError("attach needs a bot and a terminal: herdr-bots attach <bot> <terminal>.", 2);
+  if (!terminal) throw new CliError("attach needs a bot and a terminal: automagik-herdr attach <bot> <terminal>.", 2);
   if (terminal.startsWith("-")) throw new CliError(`"${terminal}" isn't a terminal; name one like t7.`, 2);
   if (!local(terminal)) throw new CliError(`Attach works on this computer's panes only; ${terminal} is on another machine.`);
   const project = await projectFor(opts);
@@ -804,7 +811,7 @@ async function cmdBrief(opts, [ref]) {
   const bot = findBot(project.file, ref);
   if (bot.planned) {
     if (opts.json) return { id: bot.id, briefing: null, reason: "planned bots get no briefing" };
-    process.stderr.write(`herdr-bots: ${bot.name} is planned; planned bots get no briefing.\n`);
+    process.stderr.write(`automagik-herdr: ${bot.name} is planned; planned bots get no briefing.\n`);
     return "";
   }
   // briefing.mjs' own gathering; a failed hc call reads as "no answer" (unreachable), as
@@ -815,8 +822,38 @@ async function cmdBrief(opts, [ref]) {
   return opts.json ? { id: bot.id, briefing: text } : text;
 }
 
+// ---- updates (A14) ----
+
+/**
+ * `update`: install the latest release, `--check` only reports, `--rollback` swaps the kept
+ * pack back. `io` is injected by the tests (fetch, env, modsDir); the pack is the installed
+ * one under $HERDR_APP_HOME/mods, never this checkout (update.mjs).
+ */
+export async function cmdUpdate(opts, _rest = [], io = {}) {
+  if (opts.check && opts.rollback) throw new CliError("Give --check or --rollback, not both.", 2);
+  const where = { ...(io.env ? { env: io.env } : {}), ...(io.fetch ? { fetch: io.fetch } : {}), ...(io.modsDir ? { modsDir: io.modsDir } : {}) };
+  const failed = (what, e) => new CliError(`${what}: ${String(e?.message ?? e).split("\n")[0]}`);
+  if (opts.rollback) {
+    let r;
+    try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}) }); } catch (e) { throw failed("Nothing rolled back", e); }
+    return opts.json ? { rolledBack: r } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.`;
+  }
+  let r;
+  try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
+    throw failed(opts.check ? "Couldn't check for updates" : "Not updated", e);
+  }
+  if (opts.json) return r;
+  const current = r.current ?? "not installed";
+  if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).`;
+  if (r.installed) {
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.`;
+  }
+  if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
+  return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.`;
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, attach: cmdAttach, detach: cmdDetach, brief: cmdBrief };
+  start: cmdStart, attach: cmdAttach, detach: cmdDetach, brief: cmdBrief, update: cmdUpdate };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "attach", "detach", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
@@ -825,14 +862,21 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
   } catch (e) {
-    process.stderr.write(`herdr-bots: ${e.message}\n\n${USAGE}\n`);
+    process.stderr.write(`automagik-herdr: ${e.message}\n\n${USAGE}\n`);
     return 2;
   }
   const { values: opts, positionals } = parsed;
   const [command, ...rest] = positionals;
+  // The pack this command belongs to (its VERSION file; 0.0.0 for a checkout never released).
+  if (opts.version && !command) {
+    let version = "0.0.0";
+    try { version = readFileSync(new URL("../VERSION", import.meta.url), "utf8").trim() || version; } catch { /* no VERSION file */ }
+    process.stdout.write(opts.json ? `${JSON.stringify({ version })}\n` : `automagik-herdr ${version}\n`);
+    return 0;
+  }
   if (opts.help || !command || command === "help") { process.stdout.write(`${USAGE}\n`); return command || opts.help ? 0 : 2; }
   const run = COMMANDS[command];
-  if (!run) { process.stderr.write(`herdr-bots: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
+  if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
   try {
     if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     const out = await run(opts, rest);
@@ -841,7 +885,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
-    process.stderr.write(`herdr-bots: ${message}\n`);
+    process.stderr.write(`automagik-herdr: ${message}\n`);
     return e instanceof CliError ? e.code : 1;
   }
 }

@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/spaces-agents/model.js";
 import { briefingText, directMembers, mergeHook, hookCommand, briefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT } from "../mods/spaces-agents/briefingText.mjs";
+import { BUDGET_MS, CALL_MS, GUARD_MS, timeScale } from "../mods/spaces-agents/briefing.mjs";
 const { afterBind } = await import("../mods/spaces-agents/launch.js");
 
 const run = promisify(execFile);
@@ -22,6 +23,12 @@ process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "herdr-xdg-"));
 process.on("exit", () => rmSync(process.env.XDG_CONFIG_HOME, { recursive: true, force: true }));
 const NODE_DIR = dirname(process.execPath);
 const SCRIPT = new URL("../mods/spaces-agents/briefing.mjs", import.meta.url).pathname;
+// briefing.mjs under test runs with its times multiplied by SCALE (HERDR_BRIEFING_TIME_SCALE):
+// each fake hc call is a node process, which a loaded machine can take seconds to start, and the
+// real 2 s budget would then cut answers the test expects. A hung call hangs HANG_MS, far past the
+// scaled per-call limit, so "unreachable" still comes from the timeout and never from luck.
+const SCALE = 10;
+const HANG_MS = 120_000;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", tester: "b-dddddddddd", plan: "b-eeeeeeeeee", solo: "b-ffffffffff" };
 const bot = (id, kind, extra = {}) => ({ id, name: id, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "", agent: "claude", ...extra });
 const team = () => ({
@@ -210,7 +217,7 @@ else { process.stderr.write("not_found"); process.exit(1); }
 };
 // fx.slow: addresses or label values whose calls hang (a machine that doesn't answer).
 const slow = (fx.slow ?? []).some((x) => a.includes(x) || a.some((y) => y.endsWith("=" + x)));
-if (slow) setTimeout(answer, 8000); else answer();
+if (slow) setTimeout(answer, Number(process.env.FAKE_HC_HANG_MS)); else answer();
 `;
 const term = (address, labels, extra = {}) => ({ address, labels, created_ms: 1000, parent: null, foreground: { argv: ["claude"], cwd: "/" }, status: { app: "claude-code", state: "idle" }, ...extra });
 const FIXTURE = {
@@ -245,7 +252,10 @@ async function scratch(t) {
   const fixture = join(root, "hc.json");
   writeFileSync(fixture, JSON.stringify(FIXTURE));
   const brief = async (env) => {
-    const r = await run(process.execPath, [SCRIPT], { env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, HOME: root, ...env } });
+    const r = await run(process.execPath, [SCRIPT], {
+      env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
+        HERDR_BRIEFING_TIME_SCALE: String(SCALE), ...env },
+    });
     return r;
   };
   return { root, main, tree, bin, brief };
@@ -280,14 +290,14 @@ test("briefing.mjs: silent for a bot of a project with no bots.json, and for a p
   writeFileSync(join(root, "hc.json"), JSON.stringify(fx));
   const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree });
   assert.equal(r.stdout, "");
-  assert.match(r.stderr, /^herdr-bots briefing: .+\n$/); // one line, exit 0 (run() would reject otherwise)
+  assert.match(r.stderr, /^automagik-herdr briefing: .+\n$/); // one line, exit 0 (run() would reject otherwise)
 });
 
 test("briefing.mjs: no hc on PATH: nothing printed, one stderr line, exit 0", async (t) => {
   const { tree, brief } = await scratch(t);
   const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, PATH: `${NODE_DIR}:/usr/bin:/bin` });
   assert.equal(r.stdout, "");
-  assert.equal(r.stderr, "herdr-bots briefing: hc is not on PATH\n");
+  assert.equal(r.stderr, "automagik-herdr briefing: hc is not on PATH\n");
 });
 
 test("briefing.mjs: a hostile screen tail stays fenced: no closing tag, brackets neutralised", async (t) => {
@@ -304,7 +314,15 @@ test("briefing.mjs: a hostile screen tail stays fenced: no closing tag, brackets
   assert.doesNotMatch(stdout, /<system>/);
 });
 
-test("briefing.mjs: a member whose machine doesn't answer shows unreachable, and the block comes within 3 s", async (t) => {
+test("briefing.mjs's own times: 2 s budget, 1.5 s per call, 2.4 s guard; the scale only lengthens them", () => {
+  assert.deepEqual([BUDGET_MS, CALL_MS, GUARD_MS], [2000, 1500, 2400]);
+  for (const raw of [undefined, "", "0", "-3", "0.5", "2.5", "11", "abc", "1e3"]) assert.equal(timeScale(raw), 1, String(raw));
+  assert.equal(timeScale("1"), 1);
+  assert.equal(timeScale(" 7 "), 7);
+  assert.equal(timeScale("10"), 10);
+});
+
+test("briefing.mjs: a member whose machine doesn't answer shows unreachable, and the block comes within the guard", async (t) => {
   const { root, main, brief } = await scratch(t);
   const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
   fx.slow = [ID.solo, "t2"]; // Solo's label query hangs; so does every call naming the captain's pane
@@ -312,7 +330,8 @@ test("briefing.mjs: a member whose machine doesn't answer shows unreachable, and
   const started = Date.now();
   const { stdout } = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: main });
   const took = Date.now() - started;
-  assert.ok(took < 3000, `took ${took} ms`);
+  // Within the (scaled) guard plus node's start, never waiting out the hung calls.
+  assert.ok(took < GUARD_MS * SCALE + 30_000 && took < HANG_MS, `took ${took} ms`);
   assert.match(stdout, /Solo \(bot b-ffffffffff, Docs\): unreachable \(hc gave no answer in time\)\./);
   assert.match(stdout, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
   assert.ok(stdout.trimEnd().endsWith("</herdr-bot>"));

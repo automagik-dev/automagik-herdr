@@ -1,7 +1,7 @@
 // A stand-in for herdr-core's `hc`, for the CLI tests: every call is appended to
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
-// change. Only the calls herdr-bots makes: ls [--label k=v], get, read, label, run.
+// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run.
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);

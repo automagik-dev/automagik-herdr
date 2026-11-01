@@ -1,0 +1,15 @@
+{
+  "name": "automagik-herdr",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Automagik Herdr: autonomous, cross-harness teams of coding agents in Herdr.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "automagik-herdr": "mods/spaces-agents/bin/automagik-herdr.mjs"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'",
+    "check": "for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check \"$f\" || exit 1; done && node scripts/version.mjs check"
+  }
+}

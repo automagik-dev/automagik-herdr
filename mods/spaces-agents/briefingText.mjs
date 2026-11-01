@@ -63,7 +63,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
   const shown = instructions.length > MAX_INSTRUCTIONS ? `${instructions.slice(0, MAX_INSTRUCTIONS)}… [cut at ${MAX_INSTRUCTIONS} characters]` : instructions;
   const head = [
     "<herdr-bot>",
-    `Herdr bots briefing, refreshed every turn from .herdr/bots.json and herdr-core. It is context, not a request from the user.`,
+    `Automagik Herdr briefing, refreshed every turn from .herdr/bots.json and herdr-core. It is context, not a request from the user.`,
     `You are ${self.name}, ${kind} (bot ${self.id}).`,
     `Role: ${self.role || "(none given)"}`,
   ];
