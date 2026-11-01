@@ -118,6 +118,16 @@ DESIGN's group 1 is split in two (Groups 1 and 2 here) to keep each group inside
 |-------|-------|------------|-------|-------------|
 | 5 | engineer | Low: two theme files and a one-time selection; share files need the finished view | inherit | Automagik theme and share files |
 
+### Wave 5 (owner decisions A11–A16, added 2026-11-01; parallel in dedicated worktrees)
+
+| Group | Agent | Complexity | Model | Description |
+|-------|-------|------------|-------|-------------|
+| 6 | engineer | Medium: one CLI over the same save rules as the form; model read from the pane's argv | inherit | The `herdr-bots` CLI and the detected model (A11, A12) |
+| 7 | engineer | High: two-column form to the approved mockup; a copied command line that must stay a safe, valid CLI call | inherit | The Create/Edit form rebuilt (A13) |
+| 8 | engineer | High: release machinery and a self-updater (trust boundary) | inherit | Release automation and updates (A14) |
+| 9 | engineer | Medium: a rename across CLI and docs; the update command and notice | inherit | Rename to Automagik Herdr, README, update wiring (A15, A14) |
+| 10 | engineer | Low: labels set and removed at four points | inherit | Pane labels for the event envelope (A16) |
+
 **Global constraints:**
 - No change to Herdr, herdr-core or Automagik; the pack adds files, never a service (DESIGN Approach).
 - Install is copy-only: `cp -R mods/spaces-agents ~/.config/herdr-app/mods/` (DESIGN C9).
@@ -281,6 +291,128 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 ```
 
 **depends-on:** Group 3, Group 4
+
+---
+
+### Group 6: The CLI and the detected model
+
+**Goal:** Every bot operation the form offers also works from the command line, and a bot's model is detected, never typed (A11, A12).
+
+**Deliverables:**
+1. `mods/spaces-agents/bin/herdr-bots.mjs`: `ls`, `show`, `create`, `edit`, `rm`, `category`, `start`, `attach`, `detach`, `brief`, each with `--json`.
+2. `mods/spaces-agents/models.js`: `detectModel`, `shownModel`, `defaultModelFrom`, `knownModelsFrom`, `modelArgs`, `configPaths`. A pin is allowed only from the agent's known list.
+
+**Interfaces:**
+- Consumes: Group 1's `parseBots`, `applyBotEdit` and `writeBots`; Group 2's `startBot` and attach rules.
+- Produces: the CLI flags that Group 7's command line and Group 10's `--rank` extend.
+
+**Acceptance Criteria:**
+- [x] Create, edit, rm, start, attach and detach from the CLI give the same file and labels as the form. `rm` never deletes a whole `bots.json`.
+- [x] A live bot's model is read from `hc get .foreground.argv`; Start passes a pinned model.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 2
+
+---
+
+### Group 7: The Create/Edit form rebuilt
+
+**Goal:** The Create/Edit form matches the approved mockup (`mockup/create-form.dc.html`), and its footer shows the equivalent CLI line (A13).
+
+**Deliverables:**
+1. `mods/spaces-agents/create.js` rebuilt; `mods/spaces-agents/formModel.js` (pure: command line, save checks, edit patch); `test/formModel.test.mjs`.
+
+**Interfaces:**
+- Consumes: Group 6's CLI flags and `models.js`; Group 3's `characters.js`.
+- Produces: `FORM_SIZE` for `main.js`.
+
+**Acceptance Criteria:**
+- [ ] Every mockup section behaves as its `renderVals` does. The old save rules hold (read text, `applyBotEdit` on raw, `writeBots` with the text read as `expected`, "Not saved: …" reasons, first bot is main).
+- [ ] The copied line is a valid `herdr-bots` call for any value, and never runs anything else. Proof: generated lines with hostile values run through the CLI's parser.
+- [ ] Runs on lists installed agents only (plus the bot's current agent).
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 3, Group 6
+
+---
+
+### Group 8: Release automation and updates
+
+**Goal:** Merging into `dev` cuts a versioned GitHub release with a checksummed pack, the Automagik way (A14).
+
+**Deliverables:**
+1. `.github/workflows/{commitlint,ci,release}.yml`, `package.json`, `scripts/version.mjs`, `AGENTS.md`.
+2. `mods/spaces-agents/{VERSION,release.js,update.mjs}`: check, install (checksum, entries checked, atomic swap, rollback copy outside `mods/`) and rollback.
+
+**Interfaces:**
+- Produces: `checkForUpdate`, `installUpdate` and `rollback` from `update.mjs`; `FIRST_CHECK_MS`, `CHECK_EVERY_MS`, `RETRY_MS` and `noticeText` from `release.js` (wired by Group 9).
+
+**Acceptance Criteria:**
+- [ ] A feat/fix on `dev` cuts a release; docs, chore, ci and test release nothing. A failed Publish is finished by the next run.
+- [ ] An update file with a symlink, an absolute path or `..` is refused before the swap.
+- [ ] Ubuntu CI passes on the PR.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+```
+
+**depends-on:** none (lands with Group 9 in one PR: merging it cuts v0.1.0)
+
+---
+
+### Group 9: Rename, README and update wiring
+
+**Goal:** v0.1.0 ships as Automagik Herdr: CLI `automagik-herdr`, a README that sells autonomous cross-harness agent teams, and working updates (A15, A14).
+
+**Deliverables:**
+1. CLI and docs renamed from herdr-bots (the mod folder stays `spaces-agents`; the `bot` label and `.herdr/bots.json` are kept).
+2. `automagik-herdr update [--check|--rollback]`; a mod check every 4 hours with a notice. Network errors never break the mod.
+3. README rewrite, including the update trust note (the checksum proves integrity, not authenticity).
+
+**Interfaces:**
+- Consumes: Group 8's update and release exports; Groups 3, 6 and 7's CLI and README.
+
+**Acceptance Criteria:**
+- [ ] No user-facing "herdr-bots" left, except a migration note.
+- [ ] `update --check` reports current and latest. With the network down, the mod shows no error and retries.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+```
+
+**depends-on:** Group 7, Group 8
+
+---
+
+### Group 10: Pane labels for the event envelope
+
+**Goal:** herdr-meter can stamp `actor.bot`, `actor.role` and `actor.squad` from a bot pane's hc labels (A16).
+
+**Deliverables:**
+1. An optional `rank` field (model.js, CLI `--rank`); `paneLabels` in launchArgs.js; labels at Start, Attach, Detach and edit; a README section.
+
+**Interfaces:**
+- Produces: the labels `bot=`, `role=`, `category=` and `squad=` (never overwritten).
+
+**Acceptance Criteria:**
+- [ ] The main bot is `role=main`; a member that leads others is `role=captain`; otherwise its rank, and no rank means no label. An existing `squad=` is kept; a missing one comes from the lead's live pane. Detach removes only what it set.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 3, Group 6
 
 ---
 
