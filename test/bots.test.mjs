@@ -202,7 +202,7 @@ test("writeBots after an edit relabels the changed bots' live local panes withou
   const { relabel } = await writeBots(main, edited, text);
   assert.equal(JSON.parse(readFileSync(join(main, ".herdr", "bots.json"), "utf8")).bots[1].rank, "pm");
   release();
-  assert.deepEqual(await relabel, { done: ["t5"], failed: ["t6"] });
+  assert.deepEqual(await relabel, { done: ["t5"], failed: ["t6"], unchecked: [] });
   assert.deepEqual(state.hcCalls, [["label", "t5", "role=pm"], ["label", "t6", "role=pm"]]); // never far/t7
   assert.equal(state.notes.length, 1);
   assert.match(state.notes[0].body, /these panes' labels weren't updated: t6/);
@@ -213,14 +213,15 @@ test("writeBots after an edit relabels the changed bots' live local panes withou
     const again = sample();
     again.bots[1].rank = "dev";
     const out = await writeBots(main, again, text);
-    assert.deepEqual((await out.relabel).done, []);
+    assert.deepEqual(await out.relabel, { done: [], failed: [], unchecked: [ID.dev] });
   } finally {
     Object.defineProperty(state, "terminals", { configurable: true, writable: true, value: [] });
   }
   assert.equal(state.notes.length, 2);
+  assert.match(state.notes[1].body, new RegExp(`^Saved, but these bots' panes could not be checked: ${ID.dev}\\.`));
   // A new file relabels nothing (no pane can carry its bots yet).
   state.hcCalls = [];
   const other = await repo(t);
-  assert.deepEqual(await (await writeBots(other.main, sample(), null)).relabel, { done: [], failed: [] });
+  assert.deepEqual(await (await writeBots(other.main, sample(), null)).relabel, { done: [], failed: [], unchecked: [] });
   assert.deepEqual(state.hcCalls, []);
 });

@@ -224,18 +224,20 @@ export function relabelPlan(beforeFile, afterFile) {
  * Carries out a relabelPlan on this computer's panes, the I/O given (as paneOf takes `ask`):
  * `io.rows(botId)` resolves with the live local panes carrying that bot's label ({ address,
  * labels, state, created_ms, program? | foreground? }); `io.label(address, words)` sets labels
- * and resolves true when hc did. A failure of either is caught: that pane (or bot) is listed
- * in `failed`, the rest go on. Resolves { done: addresses, failed: addresses or bot ids }.
+ * and resolves true when hc did. A failure of either is caught and the rest go on: a pane hc
+ * didn't label is listed in `failed`; a bot whose panes couldn't be looked up (io.rows threw:
+ * hc unavailable) in `unchecked`, since whether it has panes at all is unknown.
+ * Resolves { done: addresses, failed: addresses, unchecked: bot ids }.
  */
 export async function relabel(plan, io) {
-  const done = [], failed = [];
+  const done = [], failed = [], unchecked = [];
   for (const item of plan) {
     let rows;
     let leadSquad = null;
     try {
       rows = await io.rows(item.id);
       if (item.lead) leadSquad = leadPane(await io.rows(item.lead))?.labels?.[SQUAD_LABEL] ?? null;
-    } catch { failed.push(item.id); continue; }
+    } catch { unchecked.push(item.id); continue; }
     for (const row of rows.filter((r) => r?.state === "live" && r.address)) {
       const words = relabelWords(item.before, item.after, row.labels ?? {}, { leadChanged: item.leadChanged, leadSquad });
       if (!words.length) continue;
@@ -244,7 +246,15 @@ export async function relabel(plan, io) {
       (ok ? done : failed).push(row.address);
     }
   }
-  return { done, failed };
+  return { done, failed, unchecked };
+}
+
+/** The warning after a relabel, naming the panes not labelled and the bots not checked; null when none. */
+export function relabelWarning({ failed = [], unchecked = [] } = {}) {
+  const parts = [];
+  if (failed.length) parts.push(`these panes' labels weren't updated: ${failed.join(", ")}`);
+  if (unchecked.length) parts.push(`these bots' panes could not be checked: ${unchecked.join(", ")}`);
+  return parts.length ? `Saved, but ${parts.join("; ")}.` : null;
 }
 
 /**

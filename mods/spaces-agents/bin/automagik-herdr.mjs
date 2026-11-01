@@ -20,7 +20,7 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
   parseBots, plannedOf, projectKeyOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
-  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
+  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
 import { installHook } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
@@ -533,9 +533,10 @@ const labelIo = { rows: liveRows, label: async (address, words) => (await hc(["l
 async function relabelAfter(beforeFile, afterRaw) {
   let afterFile;
   try { afterFile = parseBots(JSON.stringify(afterRaw)).file; } catch { return []; }
-  const { done, failed } = await relabel(relabelPlan(beforeFile, afterFile), labelIo);
-  if (failed.length) report([`saved, but these panes' labels weren't updated: ${failed.join(", ")}`]);
-  return done;
+  const out = await relabel(relabelPlan(beforeFile, afterFile), labelIo);
+  const warning = relabelWarning(out);
+  if (warning) report([warning]);
+  return out.done;
 }
 
 async function cmdCreate(opts) {

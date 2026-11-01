@@ -7,7 +7,7 @@
 
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
 import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
-import { relabel, relabelPlan } from "./launchArgs.js";
+import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "spaces-agents.projects";
@@ -170,7 +170,7 @@ export async function writeBots(projectKey, file, expected) {
   keys.clear(); // a folder outside git may belong to this project now
   rememberProject(projectKey, null);
   // Not awaited: the save is done; the labels follow on their own (A16).
-  return { relabel: expected === null ? Promise.resolve({ done: [], failed: [] }) : relabelLocal(expected, file) };
+  return { relabel: expected === null ? Promise.resolve({ done: [], failed: [], unchecked: [] }) : relabelLocal(expected, file) };
 }
 
 /**
@@ -182,21 +182,22 @@ export async function writeBots(projectKey, file, expected) {
 export async function relabelLocal(beforeText, afterRaw) {
   try {
     const plan = relabelPlan(parseBots(beforeText).file, parseBots(JSON.stringify(afterRaw)).file);
-    if (!plan.length) return { done: [], failed: [] };
+    if (!plan.length) return { done: [], failed: [], unchecked: [] };
     const io = {
       rows: async (id) => terminals().filter((t) => t?.state === "live" && typeof t.address === "string" && !t.address.includes("/")
         && t.labels?.[BOT_LABEL] === id),
       label: async (address, words) => (await hc(["label", address, ...words])).code === 0,
     };
     const out = await relabel(plan, io);
-    if (out.failed.length) {
+    const warning = relabelWarning(out);
+    if (warning) {
       notify({ title: "Bots", level: "warning", timeout: 15000,
-        body: `Saved, but these panes' labels weren't updated: ${out.failed.join(", ")}. Edit the bot again, or Detach and Attach it, to retry.` });
+        body: `${warning} Edit the bot again, or Detach and Attach it, to retry.` });
     }
     return out;
   } catch (e) {
     notify({ title: "Bots", level: "warning", timeout: 15000, body: `Saved, but the panes' labels weren't updated: ${e?.message ?? e}` });
-    return { done: [], failed: [] };
+    return { done: [], failed: [], unchecked: [] };
   }
 }
 
