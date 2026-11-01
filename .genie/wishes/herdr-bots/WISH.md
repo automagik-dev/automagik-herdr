@@ -60,6 +60,8 @@ DESIGN.md Decisions 1–15 hold as written except where an addition below names 
 | A13 | **The Create/Edit form is redesigned** (owner, 2026-11-01: the current form's UX is unacceptable). A visual mockup is approved by the owner before it is built, as the sidebar was (artifact v9); it is built on the CLI's rules (A11) and the model list (A12). Until then the current form stays as is and the CLI is the way to create bots. | The sidebar's approved-mockup route worked; the form had no visual spec. |
 | A14 | **Public repo with Automagik's release automation and updates** (owner, 2026-11-01: "create it under automagik-dev/automagik-herdr, dev = default branch, copy automated version control and updates from automagik itself"; "make it public"). github.com/automagik-dev/automagik-herdr, public, default `dev`, topics `herdr-mod`, `automagik`, `ai-agents`; rulesets as Automagik's (no force push or deletion on `dev`/`main`; no moving or deleting `v*` tags). Copied from Automagik: the bash commit-message check on PRs (`commitlint.yml`), CI on push and PRs, `release.yml`'s cut job (on every push to `dev` with something new: version commit `chore(release): vX.Y.Z`, annotated tag, atomic push, GitHub release with the pack tarball and `SHA256SUMS`, then fast-forward `main`), one version field kept by `scripts/version.mjs`, and updates read from the GitHub releases API: `automagik-herdr update [--check]` verifies the tarball against `SHA256SUMS` and swaps the installed pack with a `.prev` rollback; the mod checks every 4 h and shows a notice. Not copied: Bun, npm, desktop builds, the signed plugin lane, follow-omni. Reopens DESIGN's OUT item "shipping through Automagik's catalogue or update channel" only as far as this repo's own releases. | The owner asked for Automagik's own version control and update path; research of automagik-dev/automagik (`commitlint.yml`, `ci.yml`, `release.yml`, `scripts/version.ts`, `apps/desktop/src/update.js`) gave the smallest copy for a pack with no build step. |
 | A15 | **Name and pitch: Automagik Herdr** (owner, 2026-11-01: "rename things from old herdr-bot name"; "sell the power of autonomous cross-harness teams of agents"). The product is Automagik Herdr; the CLI is `automagik-herdr` (was `herdr-bots`, no alias: it never shipped); package and release assets use `automagik-herdr`. Kept on purpose: the mod folder `spaces-agents` (the owner's layout names it and Herdr never overwrites a taken folder), the `bot` label key and `.herdr/bots.json` (bots stay the unit). The README is rewritten to lead with autonomous, cross-harness agent teams (Claude Code, Codex, Gemini, Oh My Pi… under one main bot, briefed every turn, waking each other, visible at a glance), then install, CLI, sidebar. | Owner's words; the old name was internal to the brainstorm. |
+| A16 | **Pane labels for the agent event envelope** (t1m for the owner, 2026-11-01; Brain RFC `agent-event-envelope.md`, `ae/1`, where herdr-meter stamps `actor.bot/role/squad` from hc labels). Start and Attach set, Detach removes, and an edit rewrites on a live pane: `bot=<id>` (already shipped); `role=<rank>` when the bot has a rank (a new optional `rank` field, one of captain, dev, tester, reviewer, integrator, pm, main, owner, chosen in the form and the CLI; the main bot is `main`); `category=<category id>` when the bot has one. `squad=` names the team and is set by the team-assembly helper (`squad=memory`). It is never overwritten. When a pane has none, it is copied from the lead's live pane. **Approved** by the owner via t1m, 2026-11-01 ("yes rank, approved as drafted"). RFC `ae/1` is also approved: `actor.bot` is mandatory on the bus and optional locally, with a 7-day TTL. Automagik Herdr owns the `ae/1` JSON Schema as a group after v0.1.0. | The free-text `role` stays for the briefing; the meter needs a closed set. A squad is not a category (Knowledge = retrieval + memory), so it stays separate. Lands as a small group after PR #1. |
+| A17 | **One-command install, "paste this to your agent"** (owner, 2026-11-01: "a one command installer that will modify a plain herdr-app into automagik-herdr (even offer to install if the person doesnt have it, no reason to build dmgs…) a thin wrapper like 'paste this to your agent'"). `install.sh`, served from `main` (released commits only), is run with `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh \| bash`. It checks macOS, Node and Herdr. When Herdr is missing it offers `brew install --cask penso/tap/herdr-gpui` (asks first; `--yes` for agents). It installs the latest release's pack, checksum verified, through the same checks as `update.mjs`, keeps a copy of an existing `spaces-agents` folder, links the `automagik-herdr` CLI into `~/.local/bin`, and prints what changed. It can be run again safely, and `--uninstall` puts the old pack back. The README opens with a short prompt to paste into any coding agent: it runs the installer with `--yes`, checks the install, and sets up the main bot through the CLI. | Herdr already ships the app (Homebrew cask), so no dmg or app bundle is built. Only the pack and the CLI are installed. One installer for people and agents. |
 
 ## Simplicity Case
 
@@ -116,6 +118,17 @@ DESIGN's group 1 is split in two (Groups 1 and 2 here) to keep each group inside
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
 | 5 | engineer | Low: two theme files and a one-time selection; share files need the finished view | inherit | Automagik theme and share files |
+
+### Wave 5 (owner decisions A11–A16, added 2026-11-01; parallel in dedicated worktrees)
+
+| Group | Agent | Complexity | Model | Description |
+|-------|-------|------------|-------|-------------|
+| 6 | engineer | Medium: one CLI over the same save rules as the form; model read from the pane's argv | inherit | The `herdr-bots` CLI and the detected model (A11, A12) |
+| 7 | engineer | High: two-column form to the approved mockup; a copied command line that must stay a safe, valid CLI call | inherit | The Create/Edit form rebuilt (A13) |
+| 8 | engineer | High: release machinery and a self-updater (trust boundary) | inherit | Release automation and updates (A14) |
+| 9 | engineer | Medium: a rename across CLI and docs; the update command and notice | inherit | Rename to Automagik Herdr, README, update wiring (A15, A14) |
+| 10 | engineer | Low: labels set and removed at four points | inherit | Pane labels for the event envelope (A16) |
+| 11 | engineer | Medium: a script piped from the web that installs into the owner's app; consent before installing Herdr | inherit | One-command installer and the agent prompt (A17) |
 
 **Global constraints:**
 - No change to Herdr, herdr-core or Automagik; the pack adds files, never a service (DESIGN Approach).
@@ -283,6 +296,155 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 
 ---
 
+### Group 6: The CLI and the detected model
+
+**Goal:** Every bot operation the form offers also works from the command line, and a bot's model is detected, never typed (A11, A12).
+
+**Deliverables:**
+1. `mods/spaces-agents/bin/herdr-bots.mjs`: `ls`, `show`, `create`, `edit`, `rm`, `category`, `start`, `attach`, `detach`, `brief`, each with `--json`.
+2. `mods/spaces-agents/models.js`: `detectModel`, `shownModel`, `defaultModelFrom`, `knownModelsFrom`, `modelArgs`, `configPaths`. A pin is allowed only from the agent's known list.
+
+**Interfaces:**
+- Consumes: Group 1's `parseBots`, `applyBotEdit` and `writeBots`; Group 2's `startBot` and attach rules.
+- Produces: the CLI flags that Group 7's command line and Group 10's `--rank` extend.
+
+**Acceptance Criteria:**
+- [x] Create, edit, rm, start, attach and detach from the CLI give the same file and labels as the form. `rm` never deletes a whole `bots.json`.
+- [x] A live bot's model is read from `hc get .foreground.argv`; Start passes a pinned model.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 2
+
+---
+
+### Group 7: The Create/Edit form rebuilt
+
+**Goal:** The Create/Edit form matches the approved mockup (`mockup/create-form.dc.html`), and its footer shows the equivalent CLI line (A13).
+
+**Deliverables:**
+1. `mods/spaces-agents/create.js` rebuilt; `mods/spaces-agents/formModel.js` (pure: command line, save checks, edit patch); `test/formModel.test.mjs`.
+
+**Interfaces:**
+- Consumes: Group 6's CLI flags and `models.js`; Group 3's `characters.js`.
+- Produces: `FORM_SIZE` for `main.js`.
+
+**Acceptance Criteria:**
+- [ ] Every mockup section behaves as its `renderVals` does. The old save rules hold (read text, `applyBotEdit` on raw, `writeBots` with the text read as `expected`, "Not saved: …" reasons, first bot is main).
+- [ ] The copied line is a valid `herdr-bots` call for any value, and never runs anything else. Proof: generated lines with hostile values run through the CLI's parser.
+- [ ] Runs on lists installed agents only (plus the bot's current agent).
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 3, Group 6
+
+---
+
+### Group 8: Release automation and updates
+
+**Goal:** Merging into `dev` cuts a versioned GitHub release with a checksummed pack, the Automagik way (A14).
+
+**Deliverables:**
+1. `.github/workflows/{commitlint,ci,release}.yml`, `package.json`, `scripts/version.mjs`, `AGENTS.md`.
+2. `mods/spaces-agents/{VERSION,release.js,update.mjs}`: check, install (checksum, entries checked, atomic swap, rollback copy outside `mods/`) and rollback.
+
+**Interfaces:**
+- Produces: `checkForUpdate`, `installUpdate` and `rollback` from `update.mjs`; `FIRST_CHECK_MS`, `CHECK_EVERY_MS`, `RETRY_MS` and `noticeText` from `release.js` (wired by Group 9).
+
+**Acceptance Criteria:**
+- [ ] A feat/fix on `dev` cuts a release; docs, chore, ci and test release nothing. A failed Publish is finished by the next run.
+- [ ] An update file with a symlink, an absolute path or `..` is refused before the swap.
+- [ ] Ubuntu CI passes on the PR.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+```
+
+**depends-on:** none (lands with Group 9 in one PR: merging it cuts v0.1.0)
+
+---
+
+### Group 9: Rename, README and update wiring
+
+**Goal:** v0.1.0 ships as Automagik Herdr: CLI `automagik-herdr`, a README that sells autonomous cross-harness agent teams, and working updates (A15, A14).
+
+**Deliverables:**
+1. CLI and docs renamed from herdr-bots (the mod folder stays `spaces-agents`; the `bot` label and `.herdr/bots.json` are kept).
+2. `automagik-herdr update [--check|--rollback]`; a mod check every 4 hours with a notice. Network errors never break the mod.
+3. README rewrite, including the update trust note (the checksum proves integrity, not authenticity).
+
+**Interfaces:**
+- Consumes: Group 8's update and release exports; Groups 3, 6 and 7's CLI and README.
+
+**Acceptance Criteria:**
+- [ ] No user-facing "herdr-bots" left, except a migration note.
+- [ ] `update --check` reports current and latest. With the network down, the mod shows no error and retries.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+```
+
+**depends-on:** Group 7, Group 8
+
+---
+
+### Group 10: Pane labels for the event envelope
+
+**Goal:** herdr-meter can stamp `actor.bot`, `actor.role` and `actor.squad` from a bot pane's hc labels (A16).
+
+**Deliverables:**
+1. An optional `rank` field (model.js, CLI `--rank`); `paneLabels` in launchArgs.js; labels at Start, Attach, Detach and edit; a README section.
+
+**Interfaces:**
+- Produces: the labels `bot=`, `role=`, `category=` and `squad=` (never overwritten).
+
+**Acceptance Criteria:**
+- [ ] The main bot is `role=main`; a member that leads others is `role=captain`; otherwise its rank, and no rank means no label. An existing `squad=` is kept; a missing one comes from the lead's live pane. Detach removes only what it set.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 3, Group 6
+
+---
+
+### Group 11: One-command installer and the agent prompt
+
+**Goal:** One pasted command, or one prompt pasted to a coding agent, turns a plain Herdr, or a Mac without Herdr, into Automagik Herdr (A17).
+
+**Deliverables:**
+1. `install.sh`: POSIX sh, macOS. Checks Node and Herdr. Offers the Herdr cask with a y/N question (`--yes` skips it). Installs the latest release's pack through `update.mjs`'s checks, keeping a copy of an existing pack. Links the CLI. It can be run again safely, and `--uninstall` puts the old pack back.
+2. `docs/agent-install.md`: the paste-to-your-agent prompt; Group 9's README embeds it.
+3. Tests that run `install.sh` against a fake home, a fake release and fake `brew`, `herdr-app` and `node` on PATH.
+
+**Interfaces:**
+- Consumes: Group 8's `update.mjs` and release layout; Group 9's CLI name `automagik-herdr`.
+
+**Acceptance Criteria:**
+- [ ] On a fake home with no pack, `install.sh --yes` installs the pack and the CLI, and a second run changes nothing.
+- [ ] With Herdr missing and no `--yes` on a non-tty, it stops and prints the brew command; it never installs without consent.
+- [ ] A bad checksum, or a tarball with a symlink, installs nothing.
+- [ ] `--uninstall` puts the previous `spaces-agents` back.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && sh -n install.sh && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done
+```
+
+**depends-on:** Group 8 (lands in the same PR as Groups 8 and 9)
+
+---
+
 ## QA Criteria
 
 _What must be verified on dev after merge. The QA agent tests each criterion._
@@ -370,6 +532,31 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Criteria review: FIX-FIRST.** MEDIUM: `track_focus`/`tab_index` on each bot tree lets a click in the sidebar take keyboard focus from the terminal (shipped mods use `track_focus` only on overlays). LOW: liveness via `rows.js` `liveFrom` (counts remote, per the Group 2 note); a project under a folded machine header is not drawn; `error` shows the "Needs you" mark with the failed pose. Passed: 21 characters and 19 inks match Automagik; 0 of 4,788 SVGs contain `color-mix(`; poses; folding (A7); helpers exclude bot-labelled terminals; worktree dedupe; A1–A4, A8, A10 row menu; licences byte copies and NOTICE.
 - **Quality pass: PASS.** LOW: a colour named like `__proto__` blanks a picture; a failed picture write is never retried; keyboard handles keyed by list position.
 - **Route:** fix after Group 6, together with the detected model in rows (A12) and CLI-created projects showing in the sidebar.
+
+### Group 3 review — 2026-11-01 (rounds 2–3, merged)
+
+- **Fix loop 1** (g3-fix, integration with Groups 4 and 6, the detected model in rows, CLI-created projects): criteria **SHIP**.
+- **Quality pass: FIX-FIRST → PASS.** The MEDIUM was a lost update in `spaces-agents-projects.json` when CLIs run at once. It is fixed in 6c4687c with an exclusive lock plus a re-read. In 20 parallel writers × 3 runs, the old code kept 20/16/18 keys and the new code 20/20/20. The three LOWs were fixed in 3dff08c (argv cached per `created_ms`, at most 3 `hc get` per refresh, a notice once on a failed picture write, a README line).
+- **Re-check LOWs fixed in ff42d76:** a wrapper `sh -c` argv is asked again until an agent is in front, and a lock holder removes only its own lock (pid + token; stale takeover by rename aside, put back with link).
+- **Validation:** coordinator-run gate on ff42d76: `node --test` 156/156, `node --check` loop clean; after the merge, `node --test` on dev 156/156.
+- **Merged:** PR #1 → dev as efa21e6.
+- **Open:** live checks: screenshots against mockup v9, C7's poses, typing after a fold. They are CLI- and `herdr-app shot`-driven only; nothing drives the owner's window.
+
+### Group 7 review — 2026-11-01 (merged)
+
+- **Branch:** `wish/herdr-bots-g7`, 71f0f9c then fix loop 1 to c9bfec0; worker g7-form.
+- **Criteria review (g7-review): FIX-FIRST → SHIP.**
+  - HIGH: text flags were written `--flag 'v'`, which the CLI's strict parser rejects for values starting with `-`. Now every value flag is `--flag=<quoted>`, and a test runs the generated lines through sh and zsh into the real CLI with hostile values.
+  - MEDIUM: Runs on lists installed agents only, and a stored pin can always be cleared.
+  - Six LOWs closed, plus the mockup icons as tinted SVGs written under the app home.
+  - Accepted deviations: inline instructions, `--project` on every line, `category add --id … && create`, solid swatches, refusing over 4,000 characters, kind fixed in edit, asleep preview, stale values kept with a warning, the detected model in edit, the "Not saved" line, and Copy disabled while the form refuses to save.
+- **Quality pass (g7-quality): FIX-FIRST → PASS.**
+  - The wave in the copied line was unquoted (injection from a crafted `bots.json`). It is now quoted and an invalid wave falls back to 1.
+  - Failed picture writes retried forever; now they go in a failed set with one warning.
+  - Values starting with `-` or `=`.
+- **Validation:** coordinator gate at c9bfec0: `node --test` 187/187, `node --check` clean. On dev after the merge: 187/187.
+- **Merged:** PR #3 → dev as 0007eec.
+- **Open:** live checks for the owner, as a click-through checklist (typing in Herdr can't be automated in the background): fit on screen, pictures, icons in both themes, dropdowns, edit mode.
 
 ### Group 6 review — owner decisions A11/A12 — 2026-11-01
 

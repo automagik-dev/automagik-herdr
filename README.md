@@ -116,7 +116,8 @@ The shape (`version` 1):
   Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
   free-text model) is skipped by the sidebar with a note and refused by the CLI. A running
   bot shows the model its pane runs: the one its command line names, else the agent's own
-  configured default. A bot that isn't running shows its pin, else that default.
+  configured default. A bot that isn't running shows no model in its sidebar row
+  ("not running · role"), while `herdr-bots ls` and `show` print its pin, else that default.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -165,7 +166,7 @@ herdr-bots brief <bot>
 
 - Every command takes `--json` (the result as JSON on stdout) and `--project <folder>`.
   Without `--project`, the project is the one the current folder belongs to (its git main
-  checkout). `ls --all` adds the projects the sidebar remembers.
+  checkout). `ls --all` adds the projects the sidebar remembers and the ones listed below.
 - A bot is named by its id or by its name, which is unique in its project.
 - Errors go to stderr. A refusal exits 1, a usage mistake exits 2, and nothing is written.
   When `hc` fails, `start`, `attach` and `detach` refuse; `ls` and `show` still list the bots,
@@ -184,10 +185,12 @@ herdr-bots brief <bot>
   terminal as its hc parent (and outlives it); every other bot starts with no parent. A bot
   that is already running is not started twice: `start` prints its terminal. A planned bot
   is refused, and so is a pin the agent doesn't list. A bot whose pane started less than a
-  minute ago counts as running. The pane opens in the Herdr space (and tab) of a running
-  terminal in the project's folder. With none, Herdr gives the pane no place in its window:
-  `start` says so, and `hc attach <terminal>` shows it. Open a space on the project first, or
-  pass `--space <id>` (and `--tab <id>`).
+  minute ago counts as running. Placement is best effort: the pane opens in the Herdr space
+  (and tab) of a running terminal in the project's folder, which may be a space other than
+  the one you think of as the project's, if its terminal works there. With none, Herdr gives
+  the pane no place in its window: `start` says so, and `hc attach <terminal>` shows it.
+  Open a space on the project first, or pass `--space <id>` (and `--tab <id>`; `--tab`
+  alone is a usage mistake).
 - `attach` labels a running pane on this computer as the bot and takes the label off any
   other pane first. A pane that already plays another bot is refused. A Claude pane whose
   session runs outside the bot's project is refused, with both folders named.
@@ -196,8 +199,14 @@ herdr-bots brief <bot>
   `b-…` id. `brief` prints the bot's briefing as it would
   be now.
 
-The CLI cannot add a project to the sidebar's remembered list. A bot created from the CLI
-shows in the sidebar once a space is open on its project.
+`create`, `edit`, `category`, `start` and `attach` add their project to
+`spaces-agents-projects.json` in the app home (`$HERDR_APP_HOME`, else
+`~/.config/herdr-app`): a JSON list of project folders, newest last, at most 200. It sits
+outside `mods/`, so writing it reloads nothing. The sidebar reads it every 15 seconds beside
+its own remembered projects, so a bot created from the CLI shows even when no space is open
+on its project (at the end of the list, under the project's name). The sidebar never writes
+this file: a listed project whose `.herdr/bots.json` is gone is just not shown. With no app
+home, nothing is written; a failed write only warns. `ls --all` reads the list too.
 
 ## The per-turn briefing (Claude bots)
 

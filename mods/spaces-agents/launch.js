@@ -73,8 +73,9 @@ export async function afterBind(bot, sessionFolder, claude = bot?.agent === "cla
   return { written };
 }
 
-// The agents' own config texts (models.js configPaths), for the model pin list.
-async function modelTexts() {
+// The agents' own config texts (models.js configPaths), for the model pin list here and
+// the default model the sidebar's rows show (main.js).
+export async function modelTexts() {
   const out = {};
   for (const [name, path] of Object.entries(configPaths(home()))) {
     try { out[name] = await readTextFile(path); } catch { out[name] = null; }

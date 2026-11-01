@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
+  listedProjects, withListedProject, MAX_LISTED_PROJECTS,
 } from "../mods/spaces-agents/model.js";
 
 const run = promisify(execFile);
@@ -347,4 +348,18 @@ test("edit: planned keeps its other keys; wave and note come from the form", asy
   const { plannedOf } = await import("../mods/spaces-agents/model.js");
   assert.deepEqual(plannedOf({ wave: 3, note: "old", squad: "access" }, 4, ""), { wave: 4, squad: "access" });
   assert.deepEqual(plannedOf(null, 1, "later"), { wave: 1, note: "later" });
+});
+
+test("the CLI's project list: absolute keys once each, the newest last, at most 200", () => {
+  assert.deepEqual(listedProjects(null), []);
+  assert.deepEqual(listedProjects("{nope"), []);
+  assert.deepEqual(listedProjects('{"a":1}'), []);
+  assert.deepEqual(listedProjects('["/a", 3, "rel", "/b", "/a", null]'), ["/a", "/b"]);
+  assert.deepEqual(JSON.parse(withListedProject(null, "/a")), ["/a"]);
+  assert.deepEqual(JSON.parse(withListedProject('["/a", "/b"]', "/a")), ["/b", "/a"]);
+  assert.equal(withListedProject('["/b", "/a"]', "/a"), withListedProject(withListedProject('["/b", "/a"]', "/a"), "/a"));
+  const many = JSON.stringify(Array.from({ length: MAX_LISTED_PROJECTS }, (_, i) => `/p${i}`));
+  const next = JSON.parse(withListedProject(many, "/new"));
+  assert.equal(next.length, MAX_LISTED_PROJECTS);
+  assert.deepEqual([next[0], next.at(-1)], ["/p1", "/new"]);
 });

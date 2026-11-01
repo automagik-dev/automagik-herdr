@@ -5,8 +5,8 @@
 // No `fs/promises` here: Herdr's writes only under its app home, and has no access().
 // Files go through readTextFile/writeTextFile, folders through exec.
 
-import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home } from "herdr";
-import { BOTS_PATH, projectKeyOf, parseBots, checkBots } from "./model.js";
+import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome } from "herdr";
+import { BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "spaces-agents.projects";
@@ -58,6 +58,12 @@ export async function keyOf(folder, machine = null) {
   return key;
 }
 
+// The projects the command line created, edited, started or attached bots in (model.js
+// PROJECTS_FILE, local keys). Only the CLI writes the file; an unreadable one lists none.
+async function listedByCli() {
+  try { return listedProjects(await readTextFile(`${appHome()}/${PROJECTS_FILE}`)); } catch { return []; }
+}
+
 function remembered() {
   const list = shared(REMEMBERED);
   return Array.isArray(list) ? list.filter((p) => typeof p?.key === "string") : [];
@@ -83,7 +89,9 @@ function forgetProject(key, machine) {
  * is parseBots' cleaned copy (see writeBots). A read that rejects (the machine is away)
  * keeps the last good one; a file that doesn't parse keeps the last good one too, else
  * comes back with no bots and the reason in `warnings`. A remembered project is forgotten
- * only when its file is gone (read returns null), never when the read rejects.
+ * only when its file is gone (read returns null), never when the read rejects. The CLI's
+ * projects (listedByCli) are found as the remembered ones are; one whose file is gone is
+ * just not shown: its line in the CLI's file stays, as the view never writes that file.
  */
 export async function discoverProjects() {
   const found = new Map(); // id -> { key, machine, spaces, remembered }
@@ -103,6 +111,7 @@ export async function discoverProjects() {
     try { add(await keyOf(folder, s.machine), s.machine, s.id, false); } catch {}
   }
   for (const p of remembered()) add(p.key, p.machine ?? null, null, true);
+  for (const key of await listedByCli()) add(key, null, null, false);
 
   const out = [];
   for (const [k, p] of found) {
