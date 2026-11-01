@@ -1,6 +1,31 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome } from "herdr";
+import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec } from "herdr";
+
+// Where Pocket Link publishes whether a phone is connected (automagik-pocket's "For other mods"
+// contract, schema 1). Resolved as its bridge/state.mjs does: $POCKET_LINK_STATE_DIR, else
+// ${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link[-<first 8 hex of sha256(app home)>].
+// A mod sees neither the environment nor a hash function, so node answers, once.
+const POCKET_DIR = `
+const { createHash } = require("node:crypto"), { isAbsolute, join, resolve } = require("node:path");
+const abs = (p) => (typeof p === "string" && p !== "" && isAbsolute(p) ? p : null);
+const [appHome, home] = process.argv.slice(1), env = process.env;
+let dir = abs(env.POCKET_LINK_STATE_DIR) && resolve(env.POCKET_LINK_STATE_DIR);
+if (!dir) {
+  const base = abs(env.XDG_STATE_HOME) ?? join(home, ".local/state");
+  dir = resolve(appHome) !== resolve(home, ".config/herdr-app")
+    ? join(base, "automagik-pocket-link-" + createHash("sha256").update(resolve(appHome)).digest("hex").slice(0, 8))
+    : join(base, "automagik-pocket-link");
+}
+process.stdout.write(join(dir, "public-status.json"));`;
+
+// The dot's rule, from the contract: a missing, stale (90 s) or other-schema file means no dot.
+function phoneConnected(text) {
+  try {
+    const s = JSON.parse(text);
+    return s?.schema === 1 && s.running === true && s.phones_connected > 0 && Date.now() - s.updated < 90000;
+  } catch { return false; }
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -34,13 +59,27 @@ function openMods() {
 export default class WorkspaceChrome extends View {
   // Pocket Link belongs to automagik-pocket, not this pack: its tab shows only while that mod is
   // installed, looked up again every 30 s (a read of its mod.json; nothing of it is written).
+  // Its dot shows while a phone is connected, from the status file Pocket Link publishes.
   init(_given, cx) {
     this.pocket = false;
+    this.phone = false;
+    this.statusPath = null;
     this.hovered = null;   // the name of the tab under the pointer, shown dim in the rail
     const look = (cx) => cx.spawn(async (cx) => {
       let found = false;
       try { found = (await readTextFile(`${appHome()}/mods/pocket-link/mod.json`)) !== null; } catch { found = false; }
-      if (found !== this.pocket) { this.pocket = found; cx.notify(); }
+      let phone = false;
+      if (found) {
+        if (this.statusPath === null) {
+          const r = await exec("node", ["-e", POCKET_DIR, appHome(), home()]).catch(() => null);
+          if (r?.code === 0 && r.stdout.startsWith("/")) this.statusPath = r.stdout;
+          else console.log("pocket dot: could not resolve the status file", r?.stderr ?? "node did not start");
+        }
+        if (this.statusPath) {
+          try { phone = phoneConnected(await readTextFile(this.statusPath)); } catch { phone = false; }
+        }
+      }
+      if (found !== this.pocket || phone !== this.phone) { this.pocket = found; this.phone = phone; cx.notify(); }
     });
     look(cx);
     cx.timer.every(30000, look);
@@ -74,7 +113,8 @@ export default class WorkspaceChrome extends View {
         .child(h_flex().gap(3).items_center()
           .child(tab("mods", "puzzle", "Mods", false, false, openMods))
           .child(tab("automations", "clock", "Automations", automations, false, () => run("layout.toggle", { id: "automations-panel" })))
-          .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))))
+          .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
+            .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
           .child(div().flex_1().min_w(0).pl(6).pr(2).truncate().text_size(10.5).text_color(t.dim).child(this.hovered ?? ""))
           .child(div().w(1).h(16).flex_none().mx(1).bg(t.border))
           .child(tab("settings", "settings", "Settings", false, false, () => run("app.settings"))
