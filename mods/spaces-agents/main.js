@@ -148,7 +148,9 @@ export default class Spaces extends View {
     // Bot definitions (bots.js): every project with a .herdr/bots.json, read now, on the
     // 15-second timer (another machine's) and on a change under a local project's .herdr/.
     this.bots = [];
-    this.botWatch = new Set(); // local project keys watched
+    this.botsSeen = "[]"; // the last result, as text: re-render only on a change
+    this.botsRun = 0; // the latest discovery; an older one finishing late is dropped
+    this.botWatch = new Map(); // local project key -> the token of its one watcher
     this.refreshBots(cx);
     // Hermes's own icon from the program table (its process shows as Python).
     this.hermes = { key: "hermes", name: "Hermes", icon: "icons/hermes.svg", tint: true };
@@ -382,30 +384,42 @@ export default class Spaces extends View {
   }
 
   // The rename map: an absent file is an empty map; one that can't be read or parsed
-  // (mid-save, say) keeps the last map until the next look.
+  // (mid-save, say), or isn't a JSON object, keeps the last map until the next look.
   loadExtra(cx) {
     cx.spawn(async (cx) => {
-      try {
-        const text = await readTextFile(`${appHome()}/sidebar-agents.json`);
-        this.extra = text === null ? {} : JSON.parse(text) ?? {};
-      } catch {}
+      let text;
+      try { text = await readTextFile(`${appHome()}/sidebar-agents.json`); } catch { return; }
+      if (text === this.extraText) return;
+      let map;
+      try { map = text === null ? {} : JSON.parse(text); } catch { return; }
+      if (map === null || typeof map !== "object" || Array.isArray(map)) return;
+      this.extraText = text;
+      this.extra = map;
       cx.notify();
     });
   }
 
   refreshBots(cx) {
+    const run = ++this.botsRun;
     cx.spawn(async (cx) => {
-      try { this.bots = await discoverProjects(); } catch {}
-      const local = new Set(this.bots.filter((p) => !p.machine).map((p) => p.key));
-      for (const key of this.botWatch) if (!local.has(key)) this.botWatch.delete(key);
+      let found;
+      try { found = await discoverProjects(); } catch { return; }
+      if (run !== this.botsRun) return;
+      const local = new Set(found.filter((p) => !p.machine).map((p) => p.key));
+      for (const key of this.botWatch.keys()) if (!local.has(key)) this.botWatch.delete(key);
       for (const key of local) {
         if (this.botWatch.has(key)) continue;
-        this.botWatch.add(key);
+        const token = {};
+        this.botWatch.set(key, token);
         cx.spawn(async (cx) => {
-          await watchProject(key, () => this.botWatch.has(key), () => this.refreshBots(cx));
-          this.botWatch.delete(key);
+          await watchProject(key, () => this.botWatch.get(key) === token, () => this.refreshBots(cx));
+          if (this.botWatch.get(key) === token) this.botWatch.delete(key);
         });
       }
+      const seen = JSON.stringify(found);
+      if (seen === this.botsSeen) return;
+      this.botsSeen = seen;
+      this.bots = found;
       cx.notify();
     });
   }
