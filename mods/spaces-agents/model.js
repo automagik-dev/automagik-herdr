@@ -10,6 +10,11 @@ export const MAX_INSTRUCTIONS = 4000;
 /** A project's definitions file, relative to its key folder. */
 export const BOTS_PATH = ".herdr/bots.json";
 export const KINDS = ["main", "member"];
+/**
+ * A bot's rank (A16): a closed set, for the pane's `role=` label the event meter reads. The
+ * free-text `role` stays for the briefing. Optional.
+ */
+export const RANKS = ["captain", "dev", "tester", "reviewer", "integrator", "pm", "main", "owner"];
 
 // Automagik's characters and colours, by name (apps/bots-dsh/src/client/characters.js and
 // inks.js). Only the names: the drawing comes with the characters themselves (Group 3).
@@ -107,6 +112,10 @@ export function parseBots(text) {
     if (bot.agent !== undefined && !isText(bot.agent)) delete bot.agent;
     if (!bot.agent && !bot.planned) warnings.push(`${where}: no coding agent`);
     if (bot.model !== undefined && typeof bot.model !== "string") delete bot.model;
+    if (bot.rank !== undefined && !RANKS.includes(bot.rank)) {
+      warnings.push(`${where}: unknown rank ${JSON.stringify(bot.rank)}; ignored (one of ${RANKS.join(", ")})`);
+      delete bot.rank;
+    }
     if (bot.kind === "main" && bot.lead !== undefined) { warnings.push(`${where}: a main bot has no lead; ignored`); delete bot.lead; }
     if (bot.lead !== undefined && !isText(bot.lead)) delete bot.lead;
     if (bot.category !== undefined && !categories.some((c) => c.id === bot.category)) warnings.push(`${where}: unknown category ${bot.category}`);
@@ -188,6 +197,7 @@ export function checkBots(file) {
     if (!b.planned && !isText(b.agent)) errors.push(`${at}: no coding agent`);
     if (b.kind === "main" && b.lead !== undefined) errors.push(`${at}: a main bot has no lead`);
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
+    if (b.rank !== undefined && !RANKS.includes(b.rank)) errors.push(`${at}: unknown rank ${JSON.stringify(b.rank)}`);
   }
   const mains = file.bots.filter((b) => b?.kind === "main").length;
   if (mains !== 1) errors.push(`${mains} main bots; a project has exactly one`);
@@ -248,6 +258,26 @@ export function descendantsOf(file, botId) {
   return out;
 }
 
+/**
+ * The category a bot shows under (A2): a direct report of the main bot carries its own;
+ * a deeper member is under its lead's chain, so it takes the category of the direct report
+ * that chain ends at. Null for the main bot, an unknown bot, or a category not in the file.
+ */
+export function effectiveCategory(file, botId) {
+  const main = mainBotOf(file);
+  const byId = new Map(file.bots.map((b) => [b.id, b]));
+  let bot = byId.get(botId);
+  for (let steps = 0; bot && main && bot !== main && steps <= file.bots.length; steps += 1) {
+    const { lead } = effectiveLead(file, bot.id);
+    if (lead === main.id) {
+      const known = (file.categories ?? []).some((c) => c?.id === bot.category);
+      return known ? bot.category : null;
+    }
+    bot = byId.get(lead);
+  }
+  return null;
+}
+
 /** `planned` from the form: wave and note from it, the stored object's other keys kept. */
 export function plannedOf(stored, wave, note) {
   const out = { ...(stored ?? {}), wave };
@@ -271,7 +301,8 @@ export function newCategoryId(title, categories = []) {
  * A copy of `raw` (parseBots' raw file, or a new one) with one bot created or edited, the
  * Create form's write-back. `entry` holds every field the form edits; an optional one it
  * leaves out or empty is removed (planned, lead, category, agent, model); other keys the
- * stored entry had are kept.
+ * stored entry had are kept. `rank` (A16) is removed only when `entry` names it empty, so a
+ * front end that doesn't edit ranks keeps the stored one.
  * A lead equal to the main bot is stored as no lead; a category goes only with the main bot
  * as lead; `newCategory` ({ title, sub }) is added to the categories and used.
  */
@@ -295,6 +326,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   for (const k of ["planned", "lead", "category", "agent", "model"]) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }
+  if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
   if (i >= 0) out.bots[i] = merged; else out.bots.push(merged);
   return out;
 }

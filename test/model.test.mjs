@@ -363,3 +363,27 @@ test("the CLI's project list: absolute keys once each, the newest last, at most 
   assert.equal(next.length, MAX_LISTED_PROJECTS);
   assert.deepEqual([next[0], next.at(-1)], ["/p1", "/new"]);
 });
+
+// ---- A16: rank ----
+import { RANKS } from "../mods/spaces-agents/model.js";
+
+test("rank: an unknown one is warned about and dropped when shown, and refused when written; role stays free text", () => {
+  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "integrator", "pm", "main", "owner"]);
+  const raw = { version: 1, categories: [], bots: [bot(ID.main, "main", { rank: "owner", role: "Runs it all" }), bot(ID.cap, "member", { rank: "boss" })] };
+  const { file, warnings } = parseBots(JSON.stringify(raw));
+  assert.equal(file.bots[0].rank, "owner");
+  assert.equal(file.bots[0].role, "Runs it all");
+  assert.equal("rank" in file.bots[1], false);
+  assert.ok(warnings.some((w) => w.includes(ID.cap) && /unknown rank "boss"/.test(w)));
+  assert.ok(checkBots(raw).some((e) => /unknown rank "boss"/.test(e)));
+  assert.deepEqual(checkBots({ ...raw, bots: [raw.bots[0]] }), []);
+});
+
+test("applyBotEdit sets a rank, clears it when named empty, and keeps it when the entry leaves it out", () => {
+  const start = { version: 1, categories: [], bots: [bot(ID.main, "main")] };
+  const set = applyBotEdit(start, { ...bot(ID.main, "main"), rank: "pm" });
+  assert.equal(set.bots[0].rank, "pm");
+  const kept = applyBotEdit(set, bot(ID.main, "main", { role: "new role" }));
+  assert.deepEqual([kept.bots[0].rank, kept.bots[0].role], ["pm", "new role"]);
+  assert.equal("rank" in applyBotEdit(set, { ...bot(ID.main, "main"), rank: "" }).bots[0], false);
+});
