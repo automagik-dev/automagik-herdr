@@ -93,3 +93,17 @@ export function noticeFor(check, shownVersion = null) {
   if (check?.kind !== "update" || check.update.version === shownVersion) return null;
   return { title: "Automagik Herdr update", body: noticeText(check.update), level: "info" };
 }
+
+/**
+ * Posts a check's notice once per version across reloads and sidebar views: reads the
+ * announced version with `get(SHOWN_KEY)`, and when the check found a newer one, stores it
+ * with `set(SHOWN_KEY, version)` and posts the notice. The mod passes Herdr's shared,
+ * setShared and notify. Returns the notice posted, or null.
+ */
+export function announce(check, get, set, notify) {
+  const note = noticeFor(check, shownFrom(get(SHOWN_KEY)));
+  if (!note) return null;
+  set(SHOWN_KEY, check.update.version);
+  notify(note);
+  return note;
+}

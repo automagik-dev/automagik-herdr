@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CHECK_EVERY_MS, EXEC_TIMEOUT_MS, NODE_PATHS, RETRY_MS, SHOWN_KEY, nextCheckIn, nodeOrder, noticeFor, readCheck, runCheck, shownFrom } from "../mods/spaces-agents/updateCheck.js";
+import { announce, CHECK_EVERY_MS, EXEC_TIMEOUT_MS, NODE_PATHS, RETRY_MS, SHOWN_KEY, nextCheckIn, nodeOrder, noticeFor, readCheck, runCheck, shownFrom } from "../mods/spaces-agents/updateCheck.js";
 import { LATEST_URL } from "../mods/spaces-agents/release.js";
 import { cmdUpdate, CliError } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
 
@@ -78,17 +78,20 @@ test("runCheck: --mods names the app home's mods folder, so the installed versio
 test("the announced version is kept in shared: a reload or a second view doesn't announce it again", () => {
   assert.equal(SHOWN_KEY, "spaces-agents.update-shown");
   assert.deepEqual([shownFrom(undefined), shownFrom(null), shownFrom(5), shownFrom(""), shownFrom("0.2.0")], [null, null, null, null, "0.2.0"]);
-  // Herdr's shared values, as a map: the mod reads before posting and writes what it posted.
+  // Herdr's shared values as a map and its notify as a log, through the mod's own announce().
   const shared = new Map();
-  const announce = (check) => {
-    const note = noticeFor(check, shownFrom(shared.get(SHOWN_KEY)));
-    if (note) shared.set(SHOWN_KEY, check.update.version);
-    return note;
-  };
+  const posted = [];
+  const get = (k) => shared.get(k);
+  const set = (k, v) => { shared.set(k, v); };
+  const post = (n) => { posted.push(n); };
   const found = { kind: "update", update: UP };
-  assert.ok(announce(found), "first view, first time: one notice");
-  assert.equal(announce(found), null, "a second view, or the same view after a reload");
-  assert.ok(announce({ kind: "update", update: { ...UP, version: "0.3.0" } }), "a newer version is announced");
+  assert.ok(announce(found, get, set, post), "first view, first time: one notice");
+  assert.equal(shared.get(SHOWN_KEY), "0.2.0");
+  assert.equal(announce(found, get, set, post), null, "a second view, or the same view after a reload");
+  assert.equal(announce({ kind: "retry" }, get, set, post), null);
+  assert.equal(posted.length, 1);
+  assert.ok(announce({ kind: "update", update: { ...UP, version: "0.3.0" } }, get, set, post), "a newer version is announced");
+  assert.deepEqual(posted.map((n) => n.body.match(/Herdr (\S+) is out/)[1]), ["0.2.0", "0.3.0"]);
 });
 
 test("readCheck: an {error}, a non-zero exit or garbage is a retry, never an error to show", () => {

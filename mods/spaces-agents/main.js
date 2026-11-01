@@ -16,7 +16,7 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
-import { FIRST_CHECK_MS, SHOWN_KEY, nextCheckIn, noticeFor, readCheck, runCheck, shownFrom } from "./updateCheck.js";
+import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -395,8 +395,7 @@ export default class Spaces extends View {
         check = readCheck(result);
       } catch {}
       // The version already announced is shared, so a reload or a second view stays quiet.
-      const note = noticeFor(check, shownFrom(shared(SHOWN_KEY)));
-      if (note) { try { setShared(SHOWN_KEY, check.update.version); notify(note); } catch {} }
+      try { announce(check, shared, setShared, notify); } catch {}
       const wait = nextCheckIn(check.kind);
       if (wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
     });
