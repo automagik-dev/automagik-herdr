@@ -1,7 +1,7 @@
 // The Create / Edit bot form's rules over plain data (A13, to the approved mockup
 // mockup/create-form.dc.html): the form's state from a bot, the bots it may report to, the
 // model line and pin list (A12: picked from the agent's list, never typed), what stops a
-// save, the entry a save writes, the `herdr-bots create|edit …` line it matches (A11), and
+// save, the entry a save writes, the `automagik-herdr create|edit …` line it matches (A11), and
 // the sidebar preview's second line. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`,
 // so `node --test` runs it. Apache-2.0.
 
@@ -195,7 +195,7 @@ export function countTone(n) {
 
 /**
  * Why the form can't be saved as it is, or null. The CLI's create/edit rules (entryFrom in
- * bin/herdr-bots.mjs): a name not taken in the project (names pick bots), the first bot is
+ * bin/automagik-herdr.mjs): a name not taken in the project (names pick bots), the first bot is
  * the main bot and there is only one, instructions within the limit, a planned bot's wave,
  * an agent unless planned, a pin from the agent's list, a new category's title.
  * `ctx`: { key, loadError, file, info } (`info` from modelInfo for state.agent).
@@ -250,7 +250,7 @@ export function entryOf(state, file) {
 }
 
 /**
- * The `herdr-bots` line that does what the form will do (A11), shown live in the footer and
+ * The `automagik-herdr` line that does what the form will do (A11), shown live in the footer and
  * copied by Copy. Create: every chosen field, in the mockup's order. Edit: `edit <bot>` and
  * only what changed since `initial`, with the CLI's clearing spellings (--no-model,
  * --no-category, --unplanned). A new category is added first with `category add --id`, the
@@ -266,7 +266,7 @@ export function commandOf(state, { key = null, file = null, initial = null } = {
   let categoryId = state.category;
   if (byMain && state.category === NEW_CATEGORY) {
     categoryId = newCategoryId(state.catTitle.trim() || "category", cats);
-    pre.push(["herdr-bots category add", opt("id", categoryId), opt("title", state.catTitle.trim()),
+    pre.push(["automagik-herdr category add", opt("id", categoryId), opt("title", state.catTitle.trim()),
       ...(state.catSub.trim() ? [opt("sub", state.catSub.trim())] : []), ...project].join(" "));
   }
   const parts = [];
@@ -274,7 +274,7 @@ export function commandOf(state, { key = null, file = null, initial = null } = {
   const changed = (k) => !was || was[k] !== state[k];
   const wave = String(state.wave);
   if (!was) {
-    parts.push("herdr-bots create", opt("name", state.name.trim() || "new-bot"));
+    parts.push("automagik-herdr create", opt("name", state.name.trim() || "new-bot"));
     if (state.kind === "main") parts.push(opt("kind", "main"));
     if (state.agent) parts.push(opt("agent", state.agent));
     if (state.role.trim()) parts.push(opt("role", state.role.trim()));
@@ -289,7 +289,7 @@ export function commandOf(state, { key = null, file = null, initial = null } = {
     parts.push(...project);
     if (state.instructions) parts.push(opt("instructions", state.instructions));
   } else {
-    parts.push(`herdr-bots edit ${shellQuote(state.id)}`);
+    parts.push(`automagik-herdr edit ${shellQuote(state.id)}`);
     if (changed("name")) parts.push(opt("name", state.name.trim()));
     if (changed("agent") && state.agent) parts.push(opt("agent", state.agent));
     if (changed("role")) parts.push(opt("role", state.role.trim()));

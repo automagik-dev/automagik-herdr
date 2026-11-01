@@ -1,4 +1,4 @@
-// herdr-bots, the command line (A11): every subcommand run as a program against scratch git
+// automagik-herdr, the command line (A11): every subcommand run as a program against scratch git
 // projects under $TMPDIR, with a fake `hc` first on PATH (test/fake-hc.mjs) that records
 // each call and answers from a state file. The real hc is never run.
 import { test } from "node:test";
@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/spaces-agents/model.js";
-import { writeBotsFile, findBot, CliError, listProject } from "../mods/spaces-agents/bin/herdr-bots.mjs";
+import { writeBotsFile, findBot, CliError, listProject } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
 
-const CLI = new URL("../mods/spaces-agents/bin/herdr-bots.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
@@ -588,7 +588,7 @@ test("start refuses an old free-text model pin, naming the fix; a pane started u
   s.seed(f);
   const r = s.cli(["start", "Genie"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /pinned to "Opus 5\.5", which isn't a claude model this computer lists\. Pick one with herdr-bots edit b-aaaaaaaaaa --model/);
+  assert.match(r.err, /pinned to "Opus 5\.5", which isn't a claude model this computer lists\. Pick one with automagik-herdr edit b-aaaaaaaaaa --model/);
   const young = s.cli(["start", "Captain"]);
   assert.equal(young.code, 0);
   assert.match(young.out, /already running in t30/);
@@ -658,7 +658,7 @@ test("detach takes a removed bot's label off by its bare id; an unknown name is 
   s.seed(team());
   const rm = s.cli(["rm", "Dev"]);
   assert.equal(rm.code, 0, rm.err);
-  assert.match(rm.err, new RegExp(`take it off with: herdr-bots detach ${ID.dev}`));
+  assert.match(rm.err, new RegExp(`take it off with: automagik-herdr detach ${ID.dev}`));
   const r = s.cli(["detach", ID.dev, "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.json(), { id: ID.dev, defined: false, detached: ["t1", "t2"] });

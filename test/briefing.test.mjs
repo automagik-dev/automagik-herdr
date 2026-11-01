@@ -280,14 +280,14 @@ test("briefing.mjs: silent for a bot of a project with no bots.json, and for a p
   writeFileSync(join(root, "hc.json"), JSON.stringify(fx));
   const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree });
   assert.equal(r.stdout, "");
-  assert.match(r.stderr, /^herdr-bots briefing: .+\n$/); // one line, exit 0 (run() would reject otherwise)
+  assert.match(r.stderr, /^automagik-herdr briefing: .+\n$/); // one line, exit 0 (run() would reject otherwise)
 });
 
 test("briefing.mjs: no hc on PATH: nothing printed, one stderr line, exit 0", async (t) => {
   const { tree, brief } = await scratch(t);
   const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, PATH: `${NODE_DIR}:/usr/bin:/bin` });
   assert.equal(r.stdout, "");
-  assert.equal(r.stderr, "herdr-bots briefing: hc is not on PATH\n");
+  assert.equal(r.stderr, "automagik-herdr briefing: hc is not on PATH\n");
 });
 
 test("briefing.mjs: a hostile screen tail stays fenced: no closing tag, brackets neutralised", async (t) => {

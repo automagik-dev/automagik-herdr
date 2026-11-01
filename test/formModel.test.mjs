@@ -1,6 +1,6 @@
 // The Create / Edit form's rules (A13, mockup/create-form.dc.html renderVals): state from a
 // bot, lead options, category visibility, the model line and pin list, validation, the
-// entry a save writes and the matching herdr-bots line.
+// entry a save writes and the matching automagik-herdr line.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -192,41 +192,41 @@ test("formFrom: a stored wave that isn't a positive whole number reads as 1, nev
 test("commandOf create: the mockup's flag order, every value as --option=<quoted>, with --project", () => {
   const s = create({ name: "runtime-qa", role: "Test runner", lead: "b-capaaaaaaa", character: "hex", colour: "sky", pin: "gpt-6.1-terra", instructions: "Run the tests.\nReport." });
   assert.equal(commandOf(s, { key: KEY, file: FILE }),
-    "herdr-bots create --name=runtime-qa --agent=codex --role='Test runner' --lead=b-capaaaaaaa --character=hex --colour=sky --model=gpt-6.1-terra --project=/Users/x/brain-v3 --instructions='Run the tests.\nReport.'");
+    "automagik-herdr create --name=runtime-qa --agent=codex --role='Test runner' --lead=b-capaaaaaaa --character=hex --colour=sky --model=gpt-6.1-terra --project=/Users/x/brain-v3 --instructions='Run the tests.\nReport.'");
   const byMain = create({ category: "platform", character: "hex", colour: "sky", planned: true, wave: 2, note: "after auth" });
   assert.equal(commandOf(byMain, { key: KEY, file: FILE }),
-    "herdr-bots create --name=runtime-qa --agent=codex --lead=b-mainaaaaaa --category=platform --character=hex --colour=sky --planned-wave=2 --planned-note='after auth' --project=/Users/x/brain-v3");
+    "automagik-herdr create --name=runtime-qa --agent=codex --lead=b-mainaaaaaa --category=platform --character=hex --colour=sky --planned-wave=2 --planned-note='after auth' --project=/Users/x/brain-v3");
   const main = formFrom({ file: { version: 1, categories: [], bots: [] }, id: "b-aaaaaaaaaa", agent: "claude" });
-  assert.match(commandOf({ ...main, name: "" }, { key: KEY, file: { version: 1, categories: [], bots: [] } }), /^herdr-bots create --name=new-bot --kind=main --agent=claude --character=/);
+  assert.match(commandOf({ ...main, name: "" }, { key: KEY, file: { version: 1, categories: [], bots: [] } }), /^automagik-herdr create --name=new-bot --kind=main --agent=claude --character=/);
 });
 
 test("commandOf create: a new category is added first, with the id the create line names", () => {
   const s = create({ category: NEW_CATEGORY, catTitle: "Quality gate", catSub: "tests" });
   assert.match(commandOf(s, { key: KEY, file: FILE }),
-    /^herdr-bots category add --id=quality-gate --title='Quality gate' --sub=tests --project=\/Users\/x\/brain-v3 && herdr-bots create .* --category=quality-gate /);
+    /^automagik-herdr category add --id=quality-gate --title='Quality gate' --sub=tests --project=\/Users\/x\/brain-v3 && automagik-herdr create .* --category=quality-gate /);
 });
 
 test("commandOf edit: only what changed, with the CLI's clearing spellings", () => {
   const initial = edit("b-devaaaaaaa");
-  assert.equal(commandOf(initial, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --project=/Users/x/brain-v3");
+  assert.equal(commandOf(initial, { key: KEY, file: FILE, initial }), "automagik-herdr edit b-devaaaaaaa --project=/Users/x/brain-v3");
   assert.equal(editChanged(initial, initial), false);
   const s = { ...initial, role: "Lead builder", pin: "", lead: "b-mainaaaaaa", category: "platform" };
   assert.equal(commandOf(s, { key: KEY, file: FILE, initial }),
-    "herdr-bots edit b-devaaaaaaa --role='Lead builder' --lead=b-mainaaaaaa --category=platform --no-model --project=/Users/x/brain-v3");
+    "automagik-herdr edit b-devaaaaaaa --role='Lead builder' --lead=b-mainaaaaaa --category=platform --no-model --project=/Users/x/brain-v3");
   assert.equal(editChanged(s, initial), true);
   const plan = edit("b-planaaaaaa");
   assert.equal(commandOf({ ...plan, planned: false, agent: "claude" }, { key: KEY, file: FILE, initial: plan }),
-    "herdr-bots edit b-planaaaaaa --agent=claude --unplanned --project=/Users/x/brain-v3");
+    "automagik-herdr edit b-planaaaaaa --agent=claude --unplanned --project=/Users/x/brain-v3");
   assert.equal(commandOf({ ...plan, note: "" }, { key: KEY, file: FILE, initial: plan }),
-    "herdr-bots edit b-planaaaaaa --planned-wave=3 --planned-note='' --project=/Users/x/brain-v3");
+    "automagik-herdr edit b-planaaaaaa --planned-wave=3 --planned-note='' --project=/Users/x/brain-v3");
   const pm = edit("b-pmaaaaaaaa");
   assert.equal(commandOf({ ...pm, category: "" }, { key: KEY, file: FILE, initial: pm }),
-    "herdr-bots edit b-pmaaaaaaaa --no-category --project=/Users/x/brain-v3");
+    "automagik-herdr edit b-pmaaaaaaaa --no-category --project=/Users/x/brain-v3");
 });
 
 // ---- the generated lines run through a real shell and the real CLI ----
 
-const CLI = new URL("../mods/spaces-agents/bin/herdr-bots.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const SHELLS = ["/bin/sh", "/bin/zsh"].filter((sh) => existsSync(sh));
 // Values a shell or the CLI's strict parser could take for something else.
 const NASTY = {
@@ -245,9 +245,9 @@ function scratch(t) {
   for (const d of [project, bin, home, app, join(project, ".herdr")]) mkdirSync(d, { recursive: true });
   execFileSync("git", ["init", "-q"], { cwd: project });
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "start"], { cwd: project });
-  // `herdr-bots` on PATH is the pack's CLI; the copied line names it so.
-  writeFileSync(join(bin, "herdr-bots"), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`);
-  chmodSync(join(bin, "herdr-bots"), 0o755);
+  // `automagik-herdr` on PATH is the pack's CLI; the copied line names it so.
+  writeFileSync(join(bin, "automagik-herdr"), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`);
+  chmodSync(join(bin, "automagik-herdr"), 0o755);
   const file = { version: 1, categories: [{ id: "platform", title: "Platform" }], bots: [
     { id: "b-mainaaaaaa", name: "orch", kind: "main", look: look("octopus", "deepseek"), role: "", instructions: "", agent: "claude" },
     { id: "b-capaaaaaaa", name: "cap", kind: "member", look: look("whale", "blue"), role: "Captain", instructions: "", agent: "claude", category: "platform" },

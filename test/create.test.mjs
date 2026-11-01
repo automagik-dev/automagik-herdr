@@ -118,7 +118,7 @@ test("Copy copies only a line the form would save; a refused one shows why", asy
   form.inputs.name.type("qa", cx);
   draw();
   await click("bot-copy");
-  assert.match(cx.clip, /^herdr-bots create --name=qa /);
+  assert.match(cx.clip, /^automagik-herdr create --name=qa /);
   // The model is read once per agent, not on every render.
   assert.ok(form.models.has("claude"));
 });

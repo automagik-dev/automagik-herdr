@@ -118,7 +118,7 @@ export function parseCommand(text) {
 // ---- a bot's pane through hc (the CLI and briefing.mjs; launch.js reads Herdr's terminals()) ----
 
 /** What an `ask` resolves with when hc gave no answer in time (a machine away). */
-export const UNANSWERED = Symbol.for("herdr-bots.unanswered");
+export const UNANSWERED = Symbol.for("automagik-herdr.unanswered");
 
 /** `hc ls --json`'s rows, whichever shape it printed. */
 export const rowsOf = (ls) => (Array.isArray(ls?.terminals) ? ls.terminals : Array.isArray(ls) ? ls : []);

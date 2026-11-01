@@ -26,7 +26,7 @@ const unreachable = async () => { throw new Error("machine unreachable"); };
 // A scratch repository with one commit, a worktree and a subfolder, under $TMPDIR
 // (realpath: on macOS /var/folders is /private/var/folders, and git answers with the real one).
 function scratch(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-bots-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

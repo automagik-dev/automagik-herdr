@@ -103,7 +103,7 @@ test("commands: name with optional JSON or key=value arguments", () => {
 
 const run = promisify(execFile);
 async function project(t, file = team()) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-bots-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const main = join(root, "proj");
   mkdirSync(join(main, ".herdr"), { recursive: true });
