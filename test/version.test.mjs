@@ -5,7 +5,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIX, NOT_SHIPPING, VERSION, drift, isPrereleaseSubject, lastReleaseTag, nextVersion, planRelease, setVersion, shipping, tagSubject } from "../scripts/version.mjs";
+import { FIRST, FIX, NOT_SHIPPING, VERSION, drift, isPrereleaseSubject, lastReleaseTag, nextVersion, planRelease, setVersion, shipping, tagSubject } from "../scripts/version.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/version.mjs", import.meta.url));
 
@@ -33,15 +33,17 @@ test("the repository carries one version, and 0.0.0 until the first release", ()
   assert.deepEqual(drift(version, root), []);
 });
 
-test("next: 0.1.0 first, a patch when everything shipping is a fix, else a minor", () => {
-  assert.equal(nextVersion([]), "0.1.0");
-  assert.equal(nextVersion(["v3.4.0", "nightly", "v0.01.0"]), "0.1.0", "other tags are ignored");
-  assert.equal(nextVersion(["v0.1.0"], ["fix(cli): quote paths", "docs: typo", "chore(release): v0.1.0"]), "0.1.1");
-  assert.equal(nextVersion(["v0.1.0", "v0.1.1"], ["fix: a", "fix(mod): b"]), "0.1.2");
-  assert.equal(nextVersion(["v0.1.0"], ["fix: a", "feat(cli): update"]), "0.2.0");
-  assert.equal(nextVersion(["v0.1.0"], ["fix!: drop the old flag"]), "0.2.0", "a breaking fix is not a patch");
-  assert.equal(nextVersion(["v0.1.0"], ["refactor: split"]), "0.2.0");
-  assert.equal(nextVersion(["v0.1.0"], []), "0.2.0");
+test("next: 0.2.0 first (FIRST), a patch when everything shipping is a fix, else a minor", () => {
+  assert.equal(FIRST, "0.2.0");
+  assert.equal(nextVersion([]), "0.2.0");
+  assert.equal(nextVersion(["v3.4.0", "nightly", "v0.01.0"]), "0.2.0", "other tags are ignored");
+  assert.equal(nextVersion(["v0.2.0"], ["fix(cli): quote paths", "docs: typo", "chore(release): v0.2.0"]), "0.2.1");
+  assert.equal(nextVersion(["v0.2.0", "v0.2.1"], ["fix: a", "fix(mod): b"]), "0.2.2");
+  assert.equal(nextVersion(["v0.2.0"], ["fix: a", "feat(cli): update"]), "0.3.0");
+  assert.equal(nextVersion(["v0.2.0"], ["fix!: drop the old flag"]), "0.3.0", "a breaking fix is not a patch");
+  assert.equal(nextVersion(["v0.2.0"], ["refactor: split"]), "0.3.0");
+  assert.equal(nextVersion(["v0.2.0"], []), "0.3.0");
+  assert.equal(nextVersion(["v0.1.0"], ["feat: x"]), "0.2.0", "once a tag exists, the tags decide");
   assert.equal(nextVersion(["v0.2.0", "v0.10.0", "v0.9.3"], ["feat: x"]), "0.11.0", "compared as numbers");
 });
 
@@ -90,26 +92,26 @@ test("the CLI over git: ships, next, set and check as release.yml runs them", ()
     assert.equal(cli(root, "ships"), "yes", "no release yet");
     assert.equal(cli(root, "last"), "");
     assert.equal(cli(root, "plan", "yes"), "cut");
-    assert.equal(cli(root, "next"), "0.1.0");
-    cli(root, "set", "0.1.0");
-    assert.equal(cli(root, "check"), "version: 0.1.0 everywhere");
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "chore(release): v0.1.0");
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.0", "-m", "Automagik Herdr 0.1.0");
+    assert.equal(cli(root, "next"), "0.2.0");
+    cli(root, "set", "0.2.0");
+    assert.equal(cli(root, "check"), "version: 0.2.0 everywhere");
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "chore(release): v0.2.0");
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.2.0", "-m", "Automagik Herdr 0.2.0");
     assert.equal(cli(root, "ships"), "no", "only the release commit since the tag");
     commit(root, "docs: readme");
     commit(root, "chore: tidy");
     assert.equal(cli(root, "ships"), "no");
-    assert.equal(cli(root, "last"), "v0.1.0");
+    assert.equal(cli(root, "last"), "v0.2.0");
     assert.equal(cli(root, "plan", "yes"), "none");
-    assert.equal(cli(root, "plan", "no"), "resume 0.1.0", "tagged, never published");
-    assert.equal(cli(root, "plan", "partial"), "repair 0.1.0", "published without both assets");
+    assert.equal(cli(root, "plan", "no"), "resume 0.2.0", "tagged, never published");
+    assert.equal(cli(root, "plan", "partial"), "repair 0.2.0", "published without both assets");
     assert.throws(() => cli(root, "plan", "maybe"), /Command failed/);
     commit(root, "fix(update): retry");
     assert.equal(cli(root, "ships"), "yes");
-    assert.equal(cli(root, "next"), "0.1.1");
+    assert.equal(cli(root, "next"), "0.2.1");
     assert.equal(cli(root, "plan", "yes"), "cut");
     commit(root, "feat(cli): update --check");
-    assert.equal(cli(root, "next"), "0.2.0");
+    assert.equal(cli(root, "next"), "0.3.0");
     writeFileSync(join(root, "mods", "spaces-agents", "VERSION"), "0.0.9\n");
     assert.throws(() => cli(root, "check"), /Command failed/);
   } finally {

@@ -4,13 +4,14 @@
  * package.json and the pack's VERSION file (mods/spaces-agents/VERSION, which the release
  * tarball carries and update.mjs reads) both hold it. Releases are 0.N.P, tagged v0.N.P by
  * release.yml, numbers compared as numbers. Until the first release the repository carries
- * 0.0.0, which is never released (as Automagik carried 3.0.0); the first release is 0.1.0.
+ * 0.0.0, which is never released (as Automagik carried 3.0.0); the first release is 0.2.0 (FIRST:
+ * the owner's call, 2026-11-01: too much changed since 0.1.0 was planned).
  *
  *   node scripts/version.mjs check          every field carries package.json's version; exit 1 when not
  *   node scripts/version.mjs set <version>  write it everywhere
  *   node scripts/version.mjs current        package.json's version
  *   node scripts/version.mjs next           the next release: a patch on the newest v0.N.P when everything
- *                                           shipping since it is a fix, else 0.(N+1).0; 0.1.0 first
+ *                                           shipping since it is a fix, else 0.(N+1).0; 0.2.0 first
  *   node scripts/version.mjs ships          yes when something since the newest release ships, else no
  *   node scripts/version.mjs last           the newest release tag (v0.N.P), or nothing
  *   node scripts/version.mjs tag-subject <version> <true|false>   the release tag's subject; true: a prerelease
@@ -32,6 +33,8 @@ import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const MAJOR = 0;
+/** The first release, cut when no release tag exists yet. */
+export const FIRST = `${MAJOR}.2.0`;
 /** A release version: 0.N.P, N and P whole numbers of at most four digits, no leading zeros. */
 export const VERSION = /^0\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
 /** A release tag: `v0.N.P`. */
@@ -94,12 +97,12 @@ export function lastReleaseTag(tags) {
 export const shipping = (subjects) => subjects.filter((s) => s.trim() !== "" && !NOT_SHIPPING.test(s));
 
 /**
- * The release after the newest tag in `tags`, given the commit subjects since it: 0.1.0 when there
+ * The release after the newest tag in `tags`, given the commit subjects since it: FIRST (0.2.0) when there
  * is no release yet; a patch when everything shipping is a fix; else the next minor.
  */
 export function nextVersion(tags, subjects = []) {
   const last = lastReleaseTag(tags);
-  if (!last) return `${MAJOR}.1.0`;
+  if (!last) return FIRST;
   const [minor, patch] = parts(last);
   const ships = shipping(subjects);
   if (ships.length > 0 && ships.every((s) => FIX.test(s))) return `${MAJOR}.${minor}.${patch + 1}`;
