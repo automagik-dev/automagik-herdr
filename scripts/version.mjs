@@ -12,9 +12,14 @@
  *   node scripts/version.mjs next           the next release: a patch on the newest v0.N.P when everything
  *                                           shipping since it is a fix, else 0.(N+1).0; 0.1.0 first
  *   node scripts/version.mjs ships          yes when something since the newest release ships, else no
+ *   node scripts/version.mjs last           the newest release tag (v0.N.P), or nothing
+ *   node scripts/version.mjs plan <yes|no>  what release.yml does, given whether the newest tag's
+ *                                           GitHub release exists: `cut`, `resume <version>` or `none`
  *
- * Shipping: every commit but the release's own (`chore(release)`) and those that ship nothing
- * (`ci`, `docs`, `test`), the same rule as Automagik's "anything new" gate. Never edit a version
+ * Shipping: every commit but those that ship nothing: `chore` (the release's own
+ * `chore(release)` among them), `ci`, `docs`, `test`; Automagik's "anything new" gate plus `chore`.
+ * A tag pushed by a run whose publish failed is resumed (packed and published) before anything new
+ * is cut. Never edit a version
  * by hand: release.yml sets it.
  */
 import { execFileSync } from "node:child_process";
@@ -28,8 +33,8 @@ export const MAJOR = 0;
 export const VERSION = /^0\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
 /** A release tag: `v0.N.P`. */
 export const RELEASE_TAG = /^v0\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
-/** Commit subjects that ship nothing: the release's own commit, CI, docs, tests. */
-export const NOT_SHIPPING = /^(chore\(release\)|ci|docs|test)(\([^)]*\))?!?: /;
+/** Commit subjects that ship nothing: chores (the release's own commit too), CI, docs, tests. */
+export const NOT_SHIPPING = /^(chore|ci|docs|test)(\([^)]*\))?!?: /;
 /** A fix that breaks nothing: alone since the last release, it makes a patch. */
 export const FIX = /^fix(\([^)]*\))?: /;
 
@@ -98,6 +103,18 @@ export function nextVersion(tags, subjects = []) {
   return `${MAJOR}.${minor + 1}.0`;
 }
 
+/**
+ * What a release run does: `{ action: "resume", version }` when the newest tag `last` has no GitHub
+ * release (`published` false: its run pushed the tag, then failed to publish), else
+ * `{ action: "cut" }` when there is no release yet or something since `last` ships, else
+ * `{ action: "none" }`. A resume cuts nothing new: the next push or dispatch does.
+ */
+export function planRelease({ last, published, subjects = [] }) {
+  if (last && published === false) return { action: "resume", version: last.slice(1) };
+  if (!last || shipping(subjects).length > 0) return { action: "cut" };
+  return { action: "none" };
+}
+
 const git = (args, root) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
 const tagsOf = (root) => git(["tag", "--list", `v${MAJOR}.*`], root).split("\n").filter(Boolean);
 const subjectsSince = (tag, root) => (tag ? git(["log", "--no-merges", "--format=%s", `${tag}..HEAD`], root).split("\n").filter(Boolean) : []);
@@ -123,8 +140,14 @@ if (invoked) {
   } else if (command === "ships") {
     const last = lastReleaseTag(tagsOf(ROOT));
     console.log(!last || shipping(subjectsSince(last, ROOT)).length > 0 ? "yes" : "no");
+  } else if (command === "last") {
+    console.log(lastReleaseTag(tagsOf(ROOT)) ?? "");
+  } else if (command === "plan" && (arg === "yes" || arg === "no")) {
+    const last = lastReleaseTag(tagsOf(ROOT));
+    const plan = planRelease({ last, published: arg === "yes", subjects: subjectsSince(last, ROOT) });
+    console.log(plan.action === "resume" ? `resume ${plan.version}` : plan.action);
   } else {
-    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships");
+    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no>");
     process.exit(2);
   }
 }

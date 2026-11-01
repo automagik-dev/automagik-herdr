@@ -5,17 +5,22 @@ name: Release
 # repository (0.N.P: scripts/version.mjs), committed as `chore(release): v<version>` and tagged
 # `v<version>` on dev, published as the GitHub release `v<version>` with
 #
-#   automagik-herdr-<version>.tgz   the pack: `tar czf … -C mods spaces-agents`
+#   automagik-herdr-<version>.tgz   the pack at the tag: `git archive … v<version>:mods/spaces-agents`
 #   SHA256SUMS                      its sha256, which `automagik-herdr update` checks
 #
-# and then main moves to the release commit (main holds released commits and nothing else).
+# and then main moves to the release commit (main holds released commits and nothing else; a
+# prerelease leaves it).
 #
 # A push to dev (a merged pull request) cuts one; so does a dispatch:
 #   gh workflow run release.yml --ref dev [--field prerelease=true]
 # The workflow's own push (the version commit) starts no run: GitHub starts none for a push made
-# with the workflow token. A dev that has nothing since the last release but release, CI, docs and
+# with the workflow token. A dev that has nothing since the last release but chore, CI, docs and
 # test commits cuts nothing. Cuts queue one at a time; a merge that lands while one is cutting is
 # released by the next run, with every merge after it that lands before it starts.
+#
+# A run that pushed its tag and then failed to publish leaves a tag with no release: the next run
+# publishes that tag (packed from the tag) instead of cutting a new version, and the run after it
+# cuts what has landed since.
 #
 # Nothing is published to npm. Pushes use the workflow's own token; CI already ran on the dev
 # commit being released, and this job runs the gates again before it tags.
@@ -36,6 +41,8 @@ permissions: {}
 jobs:
   cut:
     name: Cut v<version> on dev
+    # Forks and dispatches from other branches cut nothing.
+    if: github.repository == 'automagik-dev/automagik-herdr' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
@@ -44,8 +51,8 @@ jobs:
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.cut.outputs.version }}
-      sha: ${{ steps.cut.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
       PRERELEASE: ${{ inputs.prerelease }}
@@ -64,16 +71,27 @@ jobs:
         id: new
         run: |
           set -euo pipefail
-          # Commits since the newest v0.N.P other than the release's own and those that ship
-          # nothing (CI, docs, tests): scripts/version.mjs NOT_SHIPPING. No release yet: yes.
-          if [[ "$(node scripts/version.mjs ships)" == "no" ]]; then
-            echo "dev has nothing since the last release: no release"
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
+          # The newest v0.N.P has no GitHub release when its run failed after pushing it: publish
+          # it first. Otherwise cut when something since it ships (scripts/version.mjs
+          # NOT_SHIPPING: chore, ci, docs and test do not), or when there is no release yet.
+          last=$(node scripts/version.mjs last)
+          published=yes
+          if [[ -n "${last}" ]] && ! gh release view "${last}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            published=no
           fi
+          plan=$(node scripts/version.mjs plan "${published}")
+          case "${plan}" in
+            cut) echo "action=cut" >> "$GITHUB_OUTPUT" ;;
+            "resume "*)
+              echo "${last} was tagged but never published: publishing it, cutting nothing new"
+              echo "action=resume" >> "$GITHUB_OUTPUT"
+              echo "version=${plan#resume }" >> "$GITHUB_OUTPUT" ;;
+            none) echo "dev has nothing since ${last}: no release" ;;
+            *) echo "::error::unexpected plan: ${plan}"; exit 1 ;;
+          esac
 
       - name: The gates the release stands on
-        if: steps.new.outputs.release == 'true'
+        if: steps.new.outputs.action == 'cut'
         run: |
           set -euo pipefail
           node --test 'test/*.test.mjs'
@@ -84,7 +102,7 @@ jobs:
 
       - name: Version, commit and tag
         id: cut
-        if: steps.new.outputs.release == 'true'
+        if: steps.new.outputs.action == 'cut'
         run: |
           set -euo pipefail
           version=$(node scripts/version.mjs next)
@@ -107,23 +125,33 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Pack
-        if: steps.cut.outputs.version != ''
+      - name: The release this run publishes
+        id: release
+        if: steps.cut.outputs.version != '' || steps.new.outputs.action == 'resume'
         env:
-          VERSION: ${{ steps.cut.outputs.version }}
+          VERSION: ${{ steps.cut.outputs.version || steps.new.outputs.version }}
         run: |
           set -euo pipefail
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse "v${VERSION}^{commit}")" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        if: steps.release.outputs.version != ''
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # From the tag, not the working tree: what was tagged is what ships.
           mkdir -p release
-          tar czf "release/automagik-herdr-${VERSION}.tgz" -C mods spaces-agents
+          git archive --format=tar.gz --prefix=spaces-agents/ -o "release/automagik-herdr-${VERSION}.tgz" "v${VERSION}:mods/spaces-agents"
           (cd release && sha256sum -- * > SHA256SUMS)
           cat release/SHA256SUMS
 
       - name: Publish the release
-        if: steps.cut.outputs.version != ''
+        if: steps.release.outputs.version != ''
         env:
-          VERSION: ${{ steps.cut.outputs.version }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           flags=(--latest)
@@ -135,9 +163,9 @@ jobs:
             --generate-notes
 
       - name: main moves to the release
-        if: steps.cut.outputs.version != ''
+        if: steps.release.outputs.version != '' && env.PRERELEASE != 'true'
         env:
-          SHA: ${{ steps.cut.outputs.sha }}
+          SHA: ${{ steps.release.outputs.sha }}
         run: |
           set -euo pipefail
           # Fast-forward only: main holds released commits and nothing else. The first release
