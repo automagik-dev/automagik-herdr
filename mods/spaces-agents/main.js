@@ -101,6 +101,8 @@ const FALLBACK = 60000;
 // Character pictures (characters.js), under the app home outside mods/, by their path
 // relative to the app home, as image() takes it.
 const PETS = "spaces-agents-pets";
+// Bot trees that take the keyboard (one focus handle each).
+const TREE_KEYS = 8;
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
@@ -183,7 +185,10 @@ export default class Spaces extends View {
     this.open = new Map();
     this.cursor = null;
     this.hoverRow = null;
-    this.treeFocus = cx.focus_handle();
+    // One keyboard handle per drawn tree (handles are made here, never while drawing), so
+    // only a project's bot rows take the keyboard: space rows and the rest of the list keep
+    // the clone's behaviour. Trees past the last handle draw without keyboard.
+    this.treeFocus = Array.from({ length: TREE_KEYS }, () => cx.focus_handle());
     this.trees = [];
     this.botOf = new Map(); // terminal address -> bot id
     this.pets = new Set();
@@ -364,7 +369,7 @@ export default class Spaces extends View {
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
-    this.navRows = []; // the bot rows in drawn order, for the keyboard
+    this.navRows = this.trees.map(() => []); // per tree, its rows in drawn order, for the keyboard
   }
 
   // On the 250 ms timer: one redraw when the next idle bot reaches its asleep mark, and the
@@ -372,7 +377,7 @@ export default class Spaces extends View {
   botTick(cx) {
     if (this.wakeAt !== null && Date.now() >= this.wakeAt) { this.wakeAt = null; cx.notify(); }
     // Tab moving the keyboard onto or off the list: redraw for the arrow it shows.
-    const has = this.treeFocus.is_focused();
+    const has = this.treeFocus.some((h) => h.is_focused());
     if (has !== this.hadFocus) { this.hadFocus = has; cx.notify(); }
     if (this.petsWanted.size && !this.petsBusy) this.writePets(cx);
   }
@@ -439,19 +444,19 @@ export default class Spaces extends View {
   arrow(r, t) {
     const slot = div().id(`fold-${r.id}`).w(10).flex_none().flex().items_center().justify_center();
     if (!r.foldable) return slot;
-    const shown = this.hoverRow === r.id || (this.cursor === r.id && this.treeFocus.is_focused());
+    const shown = this.hoverRow === r.id || this.marked(r);
     return slot.cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.toggle(r.id, r.open, cx); })
       .child(svg(`mods/workspace-chrome/chevron-${r.open ? "down" : "right"}.svg`).size(10).text_color(t.dim).opacity(shown ? 1 : 0));
   }
 
   // The keyboard's row: its border in the accent while the list has the keyboard.
   marked(r) {
-    return this.cursor === r.id && this.treeFocus.is_focused();
+    return this.cursor === r.id && this.treeFocus.some((h) => h.is_focused());
   }
 
   // A row's shared behaviour: hover (for its arrow), the keyboard's mark, click and right-click.
   rowEvents(el, r, t, onClick, onMenu) {
-    this.navRows.push(r);
+    this.navRows[this.drawing]?.push(r);
     return el.id(`row-${r.id}`)
       .on_hover((over, cx) => {
         const next = over ? r.id : this.hoverRow === r.id ? null : this.hoverRow;
@@ -461,15 +466,20 @@ export default class Spaces extends View {
       .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
   }
 
-  // One tree's rows (visibleRows decides which show).
+  // One tree's rows (visibleRows decides which show), in one block that takes the keyboard.
   botBlock(tree, t, dark) {
-    return visibleRows(tree, this.open).map((r) => {
+    const slot = this.trees.indexOf(tree);
+    this.drawing = slot;
+    const rows = visibleRows(tree, this.open).map((r) => {
       if (r.kind === "category") return this.categoryRow(r, t);
       if (r.kind === "helper") return this.helperRow(r, t);
       if (r.kind === "notice") return h_flex().id(`row-${r.id}`).px(8).py(4).gap(6).text_size(11).text_color(t.dim)
         .child(div().flex_1().min_w(0).truncate().child(`${base(tree.key)}: ${r.text}`));
       return this.botRow(r, tree, t, dark);
     });
+    const block = v_flex().id(`bots-${slot}`).children(rows);
+    const h = this.treeFocus[slot];
+    return [h ? block.track_focus(h).tab_index(0).on_key_down((e, cx) => this.botKey(slot, e, cx)) : block];
   }
 
   categoryRow(r, t) {
@@ -560,8 +570,8 @@ export default class Spaces extends View {
 
   // The keyboard on the bot rows (Tab reaches the list): up and down move, right opens,
   // left folds, Enter or Space toggles a fold or focuses a live bot's pane.
-  botKey(e, cx) {
-    const rows = this.navRows ?? [];
+  botKey(slot, e, cx) {
+    const rows = this.navRows?.[slot] ?? [];
     if (!rows.length) return;
     let i = rows.findIndex((r) => r.id === this.cursor);
     const at = rows[i];
@@ -1009,8 +1019,6 @@ export default class Spaces extends View {
         .child(div().id("space-new").p(4).rounded(5).hover(s => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child("+")))
       // An id keeps the scroll position across renders (hover, live data).
       .child(v_flex().id("space-list").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
-        // The bot rows' keyboard (A7): Tab reaches the list; see botKey.
-        .track_focus(this.treeFocus).tab_index(0).on_key_down((e, cx) => this.botKey(e, cx))
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(list))
       // A10: "New bot" at the foot of the list (mockup v9).
