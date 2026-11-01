@@ -6,7 +6,17 @@ import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 
-export const state = { spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [] };
+export const state = {
+  spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [],
+  // Start and Attach: terminals() rows, hc's answers by command (hcAnswer), hc calls made, run() calls.
+  terminals: [], focused: null, agents: [], hcCalls: [], runs: [], hcAnswer: () => ({ code: 0, stdout: "{}", stderr: "" }),
+};
+
+export const terminals = () => state.terminals;
+export const focused = () => state.focused;
+export const knownAgents = async () => state.agents;
+export function run(name, args) { state.runs.push([name, args]); return null; }
+export async function hc(args) { state.hcCalls.push(args); return state.hcAnswer(args); }
 
 export const spaces = () => state.spaces;
 export const home = () => homedir();
