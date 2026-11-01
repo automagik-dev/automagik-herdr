@@ -63,7 +63,9 @@ const isWave = (x) => Number.isInteger(x) && x > 0;
  * at all (not JSON, no `bots` array, another version). Inside it, an entry with no usable
  * id or name, a repeated id or an unknown kind is left out; anything else is kept and
  * named in `warnings` (a long instructions text, a missing agent, an unknown look name,
- * a second main bot: the first one counts).
+ * a second main bot: the first one counts). `raw` is the file exactly as read, a separate
+ * copy: edit that one to write the file back (bots.js writeBots), so entries left out of
+ * `file` survive.
  */
 export function parseBots(text) {
   const raw = JSON.parse(text);
@@ -119,7 +121,7 @@ export function parseBots(text) {
     const { warning } = effectiveLead(file, b.id);
     if (warning) warnings.push(`${b.id}: ${warning}`);
   }
-  return { file, warnings };
+  return { file, warnings, raw: JSON.parse(text) };
 }
 
 /** The project's main bot: the first `kind: "main"` entry, or null. */
@@ -211,13 +213,12 @@ const baseOf = (p) => p.slice(p.lastIndexOf("/") + 1);
  * or where git is missing or fails: the nearest folder at or above it holding
  * `.herdr/bots.json`, else the folder itself.
  * `git(args, cwd)` resolves with git's stdout, or null when git failed or is missing;
- * `exists(path)` with whether that file is there.
+ * `exists(path)` with whether that file is there. Either rejecting means the folder's
+ * machine can't be asked now: projectKeyOf rejects too, never guessing "not in git".
  */
 export async function projectKeyOf(folder, git, exists) {
   const start = trimSlash(folder);
-  const ask = async (args) => {
-    try { const out = await git(args, start); return out?.trim() || null; } catch { return null; }
-  };
+  const ask = async (args) => (await git(args, start))?.trim() || null;
   const common = await ask(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (common) {
     const dir = trimSlash(common);
@@ -226,9 +227,7 @@ export async function projectKeyOf(folder, git, exists) {
     if (top) return trimSlash(top);
   }
   for (let dir = start; ; dir = parentOf(dir)) {
-    let found = false;
-    try { found = await exists(`${dir === "/" ? "" : dir}/${BOTS_PATH}`); } catch {}
-    if (found) return dir;
+    if (await exists(`${dir === "/" ? "" : dir}/${BOTS_PATH}`)) return dir;
     if (dir === "/" || !dir.includes("/")) break;
   }
   return start;

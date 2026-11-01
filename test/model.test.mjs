@@ -16,7 +16,11 @@ const git = async (args, cwd) => {
 };
 const exists = async (path) => existsSync(path);
 const noGit = async () => null;
-const brokenGit = async () => { throw new Error("git: command not found"); };
+// No git installed: the adapter answers null, as bots.js does for a program that can't start.
+const missingGit = async (args, cwd) => {
+  try { return (await run("no-such-git-here", args, { cwd })).stdout; } catch { return null; }
+};
+const unreachable = async () => { throw new Error("machine unreachable"); };
 
 // A scratch repository with one commit, a worktree and a subfolder, under $TMPDIR
 // (realpath: on macOS /var/folders is /private/var/folders, and git answers with the real one).
@@ -81,10 +85,15 @@ test("project key: git missing or failing reads as outside git", async (t) => {
   const sub = join(main, "src", "deep");
   // Inside a real repository, but git can't answer: the folder rule applies.
   assert.equal(await projectKeyOf(sub, noGit, exists), sub);
-  assert.equal(await projectKeyOf(sub, brokenGit, exists), sub);
+  assert.equal(await projectKeyOf(sub, missingGit, exists), sub);
   mkdirSync(join(main, ".herdr"));
   writeFileSync(join(main, ".herdr", "bots.json"), "{}");
-  assert.equal(await projectKeyOf(sub, brokenGit, exists), main);
+  assert.equal(await projectKeyOf(sub, missingGit, exists), main);
+});
+
+test("project key: a machine that can't be asked rejects, never guessing outside git", async () => {
+  await assert.rejects(projectKeyOf("/srv/app-wt", unreachable, async () => false), /unreachable/);
+  await assert.rejects(projectKeyOf("/srv/app-wt", noGit, unreachable), /unreachable/);
 });
 
 test("project key: injected git and exists, as on a remote machine", async () => {
@@ -126,6 +135,15 @@ test("schema: a valid file parses with no warnings and checks clean", () => {
   assert.equal(file.categories[0].sub, "build it");
   assert.deepEqual(file.bots[4].planned, { wave: 3, note: "waits for auth v2" });
   assert.deepEqual(checkBots(file), []);
+});
+
+test("schema: raw is the file as read, entries left out of file included, and a separate copy", () => {
+  const source = sample((f) => { f.bots.push({ name: "nobody", kind: "member" }); f.categories.push({ title: "no id" }); return f; });
+  const { file, raw } = parseBots(text(source));
+  assert.equal(file.bots.length, 5);
+  assert.deepEqual(raw, JSON.parse(text(source)));
+  raw.bots[0].look.colour = "red";
+  assert.equal(file.bots[0].look.colour, "blue");
 });
 
 test("schema: not a version-1 file throws", () => {

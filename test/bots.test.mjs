@@ -1,6 +1,7 @@
-// bots.js over a stand-in `herdr` module (herdr-stub.mjs) and real scratch repositories:
-// discovery keys worktree spaces to one project, writes land in the main checkout only,
-// and a remembered project is forgotten on a null read, never on a rejected one.
+// bots.js over stand-ins for Herdr's `herdr` and `fs/promises` modules (herdr-stub.mjs,
+// fs-stub.mjs) and real scratch repositories: discovery keys worktree spaces to one project,
+// writes land in the main checkout only, another machine is asked with `on`, and a
+// remembered project is forgotten on a null read, never on a rejected one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
@@ -10,21 +11,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-const stubUrl = new URL("./herdr-stub.mjs", import.meta.url).href;
+const stubs = {
+  herdr: new URL("./herdr-stub.mjs", import.meta.url).href,
+  "fs/promises": new URL("./fs-stub.mjs", import.meta.url).href,
+};
+const fromPack = (context) => context.parentURL?.includes("/mods/spaces-agents/");
 registerHooks({
-  resolve: (specifier, context, next) => (specifier === "herdr" ? { url: stubUrl, shortCircuit: true } : next(specifier, context)),
+  resolve: (specifier, context, next) =>
+    (stubs[specifier] && (specifier === "herdr" || fromPack(context)) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
 });
-const { state } = await import(stubUrl);
-const { discoverProjects, writeBots, rememberProject } = await import("../mods/spaces-agents/bots.js");
+const { state } = await import(stubs.herdr);
+const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/spaces-agents/bots.js");
 
 const run = promisify(execFile);
 const ID = { main: "b-aaaaaaaaaa", dev: "b-cccccccccc" };
 const bot = (id, kind) => ({ id, name: id.slice(2, 5), kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude" });
 const sample = () => ({ version: 1, categories: [], bots: [bot(ID.main, "main"), bot(ID.dev, "member")] });
 
-async function repo(t) {
+function scratch(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-bots-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+async function repo(t) {
+  const root = scratch(t);
   const main = join(root, "proj");
   mkdirSync(main);
   await run("git", ["init", "-q", main]);
@@ -33,37 +43,35 @@ async function repo(t) {
   await run("git", ["worktree", "add", "-q", "-b", "wt", tree], { cwd: main });
   return { root, main, tree };
 }
+const put = (dir, file) => { mkdirSync(join(dir, ".herdr"), { recursive: true }); writeFileSync(join(dir, ".herdr", "bots.json"), typeof file === "string" ? file : JSON.stringify(file)); };
 function reset() {
-  state.spaces = [];
-  state.shared = new Map();
-  state.setSharedCalls = 0;
-  state.offline = new Set();
+  Object.assign(state, { spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [] });
 }
 
 test("writeBots from a worktree's key writes the main checkout only, and remembers it", async (t) => {
   reset();
   const { main, tree } = await repo(t);
-  const { keyOf } = await import("../mods/spaces-agents/bots.js");
   const key = await keyOf(tree);
   assert.equal(key, main);
   await writeBots(key, sample(), null);
-  assert.ok(existsSync(join(main, ".herdr", "bots.json")));
   assert.equal(existsSync(join(tree, ".herdr")), false);
-  assert.deepEqual(JSON.parse(readFileSync(join(main, ".herdr", "bots.json"), "utf8")), sample());
+  const written = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
+  assert.deepEqual(JSON.parse(written), sample());
   assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: null }]);
-  // Writing again with a stale snapshot rejects instead of losing an edit.
+  // The snapshot is required, and a stale one rejects instead of losing an edit.
+  await assert.rejects(writeBots(key, sample()), /text the edit started from/);
   await assert.rejects(writeBots(key, sample(), null), /stale/);
+  await writeBots(key, sample(), written);
   // A file checkBots faults is refused before any write.
   const two = sample();
   two.bots[1].kind = "main";
-  await assert.rejects(writeBots(key, two), /exactly one/);
+  await assert.rejects(writeBots(key, two, written), /exactly one/);
 });
 
 test("discoverProjects: a project open as two spaces (checkout and worktree) comes back once", async (t) => {
   reset();
   const { main, tree } = await repo(t);
-  mkdirSync(join(main, ".herdr"));
-  writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(sample()));
+  put(main, sample());
   state.spaces = [{ id: "s1", folder: main, machine: null }, { id: "s2", folder: tree, machine: null }];
   const found = await discoverProjects();
   assert.equal(found.length, 1);
@@ -73,11 +81,70 @@ test("discoverProjects: a project open as two spaces (checkout and worktree) com
   assert.deepEqual(found[0].warnings, []);
 });
 
+test("discoverProjects: outside git, a local space finds the bots.json above it", async (t) => {
+  reset();
+  const root = scratch(t);
+  mkdirSync(join(root, "a", "b"), { recursive: true });
+  put(join(root, "a"), sample());
+  state.spaces = [{ id: "s1", folder: join(root, "a", "b"), machine: null }];
+  const found = await discoverProjects();
+  assert.deepEqual(found.map((p) => p.key), [join(root, "a")]);
+});
+
+test("discoverProjects: an open space on another machine is asked there, with on", async (t) => {
+  reset();
+  const root = scratch(t);
+  mkdirSync(join(root, "srv", "app"), { recursive: true });
+  put(join(root, "srv"), sample());
+  state.spaces = [{ id: "r1", folder: join(root, "srv", "app"), machine: "far" }];
+  const found = await discoverProjects();
+  assert.deepEqual(found.map((p) => [p.key, p.machine]), [[join(root, "srv"), "far"]]);
+  const git = state.calls.filter((c) => c.kind === "exec" && c.command === "git");
+  const reads = state.calls.filter((c) => c.kind === "read");
+  assert.ok(git.length >= 1);
+  assert.ok(reads.some((c) => c.path === join(root, "srv", ".herdr", "bots.json")));
+  for (const c of [...git, ...reads]) assert.equal(c.on, "far", JSON.stringify(c));
+});
+
+test("discoverProjects: a machine away keeps its known key, and is skipped when never keyed", async (t) => {
+  reset();
+  const { main, tree } = await repo(t);
+  put(main, sample());
+  put(tree, { ...sample(), bots: [] }); // a worktree's committed copy: never read
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  state.offline.add("away");
+  state.spaces = [{ id: "r1", folder: tree, machine: "away" }];
+  assert.deepEqual(await discoverProjects(), []);
+  state.offline.clear();
+  const seen = await discoverProjects();
+  assert.deepEqual(seen.map((p) => [p.key, p.file.bots.length]), [[main, 2]]);
+  // Away again, with the cached key a minute old: git rejects, the key holds (no flip to
+  // the worktree folder, whose bots.json is never read), and the rejected read keeps the
+  // last good definitions.
+  t.mock.timers.tick(61_000);
+  state.offline.add("away");
+  state.calls = [];
+  const later = await discoverProjects();
+  assert.deepEqual(later.map((p) => [p.key, p.file.bots.length]), [[main, 2]]);
+  assert.ok(state.calls.some((c) => c.command === "git"), "the key was asked again");
+  assert.ok(!state.calls.some((c) => c.kind === "read" && c.path.startsWith(tree)));
+});
+
+test("discoverProjects: a file that doesn't parse on its first read shows with the reason", async (t) => {
+  reset();
+  const { main } = await repo(t);
+  put(main, "{ not json");
+  state.spaces = [{ id: "s1", folder: main, machine: null }];
+  const [p] = await discoverProjects();
+  assert.deepEqual(p.file.bots, []);
+  assert.equal(p.warnings.length, 1);
+  assert.match(p.warnings[0], /bots\.json/);
+});
+
 test("discoverProjects: a remembered project with no space is found; forgotten only on a null read", async (t) => {
   reset();
   const { main } = await repo(t);
-  mkdirSync(join(main, ".herdr"));
-  writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(sample()));
+  put(main, sample());
   rememberProject(main, null);
   rememberProject(main, null);
   assert.equal(state.setSharedCalls, 1);
@@ -85,12 +152,9 @@ test("discoverProjects: a remembered project with no space is found; forgotten o
   assert.equal((await discoverProjects()).length, 2);
   // "far" unreachable: its read rejects, it stays remembered and keeps its last good read.
   state.offline.add("far");
-  const away = await discoverProjects();
-  assert.equal(away.length, 2);
+  assert.equal((await discoverProjects()).length, 2);
   assert.equal(state.shared.get("spaces-agents.projects").length, 2);
   // The file gone (read returns null): forgotten here, and still remembered for "far".
-  state.offline.clear();
-  state.offline.add("far");
   unlinkSync(join(main, ".herdr", "bots.json"));
   const gone = await discoverProjects();
   assert.deepEqual(gone.map((p) => p.machine), ["far"]);
