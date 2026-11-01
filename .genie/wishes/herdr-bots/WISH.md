@@ -376,7 +376,7 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Fix loop 1:** `rm` deletes only an empty list, else `checkBots`; launch.js and CLI pass a listed pin via `modelArgs`; placement from a live local terminal's `herdr.space`/`herdr.tab`, else a stderr warning; running bot shows detected else default; failed `hc` is an error; global cap of 8 processes; live rule, report tail and hook install shared (`launchArgs.js`, `briefingText.mjs`, `briefing.mjs` `gatherBriefing`); `detach` by bare id.
 - **Round 2: criteria SHIP, quality PASS.** LOW left: the 60 s twin-start guard misses a pane still in its `sh -c` wrapper; CLI start dropped the always-passing folder check; `--tab` without `--space` ignored; placement can pick another space whose terminal works in the project; one unreachable remote holder marks a bot "hc unavailable".
 - **Merged into `dev`:** a4ff066; on merged `dev` 126/126, `node --check` clean.
-- **Form mockup (A13):** https://claude.ai/artifact/BjhApoVpvzHzXZER2uJ6Ch, awaiting the owner's approval.
+- **Form mockup (A13): approved by the owner 2026-11-01** ("approved, build the form like the mockup"): https://claude.ai/artifact/BjhApoVpvzHzXZER2uJ6Ch, version 2; source kept at `mockup/create-form.dc.html` (its `/_blob/` image urls resolve only inside the artifact; characters come from `characters.js`).
 
 ---
 
