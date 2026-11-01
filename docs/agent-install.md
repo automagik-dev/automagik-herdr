@@ -1,9 +1,11 @@
 Install Automagik Herdr on this Mac and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
-   If it stops to ask something (install Node or Herdr, switch the layout), ask me; if I say
-   yes, run it again with: ... | bash -s -- --yes
+   If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
+   with: ... | bash -s -- --yes
    If it stops for anything else (not a Mac), tell me what it printed and stop.
+   If the output has a layout.switch command, ask me whether to switch, and run that exact
+   command only if I say yes.
 2. Check the install. Both must succeed:
    automagik-herdr --version
    herdr-app check ~/.config/herdr-app/mods/spaces-agents

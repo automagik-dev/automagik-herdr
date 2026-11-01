@@ -17,10 +17,11 @@ The installer checks Node and Herdr, and offers to install Herdr with Homebrew i
 missing (it asks first). It installs the latest release's pack, checksum verified, into
 `~/.config/herdr-app/mods/spaces-agents`, keeps a copy of any pack already there, and links
 the `automagik-herdr` command into `~/.local/bin`. It adds the `automagik` layout (Herdr's main
-layout with the Automagik sidebar) when you have none, and asks before switching Herdr to it;
-the sidebar shows only in that layout. Running
-it again is safe, and `--uninstall` puts back the pack that was there before the first install
-and removes the layout if you haven't changed it. Add options after `bash -s --`: `--yes`
+layout with the Automagik sidebar) when you have none. The sidebar shows only in that layout,
+so while Herdr shows another one the installer asks before switching (or prints the
+`herdr-app do layout.switch` command when it can't ask). Running it again is safe, and
+`--uninstall` puts back the pack that was there before the first install and removes the
+layout if the installer added it and you haven't changed it. Add options after `bash -s --`: `--yes`
 answers every question, `--version 0.1.0` installs that release (v0.1.0 or later),
 `--uninstall` undoes the install.
 
@@ -32,9 +33,11 @@ Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/ag
 Install Automagik Herdr on this Mac and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
-   If it stops to ask something (install Node or Herdr, switch the layout), ask me; if I say
-   yes, run it again with: ... | bash -s -- --yes
+   If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
+   with: ... | bash -s -- --yes
    If it stops for anything else (not a Mac), tell me what it printed and stop.
+   If the output has a layout.switch command, ask me whether to switch, and run that exact
+   command only if I say yes.
 2. Check the install. Both must succeed:
    automagik-herdr --version
    herdr-app check ~/.config/herdr-app/mods/spaces-agents
