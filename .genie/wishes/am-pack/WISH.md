@@ -58,8 +58,8 @@ This wish turns that branch into the product:
 | D2 | **No split.** The bot tree stays under its project's space (herdr-bots A8, C2, C7). | Owner ruling 2. Two mods cannot interleave rows in one list. |
 | D3 | **One download.** A release is `automagik-herdr-pack-<v>.tgz` (every mod folder plus `layouts/automagik.json`) and `SHA256SUMS`. Install, update and rollback treat the pack as one unit. | Owner ruling 4. |
 | D4 | **Eight mods:** `am-sidebar` (spaces-agents + space-icon), `am-footer` (sidebar-chrome), `am-markdown` (md-menu + markdown-browser), `am-tabs` (auto-tabs), `am-new-menu` (new-menu-tui), `am-mods` (mod-manager), `am-quota` (new code against CLIProxyAPI), `am-automations` (automations). | Owner rulings 5, 8 and 10. `am-automations` confirmed (t187 for the owner, 2026-11-01). |
-| D5 | **New bot leaves the sidebar body; the footer gets one Bots tab.** The Bots tab (a robot glyph) is placed first in the rail: Bots, Mods, Automations, Quota, Pocket Link. Clicking it opens a small popup owned by sidebar-chrome, which closes on Esc, with "New bot" and "Bot settings". Each entry runs `openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, props: { form: "create" } })` or `props: { form: "pick" }` respectively. The tab works with no bot defined. The sidebar's wide "+ New bot" row (`spaces-agents/main.js:1073-1078`) is removed. The bot management suite is the sidebar's existing dialogs, and no bot code is copied. | Owner via t187, 2026-11-01: the action must not appear twice, and the menu offers both New bot and the bot settings pane. A mod cannot call another mod's `nextCommand` handler; `spaces-agents` `init` reads `props()` first and returns a `BotForm` (`main.js:119-124`). |
-| D6 | **Every mod is Apache-2.0.** The three MIT forks, automations (DnzzL), markdown-browser (ohneda) and mod-manager (jacksonpires), ship under Apache-2.0 as derived works, with the upstream MIT copyright and permission notice verbatim in `LICENSE-upstream` and NOTICE. | Owner ruling 7. MIT permits this; the notice is its one condition. |
+| D5 | **New bot leaves the sidebar body; the footer gets one Bots tab.** The Bots tab (a robot glyph) is placed first in the rail: Bots, Mods, Automations, Quota, Pocket Link. Clicking it opens a small popup owned by sidebar-chrome, which closes on Esc, with "New bot" and "Bot settings". Each entry runs `openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, props: { form: "create" } })` or `props: { form: "pick" }` respectively. The tab works with no bot defined. The sidebar's wide "+ New bot" row (`spaces-agents/main.js:1073-1078`) is removed. The bot management suite is the sidebar's existing dialogs, and no bot code is copied. | Owner via t187, 2026-11-01: the action must not appear twice, and the menu offers both New bot and the bot settings pane. `run("<mod>.<cmd>")` reaches only a shown copy of that mod (Herdr AGENTS.md:738); `openOverlay` starts its own copy, so the tab works even when no layout shows the sidebar, and `spaces-agents` `init` reads `props()` first and returns a `BotForm` (`main.js:119-122`; `create.js:44-58` pick, `:100-116` create). Sizes match `openBotForm`: create `FORM_SIZE` 1000×840 (`create.js:25`), pick 560 × 0.85 window height (`main.js:30`). |
+| D6 | **Every mod is Apache-2.0.** The three MIT forks, automations (DnzzL), markdown-browser (ohneda) and mod-manager (repository jacksonpires/herdr-app-mod-manager; copyright line "Copyright (c) 2026 speardragon", kept verbatim), ship under Apache-2.0 as derived works, with the upstream MIT copyright and permission notice verbatim in `LICENSE-upstream` and NOTICE. | Owner ruling 7. MIT permits this; the notice is its one condition. |
 | D7 | **am-quota is clean-room.** No line comes from 0xRowdy/herdr-cliproxy, which has no licence. | Owner ruling on cliproxy, and copyright law. |
 | D8 | **One layout, `automagik`.** The pack's root `layouts/automagik.json` replaces v0.2.0's bots-only `mods/spaces-agents/layouts/automagik.json`. The installer replaces an installed copy only when it is byte-identical to the v0.2.0 file; otherwise it keeps it and prints a note. Every mod keeps `place: "none"`. | Owner ruling 9 and herdr-bots A18. |
 | D9 | **Integration branch.** Groups merge into `wish/am-pack`; `dev` receives one merge, which cuts one release, **v0.3.0**. | Every shipping merge into `dev` cuts a release (herdr-bots A14). Landing the groups one by one would publish half-built packs. |
@@ -118,7 +118,7 @@ This wish turns that branch into the product:
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
 | 3 | engineer | High: release machinery and the updater (trust boundary), full gate | inherit | One download, one installer, the bridge asset |
-| 4 | engineer | Low: two tabs and one removed row | inherit | The footer owns New bot |
+| 4 | engineer | Low: one tab, one popup, one removed row; after Group 2 | inherit | The footer owns New bot |
 | 5a | engineer (t187) | Medium: merges two mods' renderers | inherit | am-markdown from md-menu + markdown-browser |
 
 ### Wave 3 (sequential)
@@ -157,7 +157,8 @@ This wish turns that branch into the product:
 3. Apache-2.0 `LICENSE` in every mod. The three MIT forks (automations, markdown-browser, mod-manager) each keep a separate `LICENSE-upstream` holding the MIT text verbatim; markdown-browser's and mod-manager's current `LICENSE` (the MIT text) moves to `LICENSE-upstream`. NOTICE credits each upstream.
 4. `catalog/index.json` regenerated with `scripts/catalog.mjs`: pack name `automagik-herdr`, branch `dev`, no `headCommit` pinned to a local commit.
 5. Pocket Link absent: no folder, no catalog entry other than an external link to automagik-pocket. The installer refuses foreign folders (pack commits c3606e0, e5b4dd9).
-6. Land as two PRs into `wish/am-pack`, each within the band: (a) sidebar-chrome, auto-tabs, new-menu-tui, keys.json; (b) md-menu, markdown-browser, space-icon, automations, mod-manager, catalog, scripts/catalog.mjs, NOTICE, RECIPE.md, README.
+6. Land as four PRs into `wish/am-pack`, each within the band (count files and insertions in each PR body): (a) sidebar-chrome, auto-tabs, new-menu-tui, keys.json, `layouts/automagik.json` (without the `am-quota-panel` block); (b) md-menu, markdown-browser, space-icon; (c) automations, mod-manager; (d) catalog/*, scripts/catalog.mjs, NOTICE, RECIPE.md, README sections.
+7. `scripts/catalog.mjs`: an unknown flag prints usage and exits 2 without writing; `--check` compares only fields derived from content (mod names, blurbs, licences, recipe presence, one owner per name), never `headCommit`, `pushedAt` or the index's age.
 
 **Interfaces:**
 - Consumes: `dev` at v0.2.0 plus herdr-bots G5: `mods/spaces-agents/*`, `install.sh`, `update.mjs`, `release.yml`, `scripts/version.mjs`, `mods/spaces-agents/layouts/automagik.json`.
@@ -183,7 +184,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 **Goal:** A footer Quota icon opens a panel that shows each CLIProxyAPI account's usage windows and switches the local client to the account the policy picks, without ever exposing a token.
 
 **Deliverables:**
-1. `mods/am-quota/` (current folder name; Group 7 keeps it):
+1. Input: pack commit c727dab's `mods/am-quota` (written by t187 against the CLIProxyAPI), checked line by line against 0xRowdy/herdr-cliproxy; any shared line is rewritten. Docs may name "CLIProxyAPI" (the API) but carry no cliproxy-mod text. `mods/am-quota/` (current folder name; Group 7 keeps it):
    - `policy.js`: the pure `choose(accounts, {provider, now, activeId, marginMinutes?, holdMinutes?})` → `{action: "keep"|"switch"|"none", to, reason, facts}`;
    - the panel;
    - the switch.
@@ -209,7 +210,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 
 **Validation:**
 ```bash
-node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node --check "$f" || exit 1; done && herdr-app check "$(mktemp -d)/am-quota" 2>/dev/null; cp -R mods/am-quota "${TMPDIR:-/tmp}/amq-check" && herdr-app check "${TMPDIR:-/tmp}/amq-check"
+node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node --check "$f" || exit 1; done && d=$(mktemp -d) && cp -R mods/am-quota "$d/am-quota" && herdr-app check "$d/am-quota"
 ```
 
 **depends-on:** Group 1
@@ -230,7 +231,8 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
    - the pack's folder list comes from the tarball's top level, checked against a `PACK_MODS` list shipped in the pack;
    - every folder is extracted, checked, swapped and its old copy moved into one `<app home>/automagik-herdr/.prev/` set;
    - `.state/`, dotfiles and `node_modules` are kept per D10;
-   - a folder not in `PACK_MODS` is refused.
+   - a folder not in `PACK_MODS` is refused. `PACK_MODS` ships inside the tarball it checks, so it guards against packaging bugs, not tampering (the checksum covers integrity); `release.yml` asserts the archive's top level equals `PACK_MODS`.
+   - One rollback story: install and update both keep the replaced copies in `<app home>/automagik-herdr/.prev/` (one set, the latest); `install.sh` uses the same place, no timestamped backups.
 3. `install.sh` downloads the pack tarball and absorbs `scripts/install.mjs`:
    - free-key merge of `keys.json` (a key in use stays the person's);
    - `<app home>/data/mod-manager/catalog.json`;
@@ -274,14 +276,14 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 **Deliverables:**
 1. `mods/sidebar-chrome/main.js` and `mods/sidebar-chrome/bot.svg`: the Bots tab, first in the rail. It opens a popup (sidebar-chrome props `{ botsMenu: true }`) listing "New bot" (`openOverlay` of `spaces-agents` with `props.form "create"`) and "Bot settings" (`props.form "pick"`). The tab shows only while `mods/spaces-agents/mod.json` exists, and it works for a project with no bots.
 2. `mods/spaces-agents/main.js`: the wide "+ New bot" row (`:1073-1078`) is removed. Bot-row menus and keys are unchanged. If `pick` with no bots defined shows an empty list, it shows one "New bot" line instead.
-3. README and the mod's RECIPE: New bot and Bot settings live in the footer.
+3. The mod's RECIPE: New bot and Bot settings live in the footer. README lines for this go to Group 3, which owns README in wave 2.
 
 **Interfaces:**
 - Consumes: `openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, props: { form: "create" | "pick" } })`, the forms `spaces-agents` `init` already returns.
 - Produces: footer tab id `bots`.
 
 **Acceptance Criteria:**
-- [ ] A `herdr-app shot` cropped to the footer shows the Bots tab first. On a scratch home, its popup's two entries open the Create form and the bot picker, including with no bots defined. The sidebar shows no "+ New bot" row.
+- [ ] A `herdr-app shot` cropped to the footer (the owner's window, read-only, after a scoped install of sidebar-chrome that moves the old copy aside) shows the Bots tab first. On a scratch home, its popup's two entries open the Create form and the bot picker, including with no bots defined. The sidebar shows no "+ New bot" row.
 - [ ] `herdr-app check` passes for both mods.
 
 **Validation:**
@@ -289,7 +291,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 node --test 'test/*.test.mjs' && node --check mods/sidebar-chrome/main.js && node --check mods/spaces-agents/main.js
 ```
 
-**depends-on:** Group 1
+**depends-on:** Group 1, Group 2 (both edit `mods/sidebar-chrome/main.js`; Group 4 puts Bots ahead of Group 2's Quota tab)
 
 ---
 
