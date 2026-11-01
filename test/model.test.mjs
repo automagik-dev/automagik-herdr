@@ -388,14 +388,21 @@ test("applyBotEdit sets a rank, clears it when named empty, and keeps it when th
   assert.equal("rank" in applyBotEdit(set, { ...bot(ID.main, "main"), rank: "" }).bots[0], false);
 });
 
-test("category ids are lowercase slugs: parseBots warns, checkBots refuses, newCategoryId makes one", () => {
-  const raw = { version: 1, categories: [{ id: "Eng Team", title: "Engineering" }, { id: "ok-1", title: "Fine" }], bots: [bot(ID.main, "main")] };
+test("category ids: parseBots warns about a non-slug id; checkBots refuses only a new one; newCategoryId makes slugs", () => {
+  const raw = { version: 1, categories: [{ id: "Knowledge", title: "Knowledge" }, { id: "ok-1", title: "Fine" }], bots: [bot(ID.main, "main"), bot(ID.cap, "member", { category: "Knowledge" })] };
   const { file, warnings } = parseBots(JSON.stringify(raw));
   assert.equal(file.categories.length, 2);
-  assert.ok(warnings.some((w) => /"Eng Team": an id is a lowercase slug/.test(w)));
-  assert.ok(checkBots(raw).some((e) => /"Eng Team": an id is a lowercase slug/.test(e)));
+  assert.equal(file.bots[1].category, "Knowledge");
+  assert.ok(warnings.some((w) => /"Knowledge": an id is a lowercase slug/.test(w)));
+  // A hand-written file stays writable: the id was there before the edit.
+  assert.deepEqual(checkBots(raw, raw), []);
+  assert.deepEqual(checkBots(raw, JSON.stringify(raw)), []);
+  // A new non-slug id (no file before, or not in it) is refused.
+  assert.ok(checkBots(raw).some((e) => /"Knowledge": a new id is a lowercase slug/.test(e)));
+  const added = { ...raw, categories: [...raw.categories, { id: "Ops Team", title: "Ops" }] };
+  assert.deepEqual(checkBots(added, raw).filter((e) => /lowercase slug/.test(e)).length, 1);
   for (const bad of ["a--b", "-a", "a-", "A", "a b", "ação", ""]) assert.ok(checkBots({ ...raw, categories: [{ id: bad, title: "x" }] }).length, bad);
-  assert.deepEqual(checkBots({ ...raw, categories: [raw.categories[1]] }), []);
+  assert.deepEqual(checkBots({ ...raw, bots: [raw.bots[0]], categories: [raw.categories[1]] }), []);
   for (const title of ["Ação & Studio", "  --Quality \"gate\"-- ", "!!!", "Platform 2"]) {
     assert.match(newCategoryId(title, []), /^[a-z0-9]+(-[a-z0-9]+)*$/, title);
   }

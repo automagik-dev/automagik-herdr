@@ -158,7 +158,7 @@ export async function discoverProjects() {
  */
 export async function writeBots(projectKey, file, expected) {
   if (expected === undefined) throw new Error("writeBots: pass the text the edit started from (null for a new file)");
-  const errors = checkBots(file);
+  const errors = checkBots(file, expected);
   if (errors.length) throw new Error(`Not saved: ${errors.join("; ")}`);
   // writeTextFile isn't documented to make folders; Herdr's fs writes only in its home.
   if (expected === null) {

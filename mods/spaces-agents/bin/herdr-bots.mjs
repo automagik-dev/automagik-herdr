@@ -139,7 +139,7 @@ export function writeBotsFile(key, raw, expected, io = fsIo) {
   if (expected === undefined) throw new Error("writeBotsFile: pass the text the edit started from (null for a new file)");
   const path = under(key, BOTS_PATH);
   if (raw !== null) {
-    const errors = checkBots(raw);
+    const errors = checkBots(raw, expected);
     if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
   }
   let now;
@@ -432,9 +432,7 @@ export function entryFrom(opts, base, project, { creating }) {
   if (opts.category !== undefined) {
     const leadsToMain = entry.kind === "member" && (!entry.lead || entry.lead === main?.id);
     if (!leadsToMain) throw new CliError("A category goes only on a member that reports to the main bot.", 2);
-    const cat = findCategory(file, opts.category);
-    if (!CATEGORY_ID.test(cat.id)) throw new CliError(`Category id "${cat.id}" isn't a lowercase slug (a-z, 0-9, single dashes); fix it in ${BOTS_PATH} first.`);
-    entry.category = cat.id;
+    entry.category = findCategory(file, opts.category).id;
   }
   // Look: --omni, or a character and colour (one left out keeps the stored or default one).
   const colour = opts.colour ?? opts.color;

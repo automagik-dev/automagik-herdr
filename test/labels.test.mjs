@@ -169,3 +169,17 @@ test("rank captain is allowed and main is not a rank: role=main is the main bot'
   assert.equal(roleOf(m.file, ID.test), null);
   assert.ok(m.warnings.some((w) => /unknown rank "main"/.test(w)));
 });
+
+test("attachWords: the pane ends up matching paneLabels; only a marked squad follows the lead", () => {
+  const f = file();
+  const lead = [{ address: "t2", state: "live", program: { agent: true }, labels: { bot: ID.cap, squad: "memory" } }];
+  // Test has no rank: a stale role comes off; a wrong category is replaced.
+  assert.deepEqual(attachWords(f, ID.test, { bot: ID.test, role: "captain", category: "shared", squad: "ops" }, lead), ["category=eng", "role="]);
+  // PM's category isn't known: a category on the pane comes off.
+  assert.deepEqual(attachWords(f, ID.pm, { bot: ID.pm, role: "pm", category: "eng" }, []), ["category="]);
+  // A squad this pack copied takes the lead's, or comes off with its mark.
+  const copied = { bot: ID.test, category: "eng", squad: "old", [SQUAD_MARK]: "old" };
+  assert.deepEqual(attachWords(f, ID.test, copied, lead), ["squad=memory", `${SQUAD_MARK}=memory`]);
+  assert.deepEqual(attachWords(f, ID.test, copied, []), ["squad=", `${SQUAD_MARK}=`]);
+  assert.deepEqual(attachWords(f, ID.test, { bot: ID.test, category: "eng" }, lead), ["squad=memory", `${SQUAD_MARK}=memory`]);
+});

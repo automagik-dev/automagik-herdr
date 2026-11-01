@@ -173,8 +173,16 @@ export function effectiveLead(file, botId) {
   return { lead: first };
 }
 
-/** Every reason a file must not be written as it is (empty: fine). Stricter than parseBots. */
-export function checkBots(file) {
+/**
+ * Every reason a file must not be written as it is (empty: fine). Stricter than parseBots.
+ * A category id that isn't a slug is refused only when it is new: one `before` (the file the
+ * edit started from, its text or object; null: none) already lists stays writable, so a
+ * hand-written file is never locked; it just gets no category= label (effectiveCategory).
+ */
+export function checkBots(file, before = null) {
+  let had = before;
+  if (typeof had === "string") { try { had = JSON.parse(had); } catch { had = null; } }
+  const oldIds = new Set((Array.isArray(had?.categories) ? had.categories : []).map((c) => c?.id).filter(isText));
   const errors = [];
   if (!isObject(file) || file.version !== 1 || !Array.isArray(file.bots)) return ["not a version-1 bots file"];
   const cats = Array.isArray(file.categories) ? file.categories : [];
@@ -182,8 +190,8 @@ export function checkBots(file) {
   const catIds = new Set();
   for (const c of cats) {
     if (!isObject(c) || !isText(c.id) || typeof c.title !== "string") errors.push("a category has no id or title");
-    else if (!CATEGORY_ID.test(c.id)) errors.push(`category ${JSON.stringify(c.id)}: an id is a lowercase slug (a-z, 0-9, single dashes)`);
     else if (catIds.has(c.id)) errors.push(`category ${c.id} is listed twice`);
+    else if (!CATEGORY_ID.test(c.id) && !oldIds.has(c.id)) { errors.push(`category ${JSON.stringify(c.id)}: a new id is a lowercase slug (a-z, 0-9, single dashes)`); catIds.add(c.id); }
     else catIds.add(c.id);
   }
   const ids = new Set();

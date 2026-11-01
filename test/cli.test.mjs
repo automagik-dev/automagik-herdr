@@ -757,20 +757,24 @@ test("an edit relabels the live local panes it changes, the old and new leads in
   assert.equal(labelCalls(s.calls()).length, before);
 });
 
-test("category add --id and the stored file take slug ids only; a non-slug id blocks --category", (t) => {
-  const s = scene(t);
+test("category add --id takes slug ids only; a hand-written non-slug id stays usable, with no category label", (t) => {
+  const s = scene(t, { terminals: [term("t8", { bot: ID.dev })] });
   s.seed(team());
   const bad = s.cli(["category", "add", "--title", "Quality", "--id", "Quality Gate"]);
   assert.equal(bad.code, 2);
   assert.match(bad.err, /--id "Quality Gate" isn't a category id: a lowercase slug/);
   assert.equal(s.cli(["category", "add", "--title", "Quality Gate!"]).code, 0);
   assert.ok(s.bots().categories.some((c) => c.id === "quality-gate"));
+  // brain-v3 style: "Knowledge" written by hand. Edits of the file still work.
   const f = team();
-  f.categories.push({ id: "Ops Team", title: "Ops" });
+  f.categories.push({ id: "Knowledge", title: "Knowledge" });
   s.seed(f);
-  const r = s.cli(["edit", "Dev", "--lead", "Genie", "--category", "Ops"]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /Category id "Ops Team" isn't a lowercase slug/);
+  const r = s.cli(["edit", "Dev", "--lead", "Genie", "--category", "Knowledge", "--rank", "dev"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(s.bots().bots.find((b) => b.id === ID.dev).category, "Knowledge");
+  assert.equal(s.cli(["edit", "Captain", "--role", "still editable"]).code, 0);
+  // Its pane gets a role but no category= label.
+  assert.deepEqual(labelsIn(s).t8, { bot: ID.dev, role: "dev" });
 });
 
 test("a lead change moves the squad copied from the old lead, and leaves a pane's own squad", (t) => {
@@ -793,4 +797,16 @@ test("a lead change moves the squad copied from the old lead, and leaves a pane'
   // Detach keeps that squad and takes the mark off.
   assert.equal(s.cli(["detach", "Dev"]).code, 0);
   assert.deepEqual(labelsIn(s).t8, { squad: "ops" });
+});
+
+test("attach leaves the pane matching the bot: a stale role or category from its last bot comes off; an unmarked squad stays", (t) => {
+  const pane = term("t8", { cwd: "/x" });
+  Object.assign(pane.labels, { role: "captain", category: "old", squad: "ops" });
+  const s = scene(t, { terminals: [pane] });
+  s.seed(team()); // Dev: no rank, under the captain (category eng)
+  const st = s.hcState();
+  st.terminals[0].foreground.cwd = s.project;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["attach", "Dev", "t8"]).code, 0);
+  assert.deepEqual(labelsIn(s).t8, { squad: "ops", bot: ID.dev, category: "eng" });
 });

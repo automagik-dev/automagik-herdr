@@ -146,9 +146,22 @@ export function labelWords(want, have = {}) {
   return Object.entries(want).filter(([k, v]) => v && have?.[k] !== v).map(([k, v]) => `${k}=${v}`);
 }
 
-/** Attach's words for a pane (`have`: its labels, the bot label included), the lead's rows given. */
+/**
+ * Attach's words for a pane (`have`: its labels, the bot label included), the lead's rows
+ * given: the pane ends up matching paneLabels. A role= or category= this bot computes
+ * differently is set, one it doesn't compute at all comes off (a stale one from the pane's
+ * last bot). An unmarked squad is left alone; a squad this pack copied (copiedSquad) takes
+ * the lead pane's, or comes off with its mark when the lead's pane has none.
+ */
 export function attachWords(file, botId, have, leadRows) {
-  return labelWords(paneLabels(file, botId, have, leadPane(leadRows)?.labels ?? null), have);
+  const leadSquad = leadPane(leadRows)?.labels?.[SQUAD_LABEL] ?? null;
+  const want = paneLabels(file, botId, have, leadPane(leadRows)?.labels ?? null);
+  const words = labelWords(want, have);
+  for (const k of [ROLE_LABEL, CATEGORY_LABEL]) if (have?.[k] && !want[k]) words.push(`${k}=`);
+  if (copiedSquad(have) && have[SQUAD_LABEL] !== leadSquad) {
+    words.push(...(leadSquad ? [`${SQUAD_LABEL}=${leadSquad}`, `${SQUAD_MARK}=${leadSquad}`] : [`${SQUAD_LABEL}=`, `${SQUAD_MARK}=`]));
+  }
+  return words;
 }
 
 /**

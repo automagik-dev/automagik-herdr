@@ -110,8 +110,10 @@ The shape (`version` 1):
   the row shows a warning.
 - `category` places a bot that reports to the main bot under a category header. Bots
   deeper down show under their lead and ignore it. A category id is a lowercase slug
-  (`a-z`, `0-9`, single dashes, like `quality-gate`), since it goes into a pane label; a file
-  with another id is shown with a warning, and nothing writes it until the id is fixed.
+  (`a-z`, `0-9`, single dashes, like `quality-gate`), since it goes into a pane label. A new
+  id must be one (`category add --id`, the form's new category). An id already in the file
+  that isn't one (`Knowledge`, written by hand) keeps working, with a warning, and gives its
+  bots no `category=` label.
 - `planned` marks a bot that is not started yet. It needs no `agent`.
 - `instructions` holds at most 4,000 characters.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
@@ -161,7 +163,8 @@ stamp events with them (`actor.bot`, `actor.role`, `actor.squad`):
 | `category` | the category it shows under (a deeper member: its chain's category), when there is one |
 | `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, and `automagik-herdr.squad=<that squad>` records the copy. |
 
-Start and Attach set them. An edit that changes a bot's rank, lead or category, or a lead's
+Start sets them. Attach leaves the pane matching its bot: a `role=` or `category=` the bot
+doesn't have (left by the pane's last bot) comes off. An edit that changes a bot's rank, lead or category, or a lead's
 captain status, rewrites the labels on the live panes of the bots it changes; a squad this
 pack copied (the pane's `squad` still equals its `automagik-herdr.squad`) follows a lead
 change, or comes off when the new lead's pane has none. Detach takes off `bot`, any `role`
