@@ -12,6 +12,8 @@ const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
+// state.fail: commands that fail as a server that is down would (exit 1).
+if ((state.fail ?? []).includes(words[0])) fail(`hc: can't reach the server (${words[0]})`);
 
 switch (words[0]) {
   case "ls": {

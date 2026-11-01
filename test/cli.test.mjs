@@ -459,3 +459,112 @@ test("errors: stderr and a non-zero exit; unknown commands and options are usage
   const r = s.cli(["ls"]);
   assert.match(r.out, /not valid JSON|Unexpected token|Expected property name/);
 });
+
+// ---- review fixes ----
+
+test("rm never deletes a file that still holds bots: members with no main bot are refused, file intact", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots = f.bots.filter((b) => b.kind !== "main"); // parseBots only warns about this
+  s.seed(f);
+  const before = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["rm", "Studio"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Not saved: .*0 main bots/);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before);
+});
+
+test("rm of the main bot counts entries parseBots left out as other bots", (t) => {
+  const s = scene(t);
+  s.seed({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Genie" }), { id: ID.dev, kind: "member" }] });
+  const r = s.cli(["rm", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /still has 1 other bot/);
+  assert.ok(existsSync(s.botsPath));
+});
+
+test("start places the pane in the space of a live terminal in the project; with none it warns the pane is unseen", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const sub = join(s.project, "pkg");
+  mkdirSync(sub);
+  const placed = term("t20", { cwd: sub, argv: ["zsh"], app: "zsh" });
+  placed.labels = { "herdr.space": "sp9", "herdr.tab": "tb3" };
+  const elsewhere = term("t21", { cwd: s.root, argv: ["zsh"], app: "zsh" });
+  elsewhere.labels = { "herdr.space": "sp-other" };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [elsewhere, placed], next: 100 }));
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp9", "tb3"]);
+  const run = runCall(s.calls());
+  assert.ok(run.includes("herdr.space=sp9") && run.includes("herdr.tab=tb3"));
+  assert.doesNotMatch(r.err, /unseen/);
+  // No terminal of the project carries a space: started, with the warning.
+  const s2 = scene(t);
+  s2.seed(team());
+  const r2 = s2.cli(["start", "Genie"]);
+  assert.equal(r2.code, 0, r2.err);
+  assert.match(r2.err, /No open Herdr space shows .*, so Herdr gives t100 no pane: it runs, unseen\. Watch it with hc attach t100/);
+});
+
+test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {
+  const f = team();
+  f.bots[0].model = "Opus 5.5";
+  const s = scene(t, { terminals: [term("t30", { bot: ID.cap, argv: ["sh", "-c", "claude"], app: "starting", created: Date.now() })] });
+  s.seed(f);
+  const r = s.cli(["start", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /pinned to "Opus 5\.5", which isn't a claude model this computer lists\. Pick one with herdr-bots edit b-aaaaaaaaaa --model/);
+  const young = s.cli(["start", "Captain"]);
+  assert.equal(young.code, 0);
+  assert.match(young.out, /already running in t30/);
+  assert.equal(s.calls().some((c) => c[0] === "run"), false);
+});
+
+test("a failing hc never reads as 'no pane': start, attach and detach refuse; ls and show say hc is unavailable", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const st = { terminals: [term("t1", { bot: ID.main, cwd: s.project })], fail: ["ls"] };
+  st.terminals[0].foreground.cwd = s.project;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  for (const args of [["start", "Genie"], ["attach", "Genie", "t1"], ["detach", "Genie"]]) {
+    const r = s.cli(args);
+    assert.equal(r.code, 1, args.join(" "));
+    assert.match(r.err, /hc ls --label bot=b-aaaaaaaaaa failed: hc: can't reach the server/);
+  }
+  assert.equal(s.calls().some((c) => c[0] === "run" || c[0] === "label"), false);
+  const ls = s.cli(["ls", "--json"]);
+  assert.equal(ls.code, 0, ls.err);
+  const genie = ls.json().projects[0].bots[0];
+  assert.equal(genie.status, "hc unavailable");
+  assert.match(genie.hcError, /can't reach the server/);
+  assert.match(s.cli(["ls"]).out, /panes unknown: hc ls/);
+  assert.equal(s.cli(["show", "Genie", "--json"]).json().status, "hc unavailable");
+  assert.equal(s.cli(["brief", "Genie"]).code, 0, "the briefing still prints, members unreachable");
+});
+
+test("a row whose program is a shell is never asked with hc get", (t) => {
+  const s = scene(t, { terminals: [term("t1", { bot: ID.main, argv: ["zsh"], app: "zsh" }), term("t2", { bot: ID.cap })] });
+  s.seed(team());
+  s.cli(["ls", "--json"]);
+  const gets = s.calls().filter((c) => c[0] === "get").map((c) => c[1]);
+  assert.ok(gets.includes("t2"));
+  assert.equal(gets.includes("t1"), false);
+});
+
+test("attach: a terminal argument that looks like an option is refused; a claude wrapper counts as a Claude pane", (t) => {
+  const s = scene(t, { terminals: [term("t9", { argv: ["node", "/opt/claude.js"], app: "agent", cwd: "/elsewhere" })] });
+  s.seed(team());
+  const opt = s.cli(["attach", "Genie", "--", "--all"]);
+  assert.equal(opt.code, 2);
+  assert.match(opt.err, /"--all" isn't a terminal/);
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), "hb-out-")));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const st = s.hcState();
+  st.terminals[0].foreground.cwd = outside;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["attach", "Genie", "t9"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Not attached: this Claude session runs in/);
+  assert.deepEqual(labelCalls(s.calls()), []);
+});

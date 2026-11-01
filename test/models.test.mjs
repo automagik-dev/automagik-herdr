@@ -93,9 +93,10 @@ test("modelArgs: each agent's own flag; nothing without a pin or a known flag", 
   }
 });
 
-test("shownModel: detected, then pinned, then the default", () => {
+test("shownModel: a running bot shows what runs (detected, else the default, never a pin it wasn't started with); a stopped one its pin", () => {
   assert.deepEqual(shownModel({ argv: ["claude", "--model", "opus"], agentKey: "claude", pinned: "sonnet", fallback: "haiku" }), { model: "opus", source: "detected" });
-  assert.deepEqual(shownModel({ argv: ["claude"], agentKey: "claude", pinned: "sonnet", fallback: "haiku" }), { model: "sonnet", source: "pinned" });
+  assert.deepEqual(shownModel({ argv: ["claude"], agentKey: "claude", pinned: "sonnet", fallback: "haiku" }), { model: "haiku", source: "default" });
+  assert.deepEqual(shownModel({ argv: null, agentKey: "claude", pinned: "sonnet", fallback: "haiku" }), { model: "sonnet", source: "pinned" });
   assert.deepEqual(shownModel({ argv: null, agentKey: "claude", fallback: "haiku" }), { model: "haiku", source: "default" });
   assert.deepEqual(shownModel({ agentKey: "amp" }), { model: null, source: null });
 });

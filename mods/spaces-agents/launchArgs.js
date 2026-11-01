@@ -114,3 +114,55 @@ export function parseCommand(text) {
   }
   return { name, args };
 }
+
+// ---- a bot's pane through hc (the CLI and briefing.mjs; launch.js reads Herdr's terminals()) ----
+
+/** What an `ask` resolves with when hc gave no answer in time (a machine away). */
+export const UNANSWERED = Symbol.for("herdr-bots.unanswered");
+
+/** `hc ls --json`'s rows, whichever shape it printed. */
+export const rowsOf = (ls) => (Array.isArray(ls?.terminals) ? ls.terminals : Array.isArray(ls) ? ls : []);
+
+/** True for an `hc ls` row whose reported program is a shell: no agent in front (Decision 3). */
+export const rowIsShell = (row) => typeof row?.agent === "string" && SHELLS.has(base(row.agent));
+
+/**
+ * A bot's pane by the live rule (DESIGN Decision 3): the terminals carrying `bot=<id>`
+ * (`hc ls --label`), each asked with `hc get` unless its row reports a shell, live when an
+ * agent is in front; among several, the newest by created_ms, flagged `duplicate`.
+ * `ask(args)` runs `hc <args> --json` and resolves with the parsed answer, null when hc
+ * failed, or UNANSWERED when it ran out of time; it may also throw (the CLI does when hc
+ * fails, so a failure never reads as "no pane"). `localOnly` keeps this computer's
+ * terminals (Start, Attach, Detach); the briefing and `ls` look everywhere.
+ * Resolves { get, duplicate, addresses, gets } (`get` null: not running; `addresses` every
+ * terminal carrying the label; `gets` every hc get answer) or, when any call went
+ * unanswered, the same with `unreachable: true`.
+ */
+export async function paneOf(botId, ask, { localOnly = false } = {}) {
+  const none = { get: null, duplicate: false, addresses: [], gets: [] };
+  const ls = await ask(["ls", "--label", `${BOT_LABEL}=${botId}`]);
+  if (ls === UNANSWERED) return { ...none, unreachable: true };
+  const rows = rowsOf(ls).filter((r) => r?.address && r.state !== "finished" && (!localOnly || !r.address.includes("/")));
+  const addresses = rows.map((r) => r.address);
+  const answers = await Promise.all(rows.filter((r) => !rowIsShell(r)).map((r) => ask(["get", r.address])));
+  // A pane that didn't answer may be the newest: no address beats a stale one.
+  if (answers.includes(UNANSWERED)) return { ...none, addresses, unreachable: true };
+  const gets = answers.filter((g) => g && typeof g === "object");
+  const live = gets.filter((g) => g.state !== "finished" && agentInForeground(g));
+  return { get: live.length ? newest(live) : null, duplicate: live.length > 1, addresses, gets };
+}
+
+/** A pane started under `graceMs` ago that carries the label: its agent may not be in front yet. */
+export function youngPane(gets, now, graceMs = 60_000) {
+  return gets.find((g) => g?.state === "live" && typeof g.created_ms === "number" && now - g.created_ms < graceMs) ?? null;
+}
+
+/**
+ * Where a bot started from the command line opens in Herdr: the space (and tab) of a live
+ * terminal Herdr placed, from its `herdr.space` / `herdr.tab` labels. `gets` are `hc get`
+ * answers of terminals whose folder keys to the project; the first placed one counts.
+ */
+export function placementFrom(gets) {
+  const g = gets.find((x) => typeof x?.labels?.["herdr.space"] === "string" && x.labels["herdr.space"]);
+  return g ? { space: g.labels["herdr.space"], tab: g.labels["herdr.tab"] || null, from: g.address } : null;
+}

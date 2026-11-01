@@ -113,9 +113,10 @@ The shape (`version` 1):
 - `planned` marks a bot that is not started yet. It needs no `agent`.
 - `instructions` holds at most 4,000 characters.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
-  Start passes it with the agent's own model flag. The model a bot shows is the one its
-  running pane was started with (read from the pane's command line), else its pin, else the
-  agent's own configured default.
+  Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
+  free-text model) is skipped by the sidebar with a note and refused by the CLI. A running
+  bot shows the model its pane runs: the one its command line names, else the agent's own
+  configured default. A bot that isn't running shows its pin, else that default.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -167,6 +168,8 @@ herdr-bots brief <bot>
   checkout). `ls --all` adds the projects the sidebar remembers.
 - A bot is named by its id or by its name, which is unique in its project.
 - Errors go to stderr. A refusal exits 1, a usage mistake exits 2, and nothing is written.
+  When `hc` fails, `start`, `attach` and `detach` refuse; `ls` and `show` still list the bots,
+  with status `hc unavailable`.
 - `create` prints the new bot's id. A project's first bot must be its main bot. Instructions
   over 4,000 characters are refused. `--model` takes a model from the agent's list (Claude
   Code: its aliases and the current model ids; Codex: its own model cache in
@@ -180,8 +183,11 @@ herdr-bots brief <bot>
   `bot=<id>`, with the pinned model. A member whose lead is running gets the lead's
   terminal as its hc parent (and outlives it); every other bot starts with no parent. A bot
   that is already running is not started twice: `start` prints its terminal. A planned bot
-  is refused. `--space` and `--tab` name the Herdr space and tab to open the pane in.
-  Without them, Herdr places the pane as it places any terminal started with `hc run`.
+  is refused, and so is a pin the agent doesn't list. A bot whose pane started less than a
+  minute ago counts as running. The pane opens in the Herdr space (and tab) of a running
+  terminal in the project's folder. With none, Herdr gives the pane no place in its window:
+  `start` says so, and `hc attach <terminal>` shows it. Open a space on the project first, or
+  pass `--space <id>` (and `--tab <id>`).
 - `attach` labels a running pane on this computer as the bot and takes the label off any
   other pane first. A pane that already plays another bot is refused. A Claude pane whose
   session runs outside the bot's project is refused, with both folders named.

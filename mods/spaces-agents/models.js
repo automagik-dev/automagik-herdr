@@ -228,14 +228,16 @@ export function modelArgs(agentKey, model) {
 }
 
 /**
- * The model a bot's row shows (A12): the one its live pane runs, else its pin, else the
- * agent's own default. Returns { model, source: "detected" | "pinned" | "default" } or
- * { model: null, source: null }.
+ * The model a bot's row shows (A12): for a running bot (`argv`: its pane's foreground), what
+ * runs: the model its command line names, else the agent's own default (a pin it wasn't
+ * started with doesn't run). For a bot that isn't running: its pin, else the default.
+ * Returns { model, source: "detected" | "pinned" | "default" } or { model: null, source: null }.
  */
 export function shownModel({ argv, agentKey, pinned, fallback }) {
-  const detected = argv ? detectModel(argv, agentKey) : null;
-  if (detected) return { model: detected, source: "detected" };
-  if (pinned) return { model: pinned, source: "pinned" };
+  if (argv) {
+    const detected = detectModel(argv, agentKey);
+    if (detected) return { model: detected, source: "detected" };
+  } else if (pinned) return { model: pinned, source: "pinned" };
   if (fallback) return { model: fallback, source: "default" };
   return { model: null, source: null };
 }

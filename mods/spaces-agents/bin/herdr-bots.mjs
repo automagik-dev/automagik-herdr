@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // herdr-bots: the Bots of a project from the command line (A11). The same rules as the
-// sidebar (model.js, launchArgs.js, briefingText.mjs, models.js), with herdr-core reached
-// through `hc` directly. Plain node (≥ 24): no `herdr` or `gpui` import, no Herdr window.
+// sidebar (model.js, launchArgs.js, briefingText.mjs, models.js, briefing.mjs' gathering),
+// with herdr-core reached through `hc` directly. Plain node (≥ 24): no `herdr` or `gpui`
+// import, no Herdr window.
 // Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/herdr-bots.mjs ~/.local/bin/herdr-bots
 // Apache-2.0.
 
@@ -14,9 +15,11 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   defaultLook, descendantsOf, effectiveLead, mainBotOf, newBotId, newCategoryId, parseBots, plannedOf, projectKeyOf } from "../model.js";
-import { agentInForeground, attachRefusal, hcName, isClaude, labelMoves, newest, parentArgs, startArgs, startRefusal } from "../launchArgs.js";
-import { EXCLUDE_LINE, briefingPath, briefingText, directMembers, hookCommand, mergeHook, withExclude } from "../briefingText.mjs";
-import { knownModels, defaultModel, modelArgs, shownModel, withOverrides } from "../models.js";
+import { UNANSWERED, attachRefusal, hcName, isClaude, labelMoves, paneOf, parentArgs, placementFrom, rowsOf, startArgs,
+  startRefusal, youngPane } from "../launchArgs.js";
+import { installHook } from "../briefingText.mjs";
+import { gatherBriefing } from "../briefing.mjs";
+import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
 export class CliError extends Error {
@@ -25,23 +28,36 @@ export class CliError extends Error {
 
 // ---- files and programs ----
 
-/** A file's text, or null when it isn't there. */
+/** A file's text, or null when it isn't there. Any other read failure is a CliError. */
 export function readText(path) {
-  try { return readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT" || e?.code === "ENOTDIR") return null; throw e; }
+  try { return readFileSync(path, "utf8"); } catch (e) {
+    if (e?.code === "ENOENT" || e?.code === "ENOTDIR") return null;
+    throw new CliError(`Can't read ${path}: ${e?.message ?? e}`);
+  }
 }
 const exists = async (path) => { try { accessSync(path); return true; } catch { return false; } };
 const under = (key, rest) => `${key === "/" ? "" : key}/${rest}`;
 
+// At most this many programs at once: `ls --all` over many bots stays a handful of processes.
+const MAX_RUNNING = 8;
+let running = 0;
+const waiting = [];
+async function slot(fn) {
+  if (running >= MAX_RUNNING) await new Promise((go) => waiting.push(go));
+  running += 1;
+  try { return await fn(); } finally { running -= 1; waiting.shift()?.(); }
+}
+
 /** Runs a program: { code, stdout, stderr }; code 127 when it isn't there. */
 export function runProgram(command, args, { cwd, timeout = 15000 } = {}) {
-  return new Promise((done) => {
+  return slot(() => new Promise((done) => {
     try {
       execFile(command, args, { cwd, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (!err) return done({ code: 0, stdout, stderr });
         done({ code: err.code === "ENOENT" ? 127 : (typeof err.code === "number" ? err.code : 1), stdout: stdout ?? "", stderr: stderr || String(err.message) });
       });
     } catch (e) { done({ code: 127, stdout: "", stderr: String(e?.message ?? e) }); }
-  });
+  }));
 }
 const git = async (args, cwd) => { const r = await runProgram("git", args, { cwd }); return r.code === 0 ? r.stdout : null; };
 
@@ -53,17 +69,25 @@ async function hc(args) {
   if (r.code === 127) throw new CliError("hc (herdr-core) is not on PATH.");
   return r;
 }
+const parsed = (r, args) => {
+  try { return JSON.parse(r.stdout); } catch { throw new CliError(`hc ${args.join(" ")} printed no JSON: ${r.stdout.slice(0, 200)}`); }
+};
+/** `hc <args> --json`, parsed. A failed call throws: a failure never reads as "no pane". */
 async function hcJson(args) {
   const r = await hc([...args, "--json"]);
-  if (r.code !== 0) return null;
-  try { return JSON.parse(r.stdout); } catch { return null; }
+  if (r.code !== 0) throw new CliError(`hc ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);
+  return parsed(r, args);
 }
-const rowsOf = (ls) => (Array.isArray(ls?.terminals) ? ls.terminals : Array.isArray(ls) ? ls : []);
+/** `hc get <t> --json`, or null when hc says there is no such terminal (hc itself missing still throws). */
+async function hcGet(terminal) {
+  const r = await hc(["get", terminal, "--json"]);
+  return r.code === 0 ? parsed(r, ["get", terminal]) : null;
+}
 const local = (address) => typeof address === "string" && !address.includes("/");
 
 function appHome(env = process.env) { return (env.HERDR_APP_HOME || `${homedir()}/.config/herdr-app`).replace(/\/+$/, ""); }
 const home = () => process.env.HOME || homedir();
-const modelIo = () => ({ home: home(), read: readText });
+const modelIo = () => ({ home: home(), read: (p) => { try { return readText(p); } catch { return null; } } });
 /** The agents Herdr can start: its shipped table with the app home's programs.json applied. */
 const agentTable = () => withOverrides(readText(`${appHome()}/programs.json`));
 
@@ -84,16 +108,20 @@ const EMPTY = () => ({ version: 1, categories: [], bots: [] });
 export function loadProject(key) {
   const text = readText(under(key, BOTS_PATH));
   if (text === null) return { key, text, raw: EMPTY(), file: EMPTY(), warnings: [] };
-  let parsed;
-  try { parsed = parseBots(text); } catch (e) { throw new CliError(`${under(key, BOTS_PATH)}: ${e?.message ?? e}`); }
-  return { key, text, raw: parsed.raw, file: parsed.file, warnings: parsed.warnings };
+  let parsedFile;
+  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${under(key, BOTS_PATH)}: ${e?.message ?? e}`); }
+  return { key, text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
 }
 
 const fsIo = {
   read: readText,
   mkdir: (dir) => mkdirSync(dir, { recursive: true }),
   create: (path, text) => writeFileSync(path, text, { flag: "wx" }),
-  replace: (path, text) => { const tmp = `${path}.${process.pid}.tmp`; writeFileSync(tmp, text); renameSync(tmp, path); },
+  replace: (path, text) => {
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, text);
+    try { renameSync(tmp, path); } catch (e) { try { unlinkSync(tmp); } catch { /* gone already */ } throw e; }
+  },
   remove: (path) => unlinkSync(path),
 };
 
@@ -143,32 +171,34 @@ function findCategory(file, ref) {
   return hit;
 }
 
-// ---- live panes (DESIGN Decision 3) ----
+// ---- live panes (DESIGN Decision 3, through launchArgs.js paneOf) ----
 
 /**
- * The panes carrying `bot=<id>`: { live: hc get of the live one or null, duplicate,
- * holders: every address carrying the label }. Live: an agent in the foreground; among
- * several, the newest by created_ms. `localOnly` keeps this computer's terminals (Start,
- * Attach and Detach work here only), as launch.js does.
+ * The panes carrying `bot=<id>` by the shared live rule: { live (hc get of the live one, or
+ * null), duplicate, holders (every address carrying the label), gets }. A failed hc call
+ * throws. Deliberate differences: Start, Attach and Detach pass `localOnly` (they act on this
+ * computer only, as launch.js does); ls, show and brief look at every machine hc reaches.
  */
 export async function panesOf(botId, { localOnly = false } = {}) {
-  const ls = await hcJson(["ls", "--label", `${BOT_LABEL}=${botId}`]);
-  const rows = rowsOf(ls).filter((r) => r?.address && r.state !== "finished" && (!localOnly || local(r.address)));
-  const holders = rows.map((r) => r.address);
-  const gets = (await Promise.all(rows.map((r) => hcJson(["get", r.address])))).filter((g) => g && g.state !== "finished" && agentInForeground(g));
-  return { live: gets.length ? newest(gets) : null, duplicate: gets.length > 1, holders };
+  const p = await paneOf(botId, hcJson, { localOnly });
+  return { live: p.get, duplicate: p.duplicate, holders: p.addresses, gets: p.gets };
 }
 
-/** One bot as ls and show print it. */
+/** One bot as ls and show print it. With hc failing, the bot is still shown, its pane unknown. */
 async function describe(project, bot) {
   const { file } = project;
-  const panes = bot.planned ? { live: null, duplicate: false, holders: [] } : await panesOf(bot.id);
+  let panes = { live: null, duplicate: false, holders: [] };
+  let hcError = null;
+  if (!bot.planned) {
+    try { panes = await panesOf(bot.id); } catch (e) { if (!(e instanceof CliError)) throw e; hcError = e.message; }
+  }
   const live = panes.live;
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id) : { lead: "" };
   const fallback = bot.agent ? defaultModel(bot.agent, modelIo()) : null;
   const shown = shownModel({ argv: live?.foreground?.argv, agentKey: bot.agent, pinned: bot.model, fallback });
   let status = "not running";
   if (bot.planned) status = "planned";
+  else if (hcError) status = "hc unavailable";
   else if (live) status = live.status?.state ?? "running";
   const out = {
     id: bot.id, name: bot.name, kind: bot.kind, project: project.key,
@@ -180,96 +210,25 @@ async function describe(project, bot) {
     role: bot.role, look: bot.look,
   };
   if (lead.warning) out.warning = lead.warning;
+  if (hcError) out.hcError = hcError;
   return out;
 }
 
-// ---- the briefing hook (launch.js afterBind, for this computer's files) ----
+// ---- the briefing hook (briefingText.mjs installHook, as launch.js afterBind uses it) ----
 
-async function excludeFromGit(folder, warnings) {
-  const settings = `${folder}/.claude/settings.local.json`;
-  const tracked = await runProgram("git", ["ls-files", "--error-unmatch", "--", ".claude/settings.local.json"], { cwd: folder });
-  if (tracked.code === 0) {
-    warnings.push(`${settings} is tracked by git, so it can't be excluded; the briefing hook will show as a change.`);
-    return;
-  }
-  const ignored = await runProgram("git", ["check-ignore", "-q", ".claude/settings.local.json"], { cwd: folder });
-  if (ignored.code !== 1) return; // 0: ignored already; 128 or no git: not a repository
-  const r = await runProgram("git", ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], { cwd: folder });
-  const path = r.code === 0 ? r.stdout.trim() : "";
-  try {
-    if (!path) throw new Error(r.stderr.trim() || "git gave no exclude path");
-    const before = readText(path);
-    const after = withExclude(before);
-    if (after === null) return;
-    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    if (readText(path) !== before) throw new Error("it changed while being edited");
-    writeFileSync(path, after);
-  } catch (e) {
-    warnings.push(`Couldn't add ${EXCLUDE_LINE} to ${path || "the git exclude file"} (${e?.message ?? e}); keep ${settings} out of your commits.`);
-  }
-}
+const hookIo = {
+  git: (args, cwd) => runProgram("git", args, { cwd }),
+  read: async (path) => readText(path),
+  write: async (path, text, before) => {
+    if (readText(path) !== before) throw new Error(`${path} changed while being edited`);
+    fsIo.replace(path, text);
+  },
+  mkdir: async (dir) => { mkdirSync(dir, { recursive: true }); },
+};
 
-/**
- * Merges the per-turn briefing hook into `<folder>/.claude/settings.local.json` for a
- * Claude bot, as launch.js afterBind does. Never throws: problems become `warnings`.
- */
-export async function writeBriefingHook(bot, folder, appHomeDir = appHome()) {
-  const warnings = [];
-  const script = briefingPath(appHomeDir);
-  if (readText(script) === null) {
-    warnings.push(`${bot.name} gets no per-turn briefing: ${script} isn't there, so nothing was written. Install the pack as the README says, then start or attach again.`);
-    return { written: false, warnings };
-  }
-  const path = `${folder}/.claude/settings.local.json`;
-  try {
-    await excludeFromGit(folder, warnings);
-    const before = readText(path);
-    const merged = mergeHook(before, hookCommand(appHomeDir));
-    if (merged.error) throw new Error(`${path} was left as it is: ${merged.error}.`);
-    if (!merged.changed) return { written: false, warnings };
-    mkdirSync(`${folder}/.claude`, { recursive: true });
-    if (readText(path) !== before) throw new Error(`${path} changed while being edited; nothing was written.`);
-    fsIo.replace(path, merged.text);
-    return { written: true, warnings };
-  } catch (e) {
-    warnings.push(`${bot.name} gets no briefing: ${e?.message ?? e}`);
-    return { written: false, warnings };
-  }
-}
-
-// ---- the briefing text (briefing.mjs, for any bot) ----
-
-const TAIL_LINES = 12;
-async function reportOf(get) {
-  const msg = get?.status?.msg;
-  if (typeof msg === "string" && msg.trim()) return msg.trim();
-  const read = await hcJson(["read", get.address]);
-  const text = typeof read?.text === "string" ? read.text : "";
-  // eslint-disable-next-line no-control-regex
-  const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
-    .split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
-  return lines.slice(-TAIL_LINES).join("\n");
-}
-
-/** What `bot`'s per-turn briefing would say now (briefing.mjs' gathering, without its time budget). */
-export async function briefingFor(file, bot) {
-  const team = directMembers(file, bot.id);
-  const leadId = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
-  const leadBot = leadId ? file.bots.find((b) => b.id === leadId) : null;
-  const [mine, panes, leadPane] = await Promise.all([panesOf(bot.id), Promise.all(team.map((m) => panesOf(m.id))), leadBot ? panesOf(leadBot.id) : null]);
-  const members = await Promise.all(team.map(async (m, i) => {
-    const get = panes[i].live;
-    return get ? { bot: m, terminal: get.address, status: get.status?.state, report: await reportOf(get) } : { bot: m };
-  }));
-  const lead = leadBot ? { bot: leadBot, terminal: leadPane?.live?.address ?? "", status: leadPane?.live?.status?.state } : undefined;
-  let helpers = [];
-  if (mine.live) {
-    const known = new Set([...panes, leadPane].flatMap((p) => p?.holders ?? []));
-    const kids = rowsOf(await hcJson(["ls"])).filter((r) => r?.parent === mine.live.address && r.state !== "finished" && !known.has(r.address)).slice(0, 30);
-    const gets = await Promise.all(kids.map((r) => hcJson(["get", r.address])));
-    helpers = kids.filter((_, i) => gets[i] && !gets[i].labels?.[BOT_LABEL]).map((r) => ({ status: typeof r.status === "string" ? r.status : r.status?.state }));
-  }
-  return briefingText({ self: bot, file, members, lead, helpers });
+/** Merges the per-turn briefing hook for a Claude bot; never throws: { written, warnings }. */
+export function writeBriefingHook(bot, folder, appHomeDir = appHome()) {
+  return installHook(bot.name, folder, appHomeDir, hookIo);
 }
 
 // ---- arguments ----
@@ -444,6 +403,8 @@ async function cmdLs(opts) {
       lines.push(`  ${b.id}  ${b.name}  ${where}  ${b.agent ?? "-"}  ${model}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
+    const hcError = p.bots.find((b) => b.hcError)?.hcError;
+    if (hcError) lines.push(`  ! panes unknown: ${hcError}`);
   }
   return lines.join("\n");
 }
@@ -487,16 +448,19 @@ async function cmdRm(opts, [ref]) {
   const project = await projectFor(opts);
   const { file } = project;
   const bot = findBot(file, ref);
-  const others = file.bots.filter((b) => b.id !== bot.id);
+  // Every other entry as stored, those parseBots left out included: they are still bots.
+  const others = project.raw.bots.filter((b) => b?.id !== bot.id);
   if (bot.kind === "main" && others.length) {
     throw new CliError(`${bot.name} is the main bot and its project still has ${others.length} other bot${others.length > 1 ? "s" : ""}; remove them first.`);
   }
   const team = [...descendantsOf(file, bot.id)].map((id) => file.bots.find((b) => b.id === id)?.name ?? id);
-  const leads = file.bots.filter((b) => b.lead === bot.id).map((b) => b.name);
+  const leads = others.filter((b) => b?.lead === bot.id).map((b) => b.name ?? b.id);
   if (team.length || leads.length) throw new CliError(`${bot.name} leads ${[...new Set([...leads, ...team])].join(", ")}; give them another lead first (herdr-bots edit <bot> --lead …).`);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.bots = raw.bots.filter((b) => b?.id !== bot.id);
-  const last = !raw.bots.some((b) => b?.kind === "main");
+  // Only an empty list deletes the file; anything else must pass checkBots (a file left
+  // with members and no main bot is refused, never deleted).
+  const last = raw.bots.length === 0;
   writeBotsFile(project.key, last ? null : raw, project.text);
   const notes = [];
   if (last) notes.push(`${bot.name} was the project's last bot: ${under(project.key, BOTS_PATH)} was deleted.`);
@@ -562,6 +526,25 @@ async function cmdCategory(opts, [verb, ...rest]) {
 
 const report = (warnings) => { for (const w of warnings) process.stderr.write(`herdr-bots: ${w}\n`); };
 
+/**
+ * Where Herdr shows a bot started here (DESIGN: the space whose folder keys to the project):
+ * the `herdr.space` / `herdr.tab` labels of a live terminal on this computer whose folder
+ * keys to the project. Null when none does; the pane then has no place in Herdr's window.
+ */
+async function placementOf(key) {
+  const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && typeof r.cwd === "string");
+  const keys = new Map();
+  await Promise.all([...new Set(rows.map((r) => r.cwd))].map(async (cwd) => {
+    try { keys.set(cwd, await keyOf(cwd)); } catch { /* a folder gone: not this project */ }
+  }));
+  const mine = rows.filter((r) => keys.get(r.cwd) === key);
+  for (const r of mine) {
+    const place = placementFrom([await hcGet(r.address)].filter(Boolean));
+    if (place) return place;
+  }
+  return null;
+}
+
 async function cmdStart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
@@ -569,12 +552,16 @@ async function cmdStart(opts, [ref]) {
   const bot = findBot(file, ref);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
-  // One terminal plays a bot: a live one is reported, never a second start.
+  // One terminal plays a bot: a live one is reported, never a second start. So is a pane
+  // started under a minute ago whose agent may not be in front yet (launch.js' grace).
   const mine = await panesOf(bot.id, { localOnly: true });
-  if (mine.live) return opts.json ? { id: bot.id, running: mine.live.address } : `${bot.name} is already running in ${mine.live.address}.`;
-  const sessionKey = await keyOf(key);
-  const refusal = attachRefusal({ botName: bot.name, projectKey: key, sessionFolder: key, sessionKey });
-  if (refusal) throw new CliError(refusal);
+  const running = mine.live ?? youngPane(mine.gets, Date.now());
+  if (running) return opts.json ? { id: bot.id, running: running.address } : `${bot.name} is already running in ${running.address}.`;
+  // A12: a pin that isn't one of the agent's listed models (an old free-text model) is refused.
+  if (bot.model && !knownModels(bot.agent, modelIo()).includes(bot.model)) {
+    throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
+      + `Pick one with herdr-bots edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
+  }
   const agent = agentTable()[bot.agent];
   if (!agent?.run?.length) throw new CliError(`${bot.name}'s coding agent "${bot.agent}" isn't one Herdr can start.`);
   if (!onPath(agent.run[0])) throw new CliError(`${agent.name} (${agent.run[0]}) isn't installed on this computer.`);
@@ -584,7 +571,8 @@ async function cmdStart(opts, [ref]) {
   const parent = parentArgs(file, bot.id, (id) => (id === lead ? leadLive : null));
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   const argv = [...agent.run, ...modelArgs(bot.agent, bot.model)];
-  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: opts.space, tab: opts.tab, parent, argv });
+  const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : await placementOf(key);
+  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: place?.space, tab: place?.tab, parent, argv });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = bot.agent === "claude" ? await writeBriefingHook(bot, key) : { written: false, warnings: [] };
   report(hook.warnings);
@@ -593,17 +581,24 @@ async function cmdStart(opts, [ref]) {
   let terminal = null;
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
-  return opts.json ? { id: bot.id, terminal, parent: parent[0] === "--parent" ? parent[1] : null, argv, hookWritten: hook.written, warnings: hook.warnings } : terminal;
+  if (!place) {
+    hook.warnings.push(`No open Herdr space shows ${key}, so Herdr gives ${terminal} no pane: it runs, unseen. `
+      + `Watch it with hc attach ${terminal}. To give the next start a pane, open a space on ${key} first, or pass --space <id> (herdr-app ls lists the ids).`);
+    report(hook.warnings.slice(-1));
+  }
+  return opts.json ? { id: bot.id, terminal, parent: parent[0] === "--parent" ? parent[1] : null, argv, space: place?.space ?? null, tab: place?.tab ?? null,
+    hookWritten: hook.written, warnings: hook.warnings } : terminal;
 }
 
 async function cmdAttach(opts, [ref, terminal]) {
   if (!terminal) throw new CliError("attach needs a bot and a terminal: herdr-bots attach <bot> <terminal>.", 2);
+  if (terminal.startsWith("-")) throw new CliError(`"${terminal}" isn't a terminal; name one like t7.`, 2);
   if (!local(terminal)) throw new CliError(`Attach works on this computer's panes only; ${terminal} is on another machine.`);
   const project = await projectFor(opts);
   const { file, key } = project;
   const bot = findBot(file, ref);
   if (bot.planned) throw new CliError(`${bot.name} is planned (wave ${bot.planned.wave}); clear "planned" before attaching it.`);
-  const get = await hcJson(["get", terminal]);
+  const get = await hcGet(terminal);
   if (!get || get.state !== "live") throw new CliError(`${terminal} isn't a live terminal.`);
   const address = get.address ?? terminal;
   const other = get.labels?.[BOT_LABEL];
@@ -611,7 +606,8 @@ async function cmdAttach(opts, [ref, terminal]) {
     const name = file.bots.find((b) => b.id === other)?.name;
     throw new CliError(`${address} already plays ${name ? `${name} (${other})` : `bot ${other}`}; nothing was attached. Attach that bot elsewhere, or detach it, first.`);
   }
-  const claude = isClaude({ report: { app: get.status?.app } }, get);
+  // Claude by its report, its foreground, or a wrapper whose argv runs claude (models.js).
+  const claude = isClaude({ report: { app: get.status?.app } }, get) || agentKeyOfArgv(get.foreground?.argv) === "claude";
   let sessionFolder = get.foreground?.cwd ?? get.cwd ?? null;
   if (claude) {
     if (!get.foreground?.cwd) throw new CliError(`Can't read where ${address}'s Claude session runs (hc get ${address}); nothing was attached.`);
@@ -657,7 +653,11 @@ async function cmdBrief(opts, [ref]) {
     process.stderr.write(`herdr-bots: ${bot.name} is planned; planned bots get no briefing.\n`);
     return "";
   }
-  const text = await briefingFor(project.file, bot);
+  // briefing.mjs' own gathering; a failed hc call reads as "no answer" (unreachable), as
+  // it does in the hook, so the briefing still prints.
+  const ask = async (args) => { try { return await hcJson(args); } catch (e) { if (e instanceof CliError) return UNANSWERED; throw e; } };
+  const self = await paneOf(bot.id, ask);
+  const text = await gatherBriefing({ file: project.file, bot, address: self.get?.address ?? null, ask });
   return opts.json ? { id: bot.id, briefing: text } : text;
 }
 
