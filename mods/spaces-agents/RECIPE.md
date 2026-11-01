@@ -16,7 +16,7 @@ One scrolling column, `chrome` background, 13 px text.
   plain rows): the project's bot tree. The main bot is a raised card bordered in its ink;
   categories are uppercase headers with a muted subtitle; members nest under their lead inside a
   solid guide line, the helpers herdr-core reports as a pane's children inside a dashed one.
-  A row is a fold arrow (shown on hover or focus only, no count), the character in a pose for its
+  A row is a fold arrow (shown on hover only, no count), the character in a pose for its
   status, the name in its colour's ink over `role · model` (`Main bot · model · project` for the
   main bot, `not running · role` for a stopped bot), the agent's Herdr icon and the status mark.
   A planned bot is dimmed and dashed, asleep, with its note and a `Wave n` pill. A project the CLI
@@ -63,6 +63,8 @@ One scrolling column, `chrome` background, 13 px text.
 - **Theme** (`theme.js`, `themes/`): the Automagik light and dark themes are copied into
   `<app home>/themes/` when absent and selected with `app.theme` once, recorded in shared
   `spaces-agents.theme-selected`; a theme picked later is never overridden.
+  A theme file already in `<app home>/themes/` is never overwritten, so later releases never
+  update it; a theme file the person deletes is copied back on the next load.
 - **Pressing**: a space selects on click and reorders on drag (inside its machine); an agent or bot
   row focuses its pane; a bot row's right-click offers Edit, Start and Attach; an agent's offers
   "Attach as bot…"; the space's tile opens `space-icon`; **New bot** at the foot opens the form.

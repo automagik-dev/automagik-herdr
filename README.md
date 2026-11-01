@@ -83,7 +83,9 @@ model, its agent's icon and its status. Right-click a bot to edit, start or atta
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
-switches it once and never again.
+switches it once and never again. The theme files it copies into Herdr's `themes/` folder are
+never overwritten, so a later release does not update a theme file already there; a theme file
+you delete is copied back on the next load (pick another theme in Settings to stop using it).
 
 ## The command line
 
