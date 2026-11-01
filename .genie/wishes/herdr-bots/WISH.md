@@ -334,6 +334,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - Side note (clone behaviour, not Group 1's): the rename map applies only to live non-agent terminals whose `command(argv)` is `hermes`; a `space.new` argv wrapped as `/bin/zsh -lic` reads as `zsh`. Two stale map entries (`g10/t2`, `g10/t3`) point at terminals that no longer exist.
 - **Group 1: done.**
 
+### Group 2 review — 2026-11-01
+
+- **Branch:** `wish/herdr-bots-g2` from edf59b1, 7 commits to e4a3a8c (+ `saucer` fix for Group 1's 20-of-21 characters, Start/Attach, Create/Edit form, entry points, README brain-v3 note, a Bots list); worker g1-engineer; `node --test` 52/52, `node --check` clean, `herdr-app check` passed on a scratch copy.
+- **A10 as built (accepted by the criteria reviewer):** the clone has no terminal menu, so "Attach as bot…" is on a sidebar agent row's right-click; mod commands receive no arguments, so bare `edit`/`start`/`attach` act on the focused pane's `bot` label, plus a `refresh` command; the window footer belongs to `workspace-chrome`, so "New bot" sits at the foot of the pack's block; right-click "New bot" opens a Bots list (Edit, Start) so a bot with no pane can be reached before Group 3's row menu; `terminals()` rows carry labels, so no `hc ls --label`.
+- **Criteria review, round 1: SHIP** (LOW: bare start/edit with no bot only warns; dialog `init` should prefer `props()`; Bots list overlaps Group 3's row menu; half-failed attach message; lead picker offers own descendants).
+- **Quality pass, round 1: FIX-FIRST.** MEDIUM: two concurrent Starts of one bot can launch two agents with one label. LOW: half-failed attach message; Attach steals another bot's pane silently; `liveTerminalOf` counts remote holders Attach can't clear; a throw ends the command loop; Edit rebuilds `planned` dropping extra keys. Clean: argv-only `hc` calls with `--` before agent argv, name slugs strip dashes, write path with snapshot.
+- **Route:** fix loop 1 of 2 (quality loop 1 of 1) to g1-engineer, all findings except the Bots-list overlap, which Group 3 folds into the bot-row menu.
+
 ---
 
 ## Files to Create/Modify
