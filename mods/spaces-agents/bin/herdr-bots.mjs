@@ -320,7 +320,7 @@ Usage: herdr-bots <command> [options]      (every command takes --json and --pro
          [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
-  edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank '']
+  edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -383,10 +383,10 @@ export function entryFrom(opts, base, project, { creating }) {
   if (entry.kind === "main" && main && main.id !== entry.id) throw new CliError(`This project already has a main bot, ${main.name} (${main.id}).`);
   if (opts.role !== undefined) entry.role = opts.role;
   entry.role ??= "";
-  // Rank (A16): one of RANKS, for the pane's role= label; --rank '' clears it (kept empty so
+  // Rank (A16): one of RANKS, for the pane's role= label; --rank= clears it (kept empty so
   // applyBotEdit removes the stored one).
   if (opts.rank !== undefined) {
-    if (opts.rank !== "" && !RANKS.includes(opts.rank)) throw new CliError(`--rank is one of ${RANKS.join(", ")} (or '' to clear), not "${opts.rank}".`, 2);
+    if (opts.rank !== "" && !RANKS.includes(opts.rank)) throw new CliError(`--rank is one of ${RANKS.join(", ")} (or --rank= to clear), not "${opts.rank}".`, 2);
     entry.rank = opts.rank;
   }
   const instructions = readInstructions(opts);

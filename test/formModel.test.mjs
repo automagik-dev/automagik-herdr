@@ -224,6 +224,39 @@ test("commandOf edit: only what changed, with the CLI's clearing spellings", () 
     "herdr-bots edit b-pmaaaaaaaa --no-category --project=/Users/x/brain-v3");
 });
 
+// ---- A16: rank ----
+
+test("rank: members pick one or none; an edit keeps the stored one; the main bot's entry leaves it alone", () => {
+  assert.equal(create().rank, "");
+  const ranked = { ...FILE, bots: FILE.bots.map((b) => (b.id === "b-devaaaaaaa" ? { ...b, rank: "dev" } : b.id === "b-mainaaaaaa" ? { ...b, rank: "owner" } : b)) };
+  const dev = formFrom({ mode: "edit", bot: ranked.bots.find((b) => b.id === "b-devaaaaaaa") });
+  assert.equal(dev.rank, "dev");
+  // Untouched: written back as stored; changed and cleared.
+  const out = (state) => applyBotEdit(ranked, entryOf(state, ranked).entry).bots.find((b) => b.id === state.id);
+  assert.equal(out(dev).rank, "dev");
+  assert.equal(out({ ...dev, rank: "reviewer" }).rank, "reviewer");
+  assert.equal("rank" in out({ ...dev, rank: "" }), false);
+  // The main bot: no rank row, its stored rank kept.
+  const main = formFrom({ mode: "edit", bot: ranked.bots.find((b) => b.id === "b-mainaaaaaa") });
+  assert.equal("rank" in entryOf(main, ranked).entry, false);
+  assert.equal(out(main).rank, "owner");
+  assert.deepEqual(checkBots(applyBotEdit(FILE, entryOf(create({ rank: "tester" }), FILE).entry)), []);
+});
+
+test("rank: a stored rank outside the set is a problem until changed; the line names --rank, --rank= clears", () => {
+  const ctx = { key: KEY, file: FILE, info: modelInfo("codex", CODEX) };
+  assert.match(problemOf(create({ rank: "main" }), ctx), /"main" isn't a rank; pick one of captain, dev, tester, reviewer, integrator, pm, owner, or none/);
+  assert.equal(problemOf(create({ rank: "pm" }), ctx), null);
+  assert.equal(problemOf(create({ kind: "main", rank: "main" }), { ...ctx, file: { ...FILE, bots: FILE.bots.filter((b) => b.kind !== "main") } }), null);
+  assert.match(commandOf(create({ rank: "tester" }), { key: KEY, file: FILE }), / --rank=tester /);
+  assert.doesNotMatch(commandOf(create(), { key: KEY, file: FILE }), /--rank/);
+  const initial = { ...edit("b-devaaaaaaa"), rank: "dev" };
+  assert.equal(commandOf(initial, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --project=/Users/x/brain-v3");
+  assert.equal(commandOf({ ...initial, rank: "pm" }, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --rank=pm --project=/Users/x/brain-v3");
+  assert.equal(commandOf({ ...initial, rank: "" }, { key: KEY, file: FILE, initial }), "herdr-bots edit b-devaaaaaaa --rank= --project=/Users/x/brain-v3");
+  assert.equal(editChanged({ ...initial, rank: "pm" }, initial), true);
+});
+
 // ---- the generated lines run through a real shell and the real CLI ----
 
 const CLI = new URL("../mods/spaces-agents/bin/herdr-bots.mjs", import.meta.url).pathname;
@@ -265,7 +298,7 @@ for (const sh of SHELLS) {
   test(`the copied create and edit lines do what the form saves, through ${sh} and the CLI's parser`, (t) => {
     const w = scratch(t);
     const s = { ...formFrom({ mode: "create", file: w.file, id: "b-newaaaaaaa", agent: "claude" }),
-      ...NASTY, character: "hex", colour: "sky", category: NEW_CATEGORY, planned: true, wave: 2 };
+      ...NASTY, character: "hex", colour: "sky", category: NEW_CATEGORY, planned: true, wave: 2, rank: "reviewer" };
     assert.equal(problemOf(s, { key: w.project, file: w.file, info: modelInfo("claude", {}) }), null);
     const line = commandOf(s, { key: w.project, file: w.file });
     const r = w.run(sh, line);
@@ -274,7 +307,7 @@ for (const sh of SHELLS) {
     const out = w.read();
     const made = out.bots.find((b) => b.name === NASTY.name);
     assert.ok(made, r.stdout);
-    assert.deepEqual([made.role, made.instructions, made.planned, made.look], [NASTY.role, NASTY.instructions, { wave: 2, note: NASTY.note }, look("hex", "sky")]);
+    assert.deepEqual([made.role, made.instructions, made.planned, made.look, made.rank], [NASTY.role, NASTY.instructions, { wave: 2, note: NASTY.note }, look("hex", "sky"), "reviewer"]);
     const cat = out.categories.find((c) => c.id === made.category);
     assert.deepEqual([cat?.title, cat?.sub], [NASTY.catTitle, NASTY.catSub]);
     // What the form itself would have written for the same state.
@@ -284,13 +317,16 @@ for (const sh of SHELLS) {
     // Edit: change the text fields to other nasty values, clear planned, move under the captain.
     const file2 = parseBots(readFileSync(join(w.project, ".herdr/bots.json"), "utf8")).file;
     const initial = formFrom({ mode: "edit", bot: made });
-    const e = { ...initial, name: "--help", role: "-r", instructions: "-- x\n= y", planned: false, lead: "b-capaaaaaaa" };
+    assert.equal(initial.rank, "reviewer");
+    const e = { ...initial, name: "--help", role: "-r", instructions: "-- x\n= y", planned: false, lead: "b-capaaaaaaa", rank: "" };
     const edited = commandOf(e, { key: w.project, file: file2, initial });
     const r2 = w.run(sh, edited);
     assert.equal(r2.status, 0, `${edited}\n${r2.stderr}`);
     const after = w.read().bots.find((b) => b.id === made.id);
-    assert.deepEqual([after.name, after.role, after.instructions, after.planned, after.lead, after.category],
-      ["--help", "-r", "-- x\n= y", undefined, "b-capaaaaaaa", undefined]);
+    assert.deepEqual([after.name, after.role, after.instructions, after.planned, after.lead, after.category, after.rank],
+      ["--help", "-r", "-- x\n= y", undefined, "b-capaaaaaaa", undefined, undefined]);
+    // What the form itself would have written for the same edit.
+    assert.deepEqual(after, applyBotEdit(file2, entryOf(e, file2).entry).bots.find((b) => b.id === made.id));
   });
 }
 

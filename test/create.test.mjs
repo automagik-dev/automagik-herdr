@@ -190,3 +190,30 @@ test("the mockup's six icons are SVG files under the app home, drawn tinted with
   assert.ok(drawn.every((n) => /^#[0-9a-f]{6}$/i.test(n.props.color)), "each one tinted");
   assert.ok(form.pets.has("ui-close.svg"));
 });
+
+test("Rank chips (A16): shown for a member, picked into the save and the copied line; None clears", async () => {
+  seed([MAIN]);
+  const { form, cx, draw, click } = await open({ form: "create" });
+  form.inputs.name.type("qa", cx);
+  draw();
+  assert.ok(nodes.has("bot-rank-none") && nodes.has("bot-rank-tester") && !nodes.has("bot-rank-main"));
+  await click("bot-rank-tester");
+  draw();
+  await click("bot-copy");
+  assert.match(cx.clip, / --rank=tester /);
+  await click("bot-rank-none");
+  draw();
+  await click("bot-copy");
+  assert.doesNotMatch(cx.clip, /--rank/);
+  await click("bot-rank-pm");
+  draw();
+  await click("bot-save");
+  assert.equal(stored().bots.find((b) => b.name === "qa").rank, "pm");
+});
+
+test("Rank chips are not offered for the main bot", async () => {
+  seed([]);
+  const { draw } = await open({ form: "create" });
+  draw();
+  assert.ok(!nodes.has("bot-rank-none"));
+});

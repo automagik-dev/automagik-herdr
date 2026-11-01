@@ -109,7 +109,9 @@ The shape (`version` 1):
   main bot. A lead that is missing, planned or part of a cycle counts as the main bot, and
   the row shows a warning.
 - `category` places a bot that reports to the main bot under a category header. Bots
-  deeper down show under their lead and ignore it.
+  deeper down show under their lead and ignore it. A category id is a lowercase slug
+  (`a-z`, `0-9`, single dashes, like `quality-gate`), since it goes into a pane label; a file
+  with another id is shown with a warning, and nothing writes it until the id is fixed.
 - `planned` marks a bot that is not started yet. It needs no `agent`.
 - `instructions` holds at most 4,000 characters.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
@@ -119,9 +121,10 @@ The shape (`version` 1):
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `herdr-bots ls` and `show` print its pin, else that default.
 - `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `integrator`, `pm`,
-  `main`, `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). The
-  free-text `role` is separate and goes to the briefing. An unknown rank is ignored with a
-  warning. The create form doesn't edit ranks yet; `herdr-bots edit <bot> --rank R` does.
+  `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
+  rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
+  to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
+  for team members; `herdr-bots create|edit --rank R` sets one (`--rank=` clears it).
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -156,12 +159,16 @@ stamp events with them (`actor.bot`, `actor.role`, `actor.squad`):
 | `bot` | the bot's id |
 | `role` | `main` for the main bot; `captain` for a bot that leads other bots; otherwise its `rank`. No rank, no label. |
 | `category` | the category it shows under (a deeper member: its chain's category), when there is one |
-| `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, marked `herdr-bots.squad=1`. |
+| `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, and `automagik-herdr.squad=<that squad>` records the copy. |
 
-Start and Attach set them. Detach takes off `bot`, `role` and `category`, and `squad` only
-when it carries the `herdr-bots.squad` mark. An edit that changes a bot's rank, lead or
-category, or a lead's captain status, rewrites the labels on the live panes of the bots it
-changes. Only panes on this computer are labelled.
+Start and Attach set them. An edit that changes a bot's rank, lead or category, or a lead's
+captain status, rewrites the labels on the live panes of the bots it changes; a squad this
+pack copied (the pane's `squad` still equals its `automagik-herdr.squad`) follows a lead
+change, or comes off when the new lead's pane has none. Detach takes off `bot`, any `role`
+and any `category` (nothing else sets those two today), the `automagik-herdr.squad` mark,
+and `squad` only while it still equals the mark: a squad set after the copy stays. Only panes
+on this computer are labelled. The lead's pane is its live one with an agent in front, the
+newest when there are several.
 
 ## The command line: `herdr-bots`
 
@@ -176,7 +183,7 @@ herdr-bots create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
        [--character C --colour K | --omni] [--model M] [--rank R]
        [--planned-wave N [--planned-note T]]
-herdr-bots edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank '']
+herdr-bots edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
 herdr-bots rm <bot>
 herdr-bots category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
        | rm <id> | order <id>...
