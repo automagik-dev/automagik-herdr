@@ -174,7 +174,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
 
 **Interfaces:**
 - Consumes: Group 1's `model.js` (`Bot`, `BotsFile`, `projectKeyOf`, `effectiveLead`, `newBotId`, `defaultLook`, `BOT_LABEL`, `MAX_INSTRUCTIONS`) and `bots.js` (`discoverProjects`, `writeBots`, `rememberProject`).
-- Produces (`mods/spaces-agents/launch.js`): `startBot(projectKey: string, botId: string): Promise<{ terminal: string } | { focused: string } | { refused: string }>`, `attachBot(projectKey: string, botId: string, terminal: string): Promise<{ ok: true } | { refused: string }>`, `liveTerminalOf(botId: string): Promise<{ terminal: string, duplicate: boolean } | null>`, and the hook-point `afterBind(bot: Bot, sessionFolder: string): Promise<void>` (a no-op here; Group 4 fills it).
+- Produces (`mods/spaces-agents/launch.js`): `startBot(projectKey: string, botId: string): Promise<{ terminal: string } | { focused: string } | { refused: string }>`, `attachBot(projectKey: string, botId: string, terminal: string): Promise<{ ok: true } | { refused: string }>`, `liveTerminalOf(botId: string): Promise<{ terminal: string, duplicate: boolean } | null>`, and the hook-point `afterBind(bot: Bot, sessionFolder: string, claude?: boolean): Promise<{ written: boolean }>` (a no-op in Group 2; Group 4 fills it; `claude` defaults to `bot.agent === "claude"`).
 
 **Acceptance Criteria:**
 - [ ] The footer "New bot" button opens the form; Create on a scratch git project writes a valid `.herdr/bots.json` in its main checkout, creating from a worktree of it writes the same file, and instructions over 4,000 characters are refused in the form; Edit clears `planned`.
@@ -346,6 +346,17 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Quality pass, round 2: PASS.** LOW left: a pane not yet listed in `terminals()` within the 60 s window can still let a twin start (reported as a duplicate if it happens); `agent.focus` on a pane whose agent is not up may not switch.
 - **Merged into `dev`:** 6727fa5; on merged `dev` `node --test` 58/58, `node --check` clean.
 - **Card:** open until live steps A–E (scratch Create/Start/Attach, refusals, attach brain-orchestrator `t1bw`, brain-v3 MR) run.
+- **Live run, 2026-11-01 (halted):** pack reinstalled from `dev` (status errors `[]`); step A done; B1 Lead and B2 Captain + Dev saved through the form. Halted at the owner's instruction ("someone is using /cua-driver the wrong way, it needs to be background"): the live agent had used foreground cua-driver delivery, and Group 3's spike overlay contended for the same window. Remaining: B3 Studio and Edit, C, D, E. Rule from here: background-only GUI driving, one agent at a time on the owner's window.
+
+### Group 4 review — 2026-11-01
+
+- **Branch:** `wish/herdr-bots-g4` from 5bf3b61: 7b29d57, 6abfc64, fix 07fd527; worker g4-engineer; `node --test` 84/84, `node --check` clean, `herdr-app check` passed on a scratch copy; `briefing.mjs` silent (exit 0, no output) with no `HC_TERMINAL_ID`, a non-bot pane, and the worker's own pane, using the real `hc`.
+- **Criteria review, round 1: SHIP.** Worker rulings accepted: hook written before `hc run`; hook timeout 10; an entry naming another `briefing.mjs` path updated in place; a lead with no live pane points to `hc ls --label`; helper line for main bots and leads; briefing pane lookup not local-only. Hermetic tests (`GIT_CONFIG_GLOBAL=/dev/null`) really isolate the exclude path, which this host's global ignore would otherwise hide.
+- **Quality pass, round 1: FIX-FIRST.** MEDIUM: other agents' reports unfenced in the block (injection); one away machine slowed every prompt by ~4.5 s. LOW: process burst per prompt; silent failures; tracked `settings.local.json`; exclude write race. Clean: hook-path quoting under `sh -c`, settings merge, output caps.
+- **Fix loop 1:** 07fd527: each report in its own `<untrusted-report>` with `<`/`>` neutralised under a data-not-instructions line; 1.5 s per call, 2 s budget, 2.4 s guard, "unreachable" on timeout; one `hc ls` for helpers; one stderr line on error; tracked settings file warns; exclude race re-read and retry.
+- **Round 2:** criteria SHIP, quality PASS. LOW left: a hard cut can end inside an open `<untrusted-report>`; on a slow host a local pane can read as "unreachable".
+- **Merged into `dev`:** see the merge commit after 5bf3b61; validation on merged `dev` green.
+- **Card:** open for live checks (mid-session hook pickup on `t1bw`, C5/C6 runs, herdr-core note on `done`, `git status` after Start/Attach).
 
 ---
 
