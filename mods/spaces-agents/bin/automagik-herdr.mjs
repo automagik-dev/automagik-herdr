@@ -302,7 +302,7 @@ export function writeBriefingHook(bot, folder, appHomeDir = appHome()) {
 // ---- arguments ----
 
 const OPTIONS = {
-  json: { type: "boolean" }, all: { type: "boolean" }, help: { type: "boolean", short: "h" },
+  json: { type: "boolean" }, all: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean" },
   project: { type: "string" }, name: { type: "string" }, agent: { type: "string" }, kind: { type: "string" },
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
   lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
@@ -317,6 +317,7 @@ const OPTIONS = {
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
 
 Usage: automagik-herdr <command> [options]      (every command takes --json and --project <folder>)
+       automagik-herdr --version                 the installed pack's version
 
   ls [--all]                    bots with kind, lead, category, planned, agent, model, pane, status
   show <bot>                    one bot in full
@@ -796,6 +797,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const { values: opts, positionals } = parsed;
   const [command, ...rest] = positionals;
+  // The pack this command belongs to (its VERSION file; 0.0.0 for a checkout never released).
+  if (opts.version && !command) {
+    let version = "0.0.0";
+    try { version = readFileSync(new URL("../VERSION", import.meta.url), "utf8").trim() || version; } catch { /* no VERSION file */ }
+    process.stdout.write(opts.json ? `${JSON.stringify({ version })}\n` : `automagik-herdr ${version}\n`);
+    return 0;
+  }
   if (opts.help || !command || command === "help") { process.stdout.write(`${USAGE}\n`); return command || opts.help ? 0 : 2; }
   const run = COMMANDS[command];
   if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }

@@ -8,6 +8,8 @@
 //   node update.mjs check      [--mods <dir>] [--name <folder>]   one JSON line: current, latest, update
 //   node update.mjs apply      [--mods <dir>] [--name <folder>]   download, verify, swap; one JSON line
 //   node update.mjs rollback   [--mods <dir>] [--name <folder>]   swap the kept pack back; one JSON line
+//   node update.mjs install --from <tgz> --version <v> [--mods <dir>] [--name <folder>]
+//                              a tarball already checked against SHA256SUMS (install.sh); one JSON line
 //
 // <dir> defaults to $HERDR_APP_HOME/mods (~/.config/herdr-app/mods), never this file's own
 // folder, so running it from a checkout never replaces the checkout. The replaced pack and the
@@ -218,7 +220,11 @@ async function main(argv) {
   if (command === "check") return checkForUpdate(where);
   if (command === "apply") return installUpdate(where);
   if (command === "rollback") return rollback(where);
-  throw Object.assign(new Error("usage: node update.mjs check | apply | rollback [--mods <dir>] [--name <folder>]"), { usage: true });
+  // install.sh: the tarball it downloaded and checked with shasum, through applyUpdate's checks.
+  if (command === "install" && opt("--from") && opt("--version")) {
+    return { installed: await applyUpdate({ tgzPath: opt("--from"), version: opt("--version"), ...where }) };
+  }
+  throw Object.assign(new Error("usage: node update.mjs check | apply | rollback | install --from <tgz> --version <v> [--mods <dir>] [--name <folder>]"), { usage: true });
 }
 
 const invoked = (() => { try { return realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();

@@ -334,3 +334,10 @@ test("update.mjs runs from a copy of the pack outside the repository (no package
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("update.mjs install needs --from and --version (install.sh's entry), else a usage error", () => {
+  const script = fileURLToPath(new URL("../mods/spaces-agents/update.mjs", import.meta.url));
+  const r = spawnSync(process.execPath, [script, "install", "--from", "/nowhere.tgz"], { encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stdout, /install --from <tgz> --version <v>/);
+});
