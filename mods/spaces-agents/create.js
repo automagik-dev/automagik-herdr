@@ -38,9 +38,9 @@ export class BotForm {
     this.instructions = TextareaState.new({ placeholder: "Instructions" });
     this.instructions.set_auto_grow(4, 12);
     this.instructions.on("change", (_e, cx) => cx.notify());
-    this.id = null;
+    this.id = this.mode === "create" ? newBotId() : null; // kept across a change of project
     this.kind = "member";
-    this.look = null;
+    this.look = this.id ? defaultLook(this.id) : null;
     this.agent = "";
     this.lead = "";
     this.category = "";
@@ -87,7 +87,6 @@ export class BotForm {
       if (!b) throw new Error(`${key}/${BOTS_PATH} has no bot ${this.p.bot}.`);
       this.fill(b);
     } else {
-      this.id ??= newBotId();
       this.look ??= defaultLook(this.id);
       this.kind = mainBotOf(file) ? "member" : "main";
       if (!this.agent) this.agent = this.agents.find((a) => a.installed)?.key ?? "";
