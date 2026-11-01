@@ -90,9 +90,17 @@ async function writeBriefingHook(bot, folder) {
 
 // Adds EXCLUDE_LINE to the exclude file git names for this folder (a worktree's `.git` is a
 // file, so the path is asked of git), when git doesn't ignore the settings file already.
-// Not in git: nothing to do. A failure only warns.
+// Not in git: nothing to do. A file git already tracks can't be excluded: the owner is told
+// the hook will show as a change. A failure only warns.
 async function excludeFromGit(folder, settingsPath) {
   const git = async (args) => { try { return await exec("git", args, { cwd: folder }); } catch { return null; } };
+  const tracked = await git(["ls-files", "--error-unmatch", "--", ".claude/settings.local.json"]);
+  if (tracked?.code === 0) {
+    notify({ title: "Bots", level: "warning", timeout: 15000,
+      body: `${settingsPath} is tracked by git, so it can't be excluded; the briefing hook will show as a change. `
+        + "Leave that change out of your commits, or stop tracking the file (git rm --cached)." });
+    return;
+  }
   const ignored = await git(["check-ignore", "-q", ".claude/settings.local.json"]);
   if (!ignored || ignored.code !== 1) return; // 0: ignored already; 128 or no git: not a repository
   let excludePath = null;
@@ -100,14 +108,18 @@ async function excludeFromGit(folder, settingsPath) {
     const r = await git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
     excludePath = r?.code === 0 ? r.stdout.trim() : null;
     if (!excludePath) throw new Error((r?.stderr ?? "git failed").trim());
-    const before = await readTextFile(excludePath);
-    const after = withExclude(before);
-    if (after === null) return;
-    if (before === null) {
-      const m = await exec("mkdir", ["-p", excludePath.slice(0, excludePath.lastIndexOf("/"))]);
-      if (m.code !== 0) throw new Error(m.stderr.trim());
+    // Twice at most: another writer (a second Start in a worktree) may change it between
+    // the read and the write; if the line is there after that, all is well.
+    for (let attempt = 0; ; attempt++) {
+      const before = await readTextFile(excludePath);
+      const after = withExclude(before);
+      if (after === null) return;
+      if (before === null) {
+        const m = await exec("mkdir", ["-p", excludePath.slice(0, excludePath.lastIndexOf("/"))]);
+        if (m.code !== 0) throw new Error(m.stderr.trim());
+      }
+      try { await writeTextFile(excludePath, after, before); return; } catch (e) { if (attempt >= 1) throw e; }
     }
-    await writeTextFile(excludePath, after, before);
   } catch (e) {
     notify({ title: "Bots", level: "warning", timeout: 15000,
       body: `Couldn't add ${EXCLUDE_LINE} to ${excludePath ?? "the git exclude file"} (${e?.message ?? e}). `

@@ -46,6 +46,8 @@ export async function readTextFile(path, { on } = {}) {
 }
 
 export async function writeTextFile(path, text, expected) {
+  // A test can change the file between a caller's read and this write (a race).
+  if (state.beforeWrite) await state.beforeWrite(path);
   let now = null;
   try { now = await readFile(path, "utf8"); } catch {}
   if (now !== expected) throw new Error("stale snapshot");

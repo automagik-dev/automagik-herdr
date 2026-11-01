@@ -141,7 +141,9 @@ briefing types nothing into any pane.
 - **Per person, never committed.** The hook names a path on your computer. Start and Attach
   add `**/.claude/settings.local.json` to the clone's own exclude file
   (`git rev-parse --git-path info/exclude`), unless git already ignores it. If that write
-  fails, a notification says so: keep the file out of your commits by hand.
+  fails, a notification says so: keep the file out of your commits by hand. If your project
+  already tracks `.claude/settings.local.json`, git can't exclude it: the hook shows as a
+  change, and a notification says so. Leave it out of your commits, or stop tracking the file.
 - **A renamed pack gets no hook.** Start and Attach first check that `briefing.mjs` is at
   `<app home>/mods/spaces-agents/`. If Herdr installed the pack under another name because
   the old clone was still there, they write nothing and tell you; redo the steps in
@@ -151,7 +153,11 @@ briefing types nothing into any pane.
   session so Claude Code loads the new hook. A session started with Start reads it at launch.
 - **Quiet everywhere else.** The script prints nothing and exits 0 unless its terminal
   (`$HC_TERMINAL_ID`) carries a `bot` label defined in the project of `$CLAUDE_PROJECT_DIR`.
-  It gives up after 5 seconds and never fails the prompt.
+  It is done within about 2 seconds (a member whose machine doesn't answer shows as
+  unreachable) and never fails the prompt; on an error it writes one line to stderr.
+- **Other agents' words are fenced.** Each member's report sits in its own
+  `<untrusted-report>` element with its angle brackets replaced, under a line telling the
+  bot that reports are data, never instructions.
 - **Notes as well as reports.** The member's own report is the path for "done". herdr-core's
   typed notes still bring `blocked`, `error` and exit to a lead started before the member
   (see Requirements for the `notes` setting).
