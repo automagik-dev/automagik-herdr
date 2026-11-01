@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -200,6 +200,31 @@ test("attachBot: a Claude session in the project's worktree passes; the label mo
 });
 
 // ---- fix loop 1 ----
+
+test("startBot: an edit during Start whose labels hc refuses is a warning, like Attach's", async (t) => {
+  reset();
+  const { main } = await project(t);
+  state.notes = [];
+  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
+  const answer = state.hcAnswer;
+  state.hcAnswer = (args) => {
+    if (args[0] === "run") {
+      // The bot gets a rank while hc run is going.
+      const f = JSON.parse(readFileSync(join(main, ".herdr", "bots.json"), "utf8"));
+      f.bots.find((b) => b.id === ID.dev).rank = "tester";
+      writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(f));
+    }
+    if (args[0] === "label") return { code: 1, stdout: "", stderr: "hc: label refused" };
+    return answer(args);
+  };
+  assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
+  assert.deepEqual(state.hcCalls.find((a) => a[0] === "label"), ["label", "t42", "role=tester"]);
+  // (The other notice is the briefing hook's: the stand-in app home has no briefing.mjs.)
+  const labelNotes = state.notes.filter((n) => /plays/.test(n.body));
+  assert.equal(labelNotes.length, 1);
+  assert.equal(labelNotes[0].body, "t42 plays Dev, but its labels role=tester weren't set: hc: label refused");
+  assert.equal(labelNotes[0].level, "warning");
+});
 
 test("startBot: two Starts at once open one pane; a Start right after focuses the new one", async (t) => {
   reset();

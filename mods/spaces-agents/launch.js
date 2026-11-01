@@ -171,14 +171,18 @@ async function startOnce(projectKey, botId) {
   started.set(botId, { terminal, at: Date.now() });
   rememberProject(projectKey);
   // An edit that landed while this Start ran: the file read again, its role and category
-  // put on the new pane (relabelWords against the labels it started with).
-  try {
-    const fresh = await readProject(projectKey);
-    if (fresh?.bots.some((b) => b.id === botId && !b.planned)) {
-      const words = relabelWords(labels, paneLabels(fresh, botId), labels);
-      if (words.length) await hc(["label", terminal, ...words]);
+  // put on the new pane (relabelWords against the labels it started with). The pane runs
+  // either way, so hc refusing the labels only warns, as Attach does.
+  let now = null;
+  try { now = await readProject(projectKey); } catch { /* the labels it started with stand */ }
+  if (now?.bots.some((b) => b.id === botId && !b.planned)) {
+    const words = relabelWords(labels, paneLabels(now, botId), labels);
+    if (words.length) {
+      let why = null;
+      try { const l = await hc(["label", terminal, ...words]); if (l.code !== 0) why = (l.stderr || l.stdout).trim(); } catch (e) { why = String(e?.message ?? e); }
+      if (why !== null) notify({ title: "Bots", level: "warning", timeout: 12000, body: `${terminal} plays ${bot.name}, but its labels ${words.join(" ")} weren't set: ${why}` });
     }
-  } catch { /* the labels it started with stand */ }
+  }
   return { terminal };
 }
 
