@@ -297,6 +297,16 @@ test("AUTOMAGIK_HERDR_RELEASE_URL: a file:// folder or this repository on GitHub
   assert.match(bad.err, /must be a file:\/\/ folder or https:\/\/github\.com\/automagik-dev\/automagik-herdr/);
 });
 
+test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {
+  const s = scratch(t, { os: "Linux" });
+  s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = "";
+  const r = s.run("--yes");
+  assert.equal(r.code, 1, r.err);
+  assert.doesNotMatch(r.err, /unbound|parameter not set/i);
+  assert.doesNotMatch(r.out, /AUTOMAGIK_HERDR_RELEASE_URL/);
+  assert.match(r.err + r.out, /macOS/);
+});
+
 test("a download cut short runs nothing (the body is one function called on the last line)", (t) => {
   const s = scratch(t, { herdr: false });
   s.publish("9.9.0");
