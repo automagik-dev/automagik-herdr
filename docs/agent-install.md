@@ -1,0 +1,18 @@
+Install Automagik Herdr on this Mac and set up my first bot.
+
+1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash -s -- --yes
+   If it stops (no Node, no Herdr, not a Mac), tell me what it printed and stop.
+2. Check the install. Both must succeed:
+   automagik-herdr --version
+   herdr-app check ~/.config/herdr-app/mods/spaces-agents
+   If automagik-herdr is not found, use ~/.local/bin/automagik-herdr and tell me to add
+   ~/.local/bin to my PATH.
+3. Ask me for: the project folder, and the main bot's name, character and coding agent
+   (claude, codex, gemini…). Characters: whale, octopus, star, moon, wave, squircle, zed,
+   hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
+   ring, gem. With no answer, use the octopus (--omni).
+4. In that folder, create and start it:
+   automagik-herdr create --kind=main --name=<name> --agent=<agent> --character=<character>
+   automagik-herdr start <name>
+5. Report back: the installed version, the output of automagik-herdr ls, and anything that failed.
+Do not edit files under ~/.config/herdr-app by hand.

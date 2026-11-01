@@ -17,7 +17,8 @@ The installer checks Node and Herdr, and offers to install Herdr with Homebrew i
 missing (it asks first). It installs the latest release's pack, checksum verified, into
 `~/.config/herdr-app/mods/spaces-agents`, keeps a copy of any pack already there, and links
 the `automagik-herdr` command into `~/.local/bin`. Running it again is safe, and `--uninstall`
-puts the old pack back.
+puts the old pack back. Add options after `bash -s --`: `--yes` answers every question,
+`--version 1.2.3` installs that release, `--uninstall` undoes the install.
 
 ### Paste this to your agent
 
@@ -27,12 +28,20 @@ Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/ag
 Install Automagik Herdr on this Mac and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash -s -- --yes
-2. Check the install: `automagik-herdr --help` prints its usage, and `automagik-herdr update --check`
-   names the installed version. If `automagik-herdr` is not found, add ~/.local/bin to PATH.
-3. In the project folder I name, create the main bot:
-   automagik-herdr create --kind=main --name=<name> --agent=<claude|codex|gemini|…> --role=<one line>
-   Ask me for the name, agent and role if I haven't given them.
-4. Start it with `automagik-herdr start <name>`, then show me `automagik-herdr ls`.
+   If it stops (no Node, no Herdr, not a Mac), tell me what it printed and stop.
+2. Check the install. Both must succeed:
+   automagik-herdr --version
+   herdr-app check ~/.config/herdr-app/mods/spaces-agents
+   If automagik-herdr is not found, use ~/.local/bin/automagik-herdr and tell me to add
+   ~/.local/bin to my PATH.
+3. Ask me for: the project folder, and the main bot's name, character and coding agent
+   (claude, codex, gemini…). Characters: whale, octopus, star, moon, wave, squircle, zed,
+   hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
+   ring, gem. With no answer, use the octopus (--omni).
+4. In that folder, create and start it:
+   automagik-herdr create --kind=main --name=<name> --agent=<agent> --character=<character>
+   automagik-herdr start <name>
+5. Report back: the installed version, the output of automagik-herdr ls, and anything that failed.
 Do not edit files under ~/.config/herdr-app by hand.
 ```
 
