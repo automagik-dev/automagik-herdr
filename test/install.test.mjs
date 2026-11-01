@@ -29,6 +29,11 @@ function scratch(t, { herdr = true, os = "Darwin" } = {}) {
   exe(join(bin, "uname"), `#!/bin/sh\necho ${os}\n`);
   // Homebrew: logs its arguments; the cask "installs" Herdr into the fake Applications.
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brewLog}"\ncase "$*" in *--cask*) mkdir -p "${apps}/Herdr.app" ;; esac\n`);
+  // herdr-app, when a test puts it on PATH: logs its arguments.
+  const herdrLog = join(root, "herdr-app.log");
+  writeFileSync(herdrLog, "");
+  const addHerdrApp = () => exe(join(bin, "herdr-app"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${herdrLog}"\n`);
+  const extraEnv = {};
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
@@ -37,7 +42,7 @@ function scratch(t, { herdr = true, os = "Darwin" } = {}) {
   const pack = join(appHome, "mods", "spaces-agents");
   const link = join(home, ".local", "bin", "automagik-herdr");
   const run = (...args) => {
-    const r = spawnSync("sh", [INSTALL, ...args], { cwd: root, env, encoding: "utf8" });
+    const r = spawnSync("sh", [INSTALL, ...args], { cwd: root, env: { ...env, ...extraEnv }, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
   // As `curl … | sh -s -- <args>` runs it: the script is stdin.
@@ -61,7 +66,8 @@ function scratch(t, { herdr = true, os = "Darwin" } = {}) {
     }
   };
   const brewCalls = () => readFileSync(brewLog, "utf8").split("\n").filter(Boolean);
-  return { root, home, apps, appHome, pack, link, run, piped, publish, brewCalls };
+  const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter(Boolean);
+  return { root, home, apps, appHome, pack, link, run, piped, publish, brewCalls, addHerdrApp, herdrCalls, extraEnv };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -97,7 +103,7 @@ test("a newer release replaces the installed one; --version pins one", (t) => {
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.10.0");
-  assert.match(r.out, /The pack that was there \(9\.9\.0\) is kept/);
+  assert.match(r.out, /The pack it replaced \(9\.9\.0\) is kept/);
   const pinned = s.run("--yes", "--version", "v9.9.0");
   assert.equal(pinned.code, 0, pinned.err);
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
@@ -143,6 +149,7 @@ test("a tarball holding a symlink installs nothing, and leaves the old pack", (t
   assert.match(r.err, /nothing was installed: .*evil: not a plain file or folder/);
   assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// the old pack\n");
   assert.equal(existsSync(s.link), false);
+  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.before-install")), false);
 });
 
 test("--uninstall puts the old pack back and removes the command; bots and settings stay", (t) => {
@@ -195,6 +202,7 @@ test("not macOS: explains and exits 1; Node too old with no brew: says where to 
 test("--help and an unknown option", (t) => {
   const s = scratch(t);
   assert.match(s.run("--help").out, /install\.sh --uninstall/);
+  assert.match(s.run("--help").out, /needs v0\.1\.0 or later/);
   assert.equal(s.run("--nope").code, 2);
 });
 
@@ -211,4 +219,76 @@ test("piped into sh (curl | sh -s -- --yes), with Herdr from brew, the whole scr
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.brewCalls(), [`install --cask ${CASK}`]);
   assert.match(r.out, /Done: Automagik Herdr 9\.9\.0\./);
+});
+
+test("install over a pack, update, uninstall: the pack from before the first install comes back", (t) => {
+  const s = scratch(t);
+  mkdirSync(s.pack, { recursive: true });
+  writeFileSync(join(s.pack, "main.js"), "// the owner's clone\n");
+  writeFileSync(join(s.pack, "mod.json"), "{}\n");
+  s.publish("9.9.0");
+  const first = s.run("--yes");
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /The pack from before the first install is kept in .*spaces-agents\.before-install/);
+  s.publish("9.10.0");
+  const update = s.run("--yes");
+  assert.equal(update.code, 0, update.err);
+  assert.doesNotMatch(update.out, /before the first install/);
+  const before = join(s.appHome, "automagik-herdr", "spaces-agents.before-install");
+  assert.equal(readFileSync(join(before, "main.js"), "utf8"), "// the owner's clone\n", "the copy is never overwritten");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// the owner's clone\n");
+  assert.equal(existsSync(before), false);
+  assert.equal(readFileSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev", "VERSION"), "utf8").trim(), "9.10.0");
+});
+
+test("the bots layout: added when absent, switched to only with a yes; uninstall removes it only unchanged", (t) => {
+  const s = scratch(t);
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  const layout = join(s.appHome, "layouts", "bots.json");
+  // No terminal, no --yes: added, not switched.
+  const r = s.run();
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readFileSync(layout, "utf8"), readFileSync(join(PACK_SRC, "layouts", "bots.json"), "utf8"));
+  assert.match(r.out, /To use it: herdr-app do layout\.switch/);
+  assert.deepEqual(s.herdrCalls(), []);
+  assert.equal(s.run("--uninstall").code, 0);
+  assert.equal(existsSync(layout), false, "unchanged: removed");
+  // --yes: switched.
+  assert.equal(s.run("--yes").code, 0);
+  assert.deepEqual(s.herdrCalls(), ['do layout.switch {"name":"bots"}']);
+  // Edited by the person: kept on uninstall, never overwritten on install.
+  writeFileSync(layout, "{\"mine\":true}\n");
+  assert.equal(s.run("--uninstall").code, 0);
+  assert.equal(readFileSync(layout, "utf8"), "{\"mine\":true}\n");
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(readFileSync(layout, "utf8"), "{\"mine\":true}\n");
+  assert.equal(s.herdrCalls().length, 1);
+});
+
+test("AUTOMAGIK_HERDR_RELEASE_URL: a file:// folder or this repository on GitHub only, always said", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const ok = s.run("--yes");
+  assert.match(ok.out, /^Releases from file:\/\/.* \(AUTOMAGIK_HERDR_RELEASE_URL\)\.$/m);
+  s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = "https://evil.example/releases";
+  const bad = s.run("--yes");
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /must be a file:\/\/ folder or https:\/\/github\.com\/automagik-dev\/automagik-herdr/);
+});
+
+test("a download cut short runs nothing (the body is one function called on the last line)", (t) => {
+  const s = scratch(t, { herdr: false });
+  s.publish("9.9.0");
+  const text = readFileSync(INSTALL, "utf8");
+  for (const cut of [0.3, 0.6, 0.95]) {
+    const part = text.slice(0, Math.floor(text.length * cut));
+    const r = spawnSync("sh", ["-s", "--", "--yes"], { cwd: s.root, input: part, encoding: "utf8",
+      env: { HOME: s.home, PATH: `${join(s.root, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin` } });
+    assert.equal(r.stdout, "", `cut at ${cut}`);
+  }
+  assert.deepEqual(s.brewCalls(), []);
+  assert.equal(existsSync(s.pack), false);
 });
