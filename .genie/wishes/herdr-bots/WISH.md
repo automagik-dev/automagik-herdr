@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `herdr-bots` |
 | **Date** | 2026-11-01 |
 | **Author** | Claude Code wish writer, at the orchestrator t1m's request, for the owner |
