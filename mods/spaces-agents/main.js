@@ -755,6 +755,8 @@ export default class Spaces extends View {
         .child(h_flex().id("bot-new").w_full().h(34).px(10).gap(10).items_center().rounded(8).cursor_pointer()
           .bg(t.raised).text_color(t.foreground).text_size(13).font_semibold().hover((s) => s.bg(t.hover))
           .on_click(() => openBotForm({ form: "create" }))
+          // Right-click: this computer's bots, to Edit or Start (the bot rows come in Group 3).
+          .on_mouse_down("right", () => openBotForm({ form: "pick" }, "popup"))
           .child(div().text_size(15).child("+")).child("New bot"))));
   }
 }

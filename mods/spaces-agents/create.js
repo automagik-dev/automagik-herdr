@@ -1,15 +1,15 @@
-// The Create / Edit form, and the Attach picker: the pack opened as a Herdr dialog
-// (props.form "create" | "edit" | "attach"). Text fields are Herdr's Input and Textarea;
+// The Create / Edit form, the Attach picker and the bot list (Edit, Start): the pack opened
+// as a Herdr dialog or popup (props.form "create" | "edit" | "attach" | "pick"). Text fields are Herdr's Input and Textarea;
 // choices are pills, as in Herdr's own automations form. The form reads the project's
 // .herdr/bots.json itself and writes back its raw copy with the text it read as the
 // snapshot, so an entry it can't show, or someone's edit since, is never lost. Apache-2.0.
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { theme, readTextFile, pickFolder, knownAgents, closeOverlay, spaces, focused, run } from "herdr";
+import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run } from "herdr";
 import { BOTS_PATH, CHARACTERS, COLOURS, MAX_INSTRUCTIONS, OMNI_LOOK, parseBots, mainBotOf, newBotId, defaultLook, applyBotEdit } from "./model.js";
 import { discoverProjects, keyOf, writeBots } from "./bots.js";
-import { attachBot } from "./launch.js";
+import { attachBot, startBot } from "./launch.js";
 
 const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
 
@@ -19,7 +19,7 @@ export class BotForm {
     this.mode = p.form;
     this.error = null; // why it can't be saved, shown above the buttons
     this.busy = false;
-    if (this.mode === "attach") {
+    if (this.mode === "attach" || this.mode === "pick") {
       this.projects = null;
       cx.spawn(async (cx) => {
         try { this.projects = (await discoverProjects()).filter((q) => !q.machine); } catch (e) { this.error = String(e?.message ?? e); }
@@ -167,6 +167,25 @@ export class BotForm {
     });
   }
 
+  // The bot list's actions, until the bot rows (Group 3) carry their own menu.
+  edit(project, bot) {
+    openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "edit", bot: bot.id, project: project.key } });
+    closeOverlay(this.p.overlay);
+  }
+
+  start(project, bot, cx) {
+    if (this.busy) return;
+    this.busy = true;
+    this.error = null;
+    cx.spawn(async (cx) => {
+      const r = await startBot(project.key, bot.id);
+      this.busy = false;
+      if (r.refused) this.error = r.refused;
+      else { run("spaces-agents.refresh"); closeOverlay(this.p.overlay); }
+      cx.notify();
+    });
+  }
+
   // ---- drawing (automations' helpers) ----
 
   button(id, label, t, onClick, opts = {}) {
@@ -186,8 +205,9 @@ export class BotForm {
 
   render(cx) {
     const t = theme();
-    const title = this.mode === "attach" ? `Attach ${this.p.terminal} as a bot` : this.mode === "edit" ? "Edit bot" : "New bot";
-    const body = this.mode === "attach" ? this.attachBody(t) : this.formBody(t, cx);
+    const list = this.mode === "attach" || this.mode === "pick";
+    const title = { attach: `Attach ${this.p.terminal} as a bot`, pick: "Bots", edit: "Edit bot" }[this.mode] ?? "New bot";
+    const body = list ? this.listBody(t) : this.formBody(t, cx);
     return v_flex().id("bot-form").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child(title)))
@@ -196,20 +216,25 @@ export class BotForm {
         .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.ansi1).child(this.error)))
         .child(h_flex().gap(8).justify_end()
           .child(this.button("bot-cancel", "Cancel", t, () => closeOverlay(this.p.overlay)))
-          .when(this.mode !== "attach", (el) => el.child(this.button("bot-save", this.busy ? "Saving…" : "Save", t, (cx) => this.save(cx), { solid: true })))));
+          .when(!list, (el) => el.child(this.button("bot-save", this.busy ? "Saving…" : "Save", t, (cx) => this.save(cx), { solid: true })))));
   }
 
-  attachBody(t) {
+  // This computer's bots by project: click one to attach the pane (attach), or Edit / Start (pick).
+  listBody(t) {
     const label = (s) => div().pt(8).text_size(11).font_semibold().text_color(t.dim).child(s);
     if (!this.projects) return div().p(14).text_color(t.muted).child("Finding bots…");
+    const pick = this.mode === "pick";
     const rows = this.projects.flatMap((q) => {
-      const bots = q.file.bots.filter((b) => !b.planned);
+      const bots = q.file.bots.filter((b) => pick || !b.planned);
       if (!bots.length) return [];
       return [label(base(q.key).toUpperCase()), ...bots.map((b) =>
-        h_flex().id(`pick-${b.id}`).h(30).px(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => this.attach(q, b, cx))
+        h_flex().id(`pick-${b.id}`).h(30).px(8).gap(8).items_center().rounded(7).hover((s) => s.bg(t.hover))
+          .when(!pick, (el) => el.cursor_pointer().on_click((_e, cx) => this.attach(q, b, cx)))
           .child(div().flex_none().child(b.name))
-          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(b.kind === "main" ? "Main bot" : b.role)))];
+          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted)
+            .child(b.planned ? `planned · wave ${b.planned.wave}` : b.kind === "main" ? "Main bot" : b.role))
+          .when(pick, (el) => el.child(this.button(`edit-${b.id}`, "Edit", t, () => this.edit(q, b), { h: 22 }))
+            .when(!b.planned, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 })))))];
     });
     return v_flex().p(14).gap(2).children(rows.length ? rows : [div().text_color(t.muted).child("No bots on this computer yet. Create one first.")]);
   }
