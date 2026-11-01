@@ -567,6 +567,24 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Merged into `dev`:** a4ff066; on merged `dev` 126/126, `node --check` clean.
 - **Form mockup (A13): approved by the owner 2026-11-01** ("approved, build the form like the mockup"): https://claude.ai/artifact/BjhApoVpvzHzXZER2uJ6Ch, version 2; source kept at `mockup/create-form.dc.html` (its `/_blob/` image urls resolve only inside the artifact; characters come from `characters.js`).
 
+
+### Group 10 review — pane labels A16 — 2026-11-01
+
+- **Branch:** `wish/herdr-bots-g10`, 95f628d..351fd7f; engineer g3-fix; criteria reviewer g6-review; quality reviewer g6-quality.
+- **Criteria: SHIP. Quality round 1: FIX-FIRST,** 7 findings.
+- **Fix loop:** 7 findings fixed:
+  - a copied squad follows a lead change;
+  - a non-slug category id is refused only when new;
+  - `main` dropped from RANKS;
+  - relabel failures are collected and reported once per save, and the save does not wait;
+  - one shared `relabel(plan, io)`;
+  - Start re-reads the file after `hc run`;
+  - 351fd7f: the CLI prints a failed relabel on stderr (L6).
+- **Quality re-check: PASS.** Two minor follow-ups, not blocking:
+  - LOW: launch.js `startOnce` ignores hc's exit code on its post-start relabel, so the mod is silent.
+  - CodeRabbit (Minor): a lookup that throws, such as hc being unavailable, is reported as "labels weren't updated" instead of "could not be checked".
+- **Merged into `dev`:** PR #4, a86c89f. 218/218 tests, `node --check` clean, CI checks pass.
+
 ---
 
 ## Files to Create/Modify
