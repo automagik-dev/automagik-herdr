@@ -16,7 +16,8 @@ import { briefingText, directMembers } from "./briefingText.mjs";
 // unanswered, and a last guard ends the process silently just before 5 s.
 const BUDGET_MS = 4500;
 const until = Date.now() + BUDGET_MS;
-setTimeout(() => process.exit(0), 4900).unref();
+const guard = setTimeout(() => process.exit(0), 4900);
+guard.unref();
 
 const TAIL_LINES = 12;
 const MAX_HELPERS = 30;
@@ -102,6 +103,8 @@ async function helpersOf(address) {
 
 try {
   const text = await main();
+  // Past this point the block is on its way: the guard must not cut the write short.
+  clearTimeout(guard);
   if (text) process.stdout.write(`${text}\n`);
 } catch {
   // Fail open: no briefing this turn, never an error in the session.
