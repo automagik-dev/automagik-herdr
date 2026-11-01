@@ -111,11 +111,14 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
 ```
 
 The pure rules (project key, schema, leads, ids, looks) live in `mods/spaces-agents/model.js`
-and import nothing from Herdr. `test/bots.test.mjs` runs `bots.js` against a stand-in
-`herdr` module (`test/herdr-stub.mjs`), so a pass there does not prove the pack works inside
-Herdr. Check that in Herdr itself.
+and import nothing from Herdr. `test/bots.test.mjs` runs `bots.js` against stand-ins for
+Herdr's `herdr` and `fs/promises` modules (`test/herdr-stub.mjs`, `test/fs-stub.mjs`; the
+second has only the seven functions Herdr gives a mod). A pass there does not prove the pack
+works inside Herdr. Check that in Herdr itself.
 
 ## License
 
-Apache-2.0 (`LICENSE`; the pack folder carries a copy). `mods/spaces-agents/main.js` is
-changed from Herdr's `spaces` 0.1.7 and says so at its top.
+Apache-2.0 (`LICENSE`; the pack folder carries a copy). Two files are changed from Herdr's
+`spaces` 0.1.7: `mods/spaces-agents/main.js`, which says so at its top, and
+`mods/spaces-agents/mod.json`, whose `place` changed from `none` to `left`. JSON can't
+carry a comment, so the change to `mod.json` is noted here and in the repository history.
