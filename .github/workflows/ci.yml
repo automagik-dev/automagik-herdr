@@ -1,0 +1,44 @@
+name: CI
+
+# The pack's tests, a syntax check of every file Herdr, the CLI or the release tooling runs,
+# and one version everywhere (scripts/version.mjs). No build step and no dependencies: the
+# pack is plain JavaScript that Herdr loads as it is.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pack:
+    name: Tests, syntax and versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+
+      - name: Tests
+        run: node --test 'test/*.test.mjs'
+
+      - name: Syntax
+        run: |
+          set -euo pipefail
+          for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do
+            node --check "$f"
+          done
+
+      - name: One version
+        run: node scripts/version.mjs check

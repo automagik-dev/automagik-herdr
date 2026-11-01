@@ -1,0 +1,159 @@
+name: Release
+
+# Cuts an Automagik Herdr release from dev on every merge into it, as Automagik's release.yml
+# does (its `cut` job, without Bun, npm, desktop builds or the plugin lane): one version for the
+# repository (0.N.P: scripts/version.mjs), committed as `chore(release): v<version>` and tagged
+# `v<version>` on dev, published as the GitHub release `v<version>` with
+#
+#   automagik-herdr-<version>.tgz   the pack: `tar czf … -C mods spaces-agents`
+#   SHA256SUMS                      its sha256, which `automagik-herdr update` checks
+#
+# and then main moves to the release commit (main holds released commits and nothing else).
+#
+# A push to dev (a merged pull request) cuts one; so does a dispatch:
+#   gh workflow run release.yml --ref dev [--field prerelease=true]
+# The workflow's own push (the version commit) starts no run: GitHub starts none for a push made
+# with the workflow token. A dev that has nothing since the last release but release, CI, docs and
+# test commits cuts nothing. Cuts queue one at a time; a merge that lands while one is cutting is
+# released by the next run, with every merge after it that lands before it starts.
+#
+# Nothing is published to npm. Pushes use the workflow's own token; CI already ran on the dev
+# commit being released, and this job runs the gates again before it tags.
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Publish as a prerelease (not shown as Latest, not offered as an update)'
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  cut:
+    name: Cut v<version> on dev
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: release-cut
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.cut.outputs.version }}
+      sha: ${{ steps.cut.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: dev
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+
+      - name: Anything new since the last release
+        id: new
+        run: |
+          set -euo pipefail
+          # Commits since the newest v0.N.P other than the release's own and those that ship
+          # nothing (CI, docs, tests): scripts/version.mjs NOT_SHIPPING. No release yet: yes.
+          if [[ "$(node scripts/version.mjs ships)" == "no" ]]; then
+            echo "dev has nothing since the last release: no release"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: The gates the release stands on
+        if: steps.new.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          node --test 'test/*.test.mjs'
+          for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do
+            node --check "$f"
+          done
+          node scripts/version.mjs check
+
+      - name: Version, commit and tag
+        id: cut
+        if: steps.new.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          version=$(node scripts/version.mjs next)
+          node scripts/version.mjs set "${version}"
+          node scripts/version.mjs check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "chore(release): v${version}"
+          git tag -a "v${version}" -m "Automagik Herdr ${version}"
+          # Atomic: when dev moved meanwhile (a second merge), neither lands, so no tag names a
+          # release commit dev never got. The newer merge's own run (queued behind this one)
+          # then releases these changes with it, so this run stops here, cleanly: no version,
+          # and the steps after it skip.
+          if ! git push -q --atomic origin HEAD:refs/heads/dev "refs/tags/v${version}"; then
+            git fetch -q origin dev
+            if [[ "$(git rev-parse origin/dev)" != "$(git rev-parse HEAD~1)" ]]; then
+              echo "::notice::dev moved on while this run cut v${version}; the run for the newer merge releases these changes too"
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        if: steps.cut.outputs.version != ''
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          tar czf "release/automagik-herdr-${VERSION}.tgz" -C mods spaces-agents
+          (cd release && sha256sum -- * > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - name: Publish the release
+        if: steps.cut.outputs.version != ''
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          flags=(--latest)
+          [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
+          gh release create "v${VERSION}" release/* "${flags[@]}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "Automagik Herdr ${VERSION}" \
+            --generate-notes
+
+      - name: main moves to the release
+        if: steps.cut.outputs.version != ''
+        env:
+          SHA: ${{ steps.cut.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Fast-forward only: main holds released commits and nothing else. The first release
+          # creates it.
+          found=0
+          git ls-remote --exit-code --heads origin main >/dev/null || found=$?
+          if [[ "${found}" == "2" ]]; then
+            git push -q origin "${SHA}:refs/heads/main"
+            echo "main created at ${SHA}"
+          elif [[ "${found}" != "0" ]]; then
+            exit "${found}"
+          else
+            git fetch -q origin main
+            if git merge-base --is-ancestor FETCH_HEAD "${SHA}"; then
+              git push -q origin "${SHA}:refs/heads/main"
+            else
+              echo "main is already past ${SHA}"
+            fi
+          fi
