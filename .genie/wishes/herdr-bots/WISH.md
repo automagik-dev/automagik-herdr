@@ -361,6 +361,23 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Merged into `dev`:** see the merge commit after 5bf3b61; validation on merged `dev` green.
 - **Card:** open for live checks (mid-session hook pickup on `t1bw`, C5/C6 runs, herdr-core note on `done`, `git status` after Start/Attach).
 
+### Group 3 review — 2026-11-01 (round 1)
+
+- **Branch:** `wish/herdr-bots-g3` from 5bf3b61, 7 commits to 4c1c3a1; worker g3-engineer (stopped after the GUI halt); `node --test` 76/76.
+- **Spike (deliverable 1), via a temporary `hb-spike-g3` dialog mod, since removed:** `image()` draws an SVG written at run time only by a path relative to the app home (absolute paths draw nothing, no error); `terminals()` rows carry `status_ms`, `program.agent`, `created_ms`, `foreground` and herdr-core's `error`; fold arrow on keyboard focus shown by screenshot, hover by the clone's `on_hover` pattern. Its overlay contended with the Group 2 live run (see the GUI halt above).
+- **Criteria review: FIX-FIRST.** MEDIUM: `track_focus`/`tab_index` on each bot tree lets a click in the sidebar take keyboard focus from the terminal (shipped mods use `track_focus` only on overlays). LOW: liveness via `rows.js` `liveFrom` (counts remote, per the Group 2 note); a project under a folded machine header is not drawn; `error` shows the "Needs you" mark with the failed pose. Passed: 21 characters and 19 inks match Automagik; 0 of 4,788 SVGs contain `color-mix(`; poses; folding (A7); helpers exclude bot-labelled terminals; worktree dedupe; A1–A4, A8, A10 row menu; licences byte copies and NOTICE.
+- **Quality pass: PASS.** LOW: a colour named like `__proto__` blanks a picture; a failed picture write is never retried; keyboard handles keyed by list position.
+- **Route:** fix after Group 6, together with the detected model in rows (A12) and CLI-created projects showing in the sidebar.
+
+### Group 6 review — owner decisions A11/A12 — 2026-11-01
+
+- **Branch:** `wish/herdr-bots-g6` from 9a48489: f971244, d7bcab6, fixes 8c01b8a, b9857da, 865432d; worker g6-engineer; `node --test` 126/126; `node --check` clean incl. `bin/`; read-only real-host runs: `herdr-bots ls --all --json` wrote nothing; `detectModel` on `t1bw` foreground argv → `claude-opus-5-5`.
+- **Round 1: criteria FIX-FIRST** (HIGH sidebar Start ignored a pinned model; MEDIUM hidden pane without `--space`, live bot showing its pin, unchecked legacy model at start) **and quality FIX-FIRST** (HIGH `rm` deleted the whole `bots.json`, other bots included, when the file had no main bot, reproduced; MEDIUM failed `hc` read as "no pane", unbounded processes, triplicated logic).
+- **Fix loop 1:** `rm` deletes only an empty list, else `checkBots`; launch.js and CLI pass a listed pin via `modelArgs`; placement from a live local terminal's `herdr.space`/`herdr.tab`, else a stderr warning; running bot shows detected else default; failed `hc` is an error; global cap of 8 processes; live rule, report tail and hook install shared (`launchArgs.js`, `briefingText.mjs`, `briefing.mjs` `gatherBriefing`); `detach` by bare id.
+- **Round 2: criteria SHIP, quality PASS.** LOW left: the 60 s twin-start guard misses a pane still in its `sh -c` wrapper; CLI start dropped the always-passing folder check; `--tab` without `--space` ignored; placement can pick another space whose terminal works in the project; one unreachable remote holder marks a bot "hc unavailable".
+- **Merged into `dev`:** a4ff066; on merged `dev` 126/126, `node --check` clean.
+- **Form mockup (A13):** https://claude.ai/artifact/BjhApoVpvzHzXZER2uJ6Ch, awaiting the owner's approval.
+
 ---
 
 ## Files to Create/Modify
