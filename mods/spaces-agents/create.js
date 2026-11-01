@@ -16,7 +16,7 @@ import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, parseBots, newBotId, applyBotEdit } from "./model.js";
 import { configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
+import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { discoverProjects, keyOf, writeBots } from "./bots.js";
 import { attachBot, startBot, liveTerminalOf } from "./launch.js";
 
@@ -176,23 +176,24 @@ export class BotForm {
 
   // ---- character pictures ----
 
-  // Every picture the form shows now: the preview and the grid in the chosen colour, the
-  // sidebar preview (a stopped bot sleeps, A6) and the leads in their own looks.
+  // Every picture the form shows now, as [file, () => its SVG text]: the six interface
+  // icons, the preview and the grid in the chosen colour, the sidebar preview (a stopped bot
+  // sleeps, A6) and the leads in their own looks.
   wantedPets() {
     const s = this.s;
-    const out = [[s.character, s.colour, "idle"], [s.character, s.colour, "asleep"],
+    const looks = [[s.character, s.colour, "idle"], [s.character, s.colour, "asleep"],
       ...CHARACTERS.map((c) => [c, s.colour, "idle"])];
-    for (const o of this.file ? leadOptions(this.file, s.id) : []) out.push([o.look?.character, o.look?.colour, "idle"]);
-    return out.filter(([c, k]) => c && k);
+    for (const o of this.file ? leadOptions(this.file, s.id) : []) looks.push([o.look?.character, o.look?.colour, "idle"]);
+    return [
+      ...Object.entries(UI_ICONS).map(([name, text]) => [uiIconFile(name), () => text]),
+      ...looks.filter(([c, k]) => c && k).map(([c, k, pose]) => [characterFile(c, k, pose, this.dark), () => characterSvg(c, k, pose, this.dark)]),
+    ];
   }
 
   // Writes the pictures not written yet, then redraws (until then each is an empty box). A
   // picture that fails to write is not tried again, and one notice names the folder.
   missingPets() {
-    return this.wantedPets().filter(([c, k, pose]) => {
-      const file = characterFile(c, k, pose, this.dark);
-      return !this.pets.has(file) && !this.petsFailed.has(file);
-    });
+    return this.wantedPets().filter(([file]) => !this.pets.has(file) && !this.petsFailed.has(file));
   }
 
   ensurePets(cx) {
@@ -203,10 +204,9 @@ export class BotForm {
     cx.spawn(async (cx) => {
       let why = null;
       try { await fs.mkdir(folder, { recursive: true }); } catch (e) { why = e; }
-      for (const [c, k, pose] of todo) {
-        const file = characterFile(c, k, pose, this.dark);
+      for (const [file, text] of todo) {
         if (why) { this.petsFailed.add(file); continue; }
-        const svgText = characterSvg(c, k, pose, this.dark);
+        const svgText = text();
         try {
           const had = await fs.readFile(`${folder}/${file}`, "utf8").catch(() => null);
           if (had !== svgText) await fs.writeFile(`${folder}/${file}`, svgText);
@@ -215,13 +215,20 @@ export class BotForm {
       }
       if (why && !this.petsNoticed) {
         this.petsNoticed = true;
-        notify({ title: "Bots: character pictures not written", body: `Can't write to ${folder} (${why?.message ?? why}); the form shows empty boxes instead.`, level: "warning" });
+        notify({ title: "Bots: form pictures not written", body: `Can't write to ${folder} (${why?.message ?? why}); the form shows empty boxes instead.`, level: "warning" });
       }
       this.petsBusy = false;
       cx.notify();
       // A colour picked while writing: its pictures next (failed ones are not retried).
       if (this.missingPets().length) this.ensurePets(cx);
     });
+  }
+
+  // An interface icon tinted in `color`, as the sidebar tints Herdr's icons; an empty box
+  // of the same size until its file is written.
+  glyph(name, size, color) {
+    const file = uiIconFile(name);
+    return this.pets.has(file) ? svg(`${PETS}/${file}`).size(size).flex_none().text_color(color) : div().size(size).flex_none();
   }
 
   pet(look, pose, size) {
@@ -420,11 +427,12 @@ export class BotForm {
   header({ t, state }) {
     const chip = h_flex().id("bot-project").gap(6).px(10).py(4).items_center().rounded_full().border_1().border_color(t.border)
       .bg(t.surface ?? t.background).text_size(12)
+      .child(this.glyph("folder", 13, t.muted))
       .child(div().text_color(t.foreground).child(this.key ? base(this.key) : "Pick a project…"))
       .when(Boolean(this.space), (el) => el.child(div().text_color(t.muted).child(`· ${this.space}`)))
       .when(this.mode === "create", (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
         .tooltip(this.key ? `${this.key}. Change project` : "Pick the project folder")
-        .child(div().text_color(t.muted).child("⌄"))
+        .child(this.glyph("chevron", 10, t.muted))
         .on_click((_e, cx) => cx.spawn(async (cx) => {
           const dir = await pickFolder({ prompt: "Use this project" });
           if (dir) {
@@ -440,7 +448,7 @@ export class BotForm {
       .when(Boolean(this.loadError), (el) => el.child(div().max_w(360).text_size(11).text_color(t.ansi1).child(this.loadError)))
       .child(h_flex().id("bot-close").size(32).flex_none().items_center().justify_center().rounded(8).cursor_pointer()
         .text_color(t.muted).hover((s) => s.bg(t.hover)).tooltip("Close").accessibility_label("Close")
-        .on_click(() => closeOverlay(this.p.overlay)).child("✕"));
+        .on_click(() => closeOverlay(this.p.overlay)).child(this.glyph("close", 16, t.muted)));
   }
 
   leftColumn({ t, state, agent, model }) {
@@ -463,9 +471,9 @@ export class BotForm {
         .on_click((_e, cx) => this.set({ colour: k }, cx))
         .child(div().size(18).rounded_full().bg(paint));
     });
-    const pill = (id, text, onClick) => h_flex().id(id).px(10).py(4).items_center().rounded_full().text_size(11)
+    const pill = (id, text, onClick, glyph = null) => h_flex().id(id).gap(5).px(10).py(4).items_center().rounded_full().text_size(11)
       .border_1().border_color(t.border).text_color(t.foreground).cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => onClick(cx)).child(text);
+      .on_click((_e, cx) => onClick(cx)).when(Boolean(glyph), (el) => el.child(this.glyph(glyph, 11, t.foreground))).child(text);
     const program = agent ?? null;
     return v_flex().id("bot-left").w(340).h_full().flex_none().px(20).py(18).gap(16).overflow_y_scrollbar()
       .bg(t.chrome ?? t.surface ?? t.background).border_r(1).border_color(t.border)
@@ -473,10 +481,10 @@ export class BotForm {
         .child(this.pet(look, "idle", 112))
         .child(h_flex().gap(6)
           .child(pill("bot-omni", "Omni preset", (cx) => this.set(omniLook(), cx)))
-          .child(pill("bot-shuffle", "⤨ Shuffle", (cx) => this.set({
+          .child(pill("bot-shuffle", "Shuffle", (cx) => this.set({
             character: CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)],
             colour: COLOUR_ORDER[Math.floor(Math.random() * COLOUR_ORDER.length)],
-          }, cx)))))
+          }, cx), "shuffle"))))
       .child(v_flex().gap(6).child(this.label(t, "Name")).child(this.field(t, "bot-name", this.inputs.name, { size: 14, bold: true })))
       .child(v_flex().gap(6).child(this.label(t, "Character")).child(v_flex().gap(4).children(rows)))
       .child(v_flex().gap(8).child(this.label(t, "Colour")).child(h_flex().flex_wrap().gap(3).children(swatches)))
@@ -544,7 +552,7 @@ export class BotForm {
     const trigger = Button.new("bot-pin").flex_none().gap(6).px(10).py(6).items_center().rounded(8).cursor_pointer()
       .border_1().border_color(t.border).bg(t.background).text_size(12).text_color(t.foreground)
       .hover((s) => s.bg(t.hover)).accessibility_label("Pin a model")
-      .child(state.pin ? "Change pin" : "Pin a model").child(div().text_color(t.muted).child("⌄"));
+      .child(state.pin ? "Change pin" : "Pin a model").child(this.glyph("chevron", 10, t.muted));
     const list = v_flex().w(260).p(4).gap(1).rounded(10).border_1().border_color(t.border).bg(t.popover ?? t.raised)
       .children(options.map((o, i) => Button.new(`bot-pin-${i}`).h(30).px(10).gap(8).items_center().rounded(7).cursor_pointer()
         .selected(o.id === state.pin).set_position(i + 1, options.length).accessibility_label(o.label)
@@ -560,7 +568,7 @@ export class BotForm {
       .child(v_flex().gap(6).children(rows.length ? rows : [div().text_size(12).text_color(this.agentsError ? t.ansi1 : t.muted)
         .child(this.agentsError ?? (this.agents.length ? "No coding agent is installed on this computer." : "Finding Herdr's coding agents…"))]))
       .child(h_flex().gap(10).px(12).py(10).items_center().rounded(10).border_1().border_color(t.border).bg(t.surface ?? t.background)
-        .child(div().flex_none().text_color(t.accent).child("◷"))
+        .child(this.glyph("clock", 16, t.accent))
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(h_flex().gap(4).text_size(13).font_medium().child("Model:")
             .child(div().min_w(0).truncate().font_family(v.mono).text_color(t.accent).child(model.shown)))
@@ -606,7 +614,7 @@ export class BotForm {
     const trigger = Button.new("bot-lead").w_full().h(38).px(10).gap(8).items_center().rounded(8).cursor_pointer()
       .border_1().border_color(t.input).bg(t.surface ?? t.background).hover((s) => s.bg(t.hover)).accessibility_label("Reports to")
       .children(lead ? who(lead, 22) : [div().flex_1().text_size(12).text_color(t.muted).child("No main bot in this project")])
-      .child(div().text_color(t.muted).child("⌄"));
+      .child(this.glyph("chevron", 10, t.muted));
     const list = v_flex().w(420).max_h(320).overflow_y_scrollbar().id("bot-lead-list").p(4).gap(1).rounded(10)
       .border_1().border_color(t.border).bg(t.popover ?? t.raised)
       .children(options.map((o, i) => Button.new(`bot-lead-${o.id}`).h(30).pl(10 + o.depth * 18).pr(10).gap(8).items_center().rounded(7)
@@ -694,7 +702,7 @@ export class BotForm {
               .on_click((_e, cx) => { cx.write_to_clipboard(cli); this.copied = true; cx.notify(); }))
             .when(Boolean(refusal), (el) => el.opacity(0.5).cursor_not_allowed().tooltip(`Not copied: ${refusal}`)
               .on_click((_e, cx) => { this.error = `Not copied: ${refusal}`; cx.notify(); }))
-            .child(this.copied ? "Copied" : "Copy")))
+            .child(this.glyph("copy", 12, t.foreground)).child(this.copied ? "Copied" : "Copy")))
         .child(btn("bot-cancel", done ? "Close" : "Cancel", () => closeOverlay(this.p.overlay), "ghost"))
         .when(!done, (el) => el.child(btn("bot-save", this.busy ? "Saving…" : save, (cx) => this.save(cx), "raised")))
         .when(!done && creating && !state.planned, (el) => el.child(btn("bot-save-start", this.busy ? "Starting…" : "Create & start", (cx) => this.save(cx, true), "solid"))));

@@ -17,6 +17,7 @@ function element(kind, arg) {
     on_click: (h) => { node.click = h; return proxy; },
     tooltip: (x) => { node.props.tooltip = x; return proxy; },
     opacity: (x) => { node.props.opacity = x; return proxy; },
+    text_color: (x) => { node.props.color = x; return proxy; },
   };
   const proxy = new Proxy(node, {
     get(_t, prop) {
@@ -40,6 +41,14 @@ export function index(root) {
   };
   walk(root);
   return root;
+}
+
+/** Every element under `root` (depth first). */
+export function all(root) {
+  const out = [];
+  const walk = (x) => { const node = x?.__node; if (!node) return; out.push(node); node.kids.forEach(walk); };
+  walk(root);
+  return out;
 }
 
 /** Every text inside an element, in order. */

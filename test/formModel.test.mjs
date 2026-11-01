@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/spaces-agents/formModel.js";
+import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/spaces-agents/formModel.js";
 import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -293,3 +293,13 @@ for (const sh of SHELLS) {
       ["--help", "-r", "-- x\n= y", undefined, "b-capaaaaaaa", undefined]);
   });
 }
+
+test("UI_ICONS: the mockup's six icons as stroke-only SVG documents (tinted by svg())", () => {
+  assert.deepEqual(Object.keys(UI_ICONS).sort(), ["chevron", "clock", "close", "copy", "folder", "shuffle"]);
+  for (const [name, text] of Object.entries(UI_ICONS)) {
+    assert.match(text, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" viewBox="0 0 24 24"[^>]* fill="none" stroke="currentColor"/, name);
+    assert.match(text, /<\/svg>$/, name);
+    assert.doesNotMatch(text, /<script|url\(/, name);
+  }
+  assert.equal(uiIconFile("close"), "ui-close.svg");
+});

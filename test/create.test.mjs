@@ -15,7 +15,7 @@ registerHooks({
   resolve: (specifier, context, next) => (stubs[specifier] && fromPack(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
 });
 const { state } = await import(stubs.herdr);
-const { nodes, textOf, index } = await import(stubs["gpui-kit"]);
+const { nodes, textOf, index, all } = await import(stubs["gpui-kit"]);
 const { BotForm, FORM_SIZE } = await import("../mods/spaces-agents/create.js");
 
 const look = (character, colour) => ({ character, colour });
@@ -176,4 +176,17 @@ test("character pictures are written under the app home outside mods/ and drawn"
   assert.ok(form.pets.size >= 22);
   const file = [...form.pets][0];
   assert.match(readFileSync(join(root, "app/spaces-agents-pets", file), "utf8"), /^<svg /);
+});
+
+test("the mockup's six icons are SVG files under the app home, drawn tinted with svg()", async () => {
+  seed([MAIN]);
+  const { form, draw } = await open({ form: "create" });
+  for (const name of ["folder", "clock", "shuffle", "chevron", "close", "copy"]) {
+    assert.match(readFileSync(join(root, "app/spaces-agents-pets", `ui-${name}.svg`), "utf8"), /^<svg [^>]*stroke="currentColor"/, name);
+  }
+  const drawn = all(draw()).filter((n) => n.kind === "svg" && /^spaces-agents-pets\/ui-/.test(n.arg));
+  assert.deepEqual([...new Set(drawn.map((n) => n.arg))].sort(),
+    ["chevron", "clock", "close", "copy", "folder", "shuffle"].map((n) => `spaces-agents-pets/ui-${n}.svg`));
+  assert.ok(drawn.every((n) => /^#[0-9a-f]{6}$/i.test(n.props.color)), "each one tinted");
+  assert.ok(form.pets.has("ui-close.svg"));
 });
