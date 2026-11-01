@@ -34,7 +34,7 @@ This wish turns that branch into the product:
 - One release: one pack tarball with every mod and `layouts/automagik.json`.
   - `update.mjs` swaps every pack-owned folder atomically, with one `.prev` set.
   - `install.sh` becomes the only installer: it absorbs `scripts/install.mjs`'s key merge, catalog config and per-mod `herdr-app check`.
-  - A bridge asset for v0.2.0 updaters.
+  - v0.2.0 installs move to v0.3.0 by rerunning the curl installer (D11).
 - The footer rail: a Bots tab, plus New bot at the footer instead of a sidebar row.
 - Consolidation: `md-menu` + `markdown-browser` → one mod; `space-icon` → inside the sidebar mod.
 - The rename to `am-*` as expand → migrate → contract-later:
@@ -64,8 +64,8 @@ This wish turns that branch into the product:
 | D8 | **One layout, `automagik`.** The pack's root `layouts/automagik.json` replaces v0.2.0's bots-only `mods/spaces-agents/layouts/automagik.json`. The installer replaces an installed copy only when it is byte-identical to the v0.2.0 file; otherwise it keeps it and prints a note. Every mod keeps `place: "none"`. | Owner ruling 9 and herdr-bots A18. |
 | D9 | **Integration branch.** Groups merge into `wish/am-pack`; `dev` receives one merge, which cuts one release, **v0.3.0**. | Every shipping merge into `dev` cuts a release (herdr-bots A14). Landing the groups one by one would publish half-built packs. |
 | D10 | **Pocket Link is not in the pack.** The installer writes only folders the pack owns. It moves a live folder aside to `<app home>/automagik-herdr/backup/<mod>-<timestamp>`, never deletes one, and keeps `.state/`, dotfiles and `node_modules`. | Owner rulings 10 and 11, after the 18:40 run erased Pocket Link's pairing key. |
-| D11 | **Bridge asset for v0.2.0 updaters.** v0.3.0 also publishes `automagik-herdr-<v>.tgz` holding only `spaces-agents/` (the new am-sidebar code under the old prefix). v0.2.0's `update.mjs` accepts it, because it refuses any entry outside `spaces-agents/` (`update.mjs:88-138`). The new `update.mjs` it brings then installs the full pack and runs the migration on its next run, which happens at once. | v0.2.0 users already get "run automagik-herdr update" notices. Without the bridge, that command fails with "not a plain pack". One extra `git archive` line is cheaper than telling every install to rerun curl. |
-| D12 | **Rename sequence: expand → migrate → contract-later.** Group 6 makes the installer and updater understand both names, through a migration map. Group 7 renames each surface. The old names stay readable for one release. | A wide rename on a live install needs both names to work while state moves. |
+| D11 | **No bridge: v0.2.0 installs move by rerunning the curl installer.** It recognises a v0.2.0 home (its marker and `mods/spaces-agents`), installs the pack and runs the Group 6 migration. v0.2.0's own `automagik-herdr update` stays on v0.2.0: its `pickUpdate` finds no `automagik-herdr-<v>.tgz` in later releases and reports nothing. | Owner via t187, 2026-11-01. v0.2.0 runs only on the owner's team's machines, so one message to rerun the installer is cheaper than a bridge build. The reviewer showed a bridge can't finish the upgrade on its own (v0.2.0's CLI imports `update.mjs` statically and exits), and it would have to ship with every release. |
+| D12 | **Folders and display names are both renamed, with a migration (owner, 2026-11-01).** Herdr routes `<mod>.<command>`, `mod.open:<mod>`, layout `content.mod`, `data/<mod>/` and per-mod storage by folder name, so there are no aliases. The migration rewrites everything that names an old folder (Group 6a) and makes the briefing hook's path rename-proof (Group 6b). Shared-key shims read the old key and write `am.*` for one release. | The owner chose clean folder names over titles only, with the full list of what breaks in front of him. Owner's layouts are migrated, each with a dated backup, because leaving them blanks the sidebar. |
 | D13 | **Writers.** t187 owns the pack content: Groups 1, 2 and 5a. The herdr-bots team owns release machinery, the footer, the sidebar and the rename: Groups 3, 4, 5b, 6, 7 and 8. Each group claims its card before it starts. | Two writers already touched `pack/vendor-on-dev`; disjoint file sets prevent collisions. |
 
 ## Simplicity Case
@@ -75,7 +75,7 @@ This wish turns that branch into the product:
   - the footer reuses the sidebar's own dialogs through mod commands;
   - the rename is a map the installer applies once.
 - **Added machinery:**
-  - the bridge asset (D11), because v0.2.0 installs exist and their updater accepts only one prefix;
+  - the installer's v0.2.0 path (D11), because v0.2.0 installs exist;
   - the migration map (D12), because shared keys and state folders live on in installs;
   - the integration branch (D9), because every shipping merge to `dev` releases.
 - **Deferred until measured:**
@@ -98,7 +98,7 @@ This wish turns that branch into the product:
 ## Success Criteria
 
 - [ ] On a scratch `HERDR_APP_HOME` with plain Herdr, the curl one-liner installs the eight `am-*` mods and `layouts/automagik.json`, `herdr-app check` passes for each, and after the layout switch Herdr shows the sidebar, footer rail, tab bar and `+` menu with no mod errors.
-- [ ] A v0.2.0 install (spaces-agents, its before-install copy, `.prev`, shared keys, `automagik.json` layout) runs `automagik-herdr update` and ends on v0.3.0. It has the eight `am-*` folders, its shared keys under `am.*`, and its layout replaced only if unedited. Nothing outside the pack's folders has changed: Pocket Link's folder is byte-identical.
+- [ ] A v0.2.0 install (spaces-agents, its before-install copy, `.prev`, shared keys, `automagik.json` layout, a `main-agents`-style edited layout, keys bound to `spaces-agents.paste`, a Claude bot's briefing hook) reruns the curl installer and ends on v0.3.0. It has the eight `am-*` folders, shared keys under `am.*`, every layout and key binding pointing at the new names (each layout backed up first), the `automagik-herdr` link working, and the briefing hook firing. Nothing outside the pack's folders has changed: Pocket Link's folder is byte-identical.
 - [ ] `automagik-herdr update --rollback` returns that install to v0.2.0 working.
 - [ ] The footer's Bots tab, first in the rail, opens a popup with New bot and Bot settings. The sidebar body has no New bot row.
 - [ ] `grep -rn "0xRowdy\|herdr-cliproxy"` finds only NOTICE's credit line. A reviewer's diff of `mods/am-quota` against the upstream repo shows no shared lines.
@@ -117,7 +117,7 @@ This wish turns that branch into the product:
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| 3 | engineer | High: release machinery and the updater (trust boundary), full gate | inherit | One download, one installer, the bridge asset |
+| 3 | engineer | High: release machinery and the updater (trust boundary), full gate | inherit | One download, one installer, ownership record |
 | 4 | engineer | Low: one tab, one popup, one removed row; after Group 2 | inherit | The footer owns New bot |
 | 5a | engineer (t187) | Medium: merges two mods' renderers | inherit | am-markdown from md-menu + markdown-browser |
 
@@ -126,8 +126,9 @@ This wish turns that branch into the product:
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
 | 5b | engineer | Medium: moves a dialog into the sidebar mod | inherit | space-icon inside the sidebar |
-| 6 | engineer | High: live-state migration | inherit | Rename expand: the migration map in installer and updater |
-| 7 | engineer | Medium: wide mechanical rename, per surface | inherit | Rename migrate: folders, ids, commands, keys |
+| 6a | engineer | High: rewrites the person's layouts, keys and shared state, with backups | inherit | Rename migration: layouts, keys, shared state, app-home paths |
+| 6b | engineer | High: touches each project's Claude settings | inherit | The briefing hook survives renames |
+| 7 | engineer | Medium: wide mechanical rename, three PRs | inherit | Rename: folders, ids, commands, docs |
 | 8 | engineer + qa | High: end-to-end on scratch homes | inherit | Integrate, verify, merge to dev, v0.3.0 |
 
 **Global constraints:**
@@ -217,15 +218,14 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
 
 ---
 
-### Group 3: One download, one installer, the bridge
+### Group 3: One download, one installer, ownership record
 
-**Goal:** A release publishes one pack tarball (plus the bridge), and `install.sh` with `update.mjs` installs, updates and rolls back every pack-owned mod as one unit, never touching anything else.
+**Goal:** A release publishes one pack tarball, and `install.sh` with `update.mjs` installs, updates and rolls back every pack-owned mod as one unit, never touching anything else.
 
 **Deliverables:**
 1. `release.yml`:
    - `git archive … v<v>` of `mods/*` (except pocket-link) and `layouts/automagik.json` → `automagik-herdr-pack-<v>.tgz`;
-   - the bridge `automagik-herdr-<v>.tgz` (`mods/spaces-agents` under prefix `spaces-agents/`, D11);
-   - both listed in `SHA256SUMS`;
+   - listed in `SHA256SUMS`;
    - `catalog/index.json` regenerated before tagging.
 2. `update.mjs install|update|rollback` over N folders:
    - the pack's folder list comes from the tarball's top level, checked against a `PACK_MODS` list shipped in the pack;
@@ -237,10 +237,13 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
    - free-key merge of `keys.json` (a key in use stays the person's);
    - `<app home>/data/mod-manager/catalog.json`;
    - `herdr-app check` per mod;
-   - the layout replaced only when byte-identical to v0.2.0's (D8).
+   - the layout replaced only when byte-identical to v0.2.0's (D8);
+   - an ownership record: the marker lists every folder the installer put in `mods/`. Only listed folders are replaced, updated or rolled back. An old-named folder it didn't install (the owner's hand-installed sidebar-chrome, auto-tabs, …) is reported and left alone, or adopted only on an explicit yes (`--adopt`), which moves it to `.prev/` first;
+   - a v0.2.0 marker (`layout=added`, `before=…`) is read and carried over, and `--uninstall` handles both marker versions and the layout's new path.
    `scripts/install.mjs` is then deleted.
 4. Tests flipped and added. G11's "layouts holds only automagik.json naming only spaces-agents and stock mods" becomes "the shipped layout names only pack mods and stock mods". Add tests for:
-   - a v0.2.0-shaped home updated by the bridge;
+   - a v0.2.0-shaped home upgraded by rerunning install.sh (before Group 6, the pack lands beside spaces-agents);
+   - old-named folders the installer didn't write are left alone without `--adopt`;
    - an `.prev` set rollback;
    - a pocket-link folder byte-identical after install, update and rollback;
    - a foreign folder refused.
@@ -252,11 +255,12 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
   - `update.mjs update [--check] [--json]`
   - `update.mjs rollback`
   - `PACK_MODS` (in `mods/spaces-agents/release.js`)
-  - asset names `automagik-herdr-pack-<v>.tgz` and `automagik-herdr-<v>.tgz`
+  - asset name `automagik-herdr-pack-<v>.tgz`
+  - marker format v2: `version=`, `mods=<comma list>`, `layout=added|kept`, `before=kept|none`
 
 **Acceptance Criteria:**
 - [ ] On a scratch home, install → update → rollback leaves every pack folder at the expected VERSION, and a planted `mods/pocket-link` byte-identical (shasum of every file).
-- [ ] A v0.2.0-shaped scratch home updated through the bridge ends with the full pack installed.
+- [ ] A v0.2.0-shaped scratch home with hand-installed old-named mods: rerunning install.sh installs the pack, leaves the hand-installed folders untouched without `--adopt`, and with `--adopt` moves them to `.prev/` first.
 - [ ] One installer: `scripts/install.mjs` is gone and the README names only install.sh.
 - [ ] `actionlint` and `shellcheck -s sh` are clean. The full gate passes.
 
@@ -345,30 +349,29 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
 
 ---
 
-### Group 6: Rename expand — the migration map
+### Group 6a: Rename migration — layouts, keys, shared state, app-home paths
 
-**Goal:** The installer and updater know every old→new name, and running either on an old-named install migrates folders, state and shared keys exactly once.
+**Goal:** One idempotent migration moves every reference to an old folder name onto the D4 names, with a backup of every file it rewrites, so nothing the person set up stops working.
 
 **Deliverables:**
-1. `mods/spaces-agents/migrate.js`, pure: `RENAMES` (folder map per D4) and `KEY_RENAMES`:
-   - `spaces-agents.icons` → `am.icons`
-   - `spaces-agents.projects` → `am.projects`
-   - `spaces-agents.update-shown` → `am.update-shown`
-   - `space.colors` → `am.space-colors`
-   - `sidebar.collapsed` → `am.sidebar-collapsed`
-   - `sidebar.width` → `am.sidebar-width`
-   - every `markdown-browser.*` key → `am.markdown.*`
-   It exports `plan(installed)` → the list of moves. Both `update.mjs` and `install.sh` (through node) apply it: folders are moved aside per D10; `shared.json` keys are copied (never deleted, for one release); `.prev`/`.before-install` are renamed; layout references to old mod names are rewritten only in the pack's own unedited layout.
-2. The mods read the new key first, then the old one.
+1. `mods/spaces-agents/migrate.js`, pure: `RENAMES` (spaces-agents→am-sidebar, sidebar-chrome→am-footer, auto-tabs→am-tabs, new-menu-tui→am-new-menu, md-menu→am-markdown, mod-manager→am-mods, automations→am-automations; am-quota unchanged) and `plan(home)` → the list of moves below. `install.sh` and `update.mjs` (through node) apply it.
+2. What it migrates:
+   - **Folders:** only the ones the ownership record lists (Group 3).
+   - **Layouts** (`<app home>/layouts/*.json`, the owner's `main-agents` included): `content.mod` and the root `terminal_menu`, old id → new. Each file is backed up to `<app home>/automagik-herdr/backup/layouts-<date>/` first. A file whose structure isn't recognised is left alone and reported.
+   - **keys.json:** `spaces-agents.paste`, `spaces-agents.paste_image`, `spaces-agents.close_pane`, `mod.open:mod-manager`, the `mod:markdown-browser` section, and any other `<old>.<command>` or `mod.open:<old>`, all rewritten with a backup. `mod.open:machine-add` and `mod.open:pocket-link` are not ours and are untouched.
+   - **Shared state:** `spaces-agents.icons`, `spaces-agents.projects`, `spaces-agents.pets`, `spaces-agents.update-shown`, `space.colors`, `sidebar.collapsed`, `sidebar.width`, `markdown-browser.slots/.show/.last` → `am.*`. Copied, never deleted, for one release. The mods read `am.*` first, then the old key. `shared("layout")` is rewritten if it names a renamed layout.
+   - **App-home paths:** `spaces-agents-projects.json` → `am-sidebar-projects.json` (copied); `space-icons/` stays where it is (shared state references it); `sidebar-agents.json` (the rename map) stays, read by am-sidebar; `data/mod-manager/` → `data/am-mods/`; `data/am-quota/` unchanged.
+   - **Per-mod localStorage** (auto-tabs' panel memory) can't be reached from outside the mod. Its loss is stated in the release notes.
+   - **The catalog** `modNames` and titles are regenerated after Group 7.
+3. Tests on scratch homes: a v0.2.0 home plus an owner-shaped home (hand-installed old-named mods, `main-agents.json`, a keys.json with the paste bindings). Running the plan twice is a no-op the second time.
 
 **Interfaces:**
-- Consumes: Group 3's `update.mjs`, `install.sh`, `PACK_MODS`.
-- Produces: `RENAMES: Record<string,string>`, `KEY_RENAMES: Record<string,string>`, `plan(installed: {mods: string[], keys: string[]}) → {move: [from,to][], copyKeys: [from,to][]}`.
+- Consumes: Group 3's ownership record and `update.mjs`; Group 5b's sidebar (space-icon inside it).
+- Produces: `RENAMES: Record<string,string>`, `KEY_RENAMES: Record<string,string>`, `plan(home: string) → { folders: [from,to][], layouts: {file, edits}[], keys: [from,to][], shared: [from,to][], paths: [from,to][] }`, `apply(plan, { backupDir }) → { done, skipped: {item, reason}[] }`.
 
 **Acceptance Criteria:**
-- [ ] Applying the plan twice is a no-op the second time.
-- [ ] An old-named scratch home keeps its bots, icons, colours and collapsed state after migration.
-- [ ] `mods/pocket-link` is untouched.
+- [ ] On the owner-shaped scratch home, after the migration: Cmd+V's binding names `am-sidebar.paste`; `main-agents.json` names `am-sidebar` and `am-footer`, and its backup exists; the bots, icons, colours and collapsed state survive; `mods/pocket-link` and every non-pack folder are byte-identical.
+- [ ] The second run changes nothing and reports nothing to do.
 
 **Validation:**
 ```bash
@@ -379,23 +382,50 @@ node --test 'test/*.test.mjs' && node --check mods/spaces-agents/migrate.js && s
 
 ---
 
-### Group 7: Rename migrate — per surface
+### Group 6b: The briefing hook survives renames
 
-**Goal:** Every folder, mod id, mod command, title and doc uses the `am-*` names of D4.
+**Goal:** A Claude bot's briefing hook points at a path that never moves, and every existing hook is moved onto it.
 
 **Deliverables:**
-1. Three commits, one per surface:
-   - (a) `git mv mods/spaces-agents mods/am-sidebar`, with its mod commands (`am-sidebar.new-bot`, …), `bin/`, `release.js` and the tests;
-   - (b) `am-footer`, `am-tabs`, `am-new-menu`, `am-automations`, `am-mods`, `am-markdown`, `am-quota` folders, their `mod.json` titles and the cross-mod `mod.open`/`run` names;
-   - (c) `layouts/automagik.json`, `keys.json`, `catalog/*`, `release.yml` paths, `scripts/version.mjs`'s VERSION path, install.sh, README, RECIPE and NOTICE.
-2. Mod commands keep the old names as aliases for one release.
+1. A fixed entry point, `<app home>/automagik-herdr/briefing.mjs`: a one-line shim that imports the installed sidebar's `briefing.mjs`, kept by the installer and updater. `briefingText.mjs` writes hooks with that path. The OURS pattern in `mergeHook` recognises the new path and both old shapes (`mods/spaces-agents/briefing.mjs`, `mods/am-sidebar/briefing.mjs`), so it never adds a duplicate.
+2. Existing hooks migrated. For every project the pack knows (open spaces, remembered projects, every project with a readable `.herdr/bots.json`), a `UserPromptSubmit` command in `.claude/settings.local.json` matching OURS is rewritten to the fixed path, after the file is backed up to `settings.local.json.am-backup`. Any other shape is left alone. A running Claude session needs `/hooks` once; the run lists those sessions (see #12).
+3. The `~/.local/bin/automagik-herdr` link is repointed at the renamed CLI. A non-link file there is left alone with a message.
 
 **Interfaces:**
-- Consumes: Group 6's `RENAMES`.
-- Produces: the D4 folder names. `PACK_MODS` lists them.
+- Consumes: `briefingText.mjs` `hookCommand(appHome)` and `mergeHook(settings, command)`; Group 6a's `plan`/`apply`.
+- Produces: `STABLE_BRIEFING = "<app home>/automagik-herdr/briefing.mjs"`; `migrateHooks(projects: string[], { backup: true }) → { rewritten: string[], skipped: {file, reason}[] }`.
 
 **Acceptance Criteria:**
-- [ ] `git grep -n "spaces-agents\|sidebar-chrome\|auto-tabs\|new-menu-tui\|mod-manager\|md-menu\|markdown-browser"` finds only migrate.js, NOTICE's provenance lines and alias handlers.
+- [ ] On a scratch project with a v0.2.0-shaped hook, the migration rewrites it, a backup exists, and `briefing.mjs` run through the new command prints its block within 2 s.
+- [ ] After a later folder rename (simulated), the hook still runs.
+- [ ] `automagik-herdr --version` works through the repointed link.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done && sh -n install.sh
+```
+
+**depends-on:** Group 6a
+
+---
+
+### Group 7: Rename migrate — per surface, three PRs
+
+**Goal:** Every folder, mod id, mod command, title and doc uses the D4 names.
+
+**Deliverables:**
+1. Three PRs into `wish/am-pack`, each within the band (renames counted as moves):
+   - (a) `git mv mods/spaces-agents mods/am-sidebar`, with its mod commands (`am-sidebar.paste`, …), `bin/`, `release.js`, `openOverlay({mod: "am-sidebar"})` in Group 4's footer popup, and its tests;
+   - (b) the `am-footer`, `am-tabs`, `am-new-menu`, `am-automations`, `am-mods` and `am-markdown` folders, their `mod.json` titles, the cross-mod `mod.open`/`openOverlay` names, and their tests;
+   - (c) `layouts/automagik.json`, `keys.json`, `catalog/*` (regenerated), `release.yml` paths, `scripts/version.mjs`'s VERSION path, install.sh, README, RECIPE.md, NOTICE and DESIGN references.
+2. No aliases (D12). Group 6a migrates whatever sends the old names.
+
+**Interfaces:**
+- Consumes: Group 6a's `RENAMES` and Group 6b's stable hook.
+- Produces: the D4 folder names; `PACK_MODS` lists them.
+
+**Acceptance Criteria:**
+- [ ] `git grep -n "spaces-agents\|sidebar-chrome\|auto-tabs\|new-menu-tui\|mod-manager\|md-menu\|markdown-browser"` finds only migrate.js, the OURS pattern, NOTICE's provenance lines and tests of the migration.
 - [ ] `herdr-app check` passes for all eight mods on a scratch copy.
 
 **Validation:**
@@ -403,7 +433,7 @@ node --test 'test/*.test.mjs' && node --check mods/spaces-agents/migrate.js && s
 node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check && sh -n install.sh && actionlint
 ```
 
-**depends-on:** Group 6, Group 2, Group 5a
+**depends-on:** Group 6b, Group 2, Group 5a
 
 ---
 
@@ -429,7 +459,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check && sh -n install.sh && shellcheck -s sh install.sh && actionlint && node scripts/catalog.mjs --check
 ```
 
-**depends-on:** Group 7, Group 4
+**depends-on:** Group 7, Group 4, Group 6b
 
 ---
 
@@ -438,7 +468,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
 - [ ] A fresh scratch home installs v0.3.0 with the curl one-liner: eight mods, the layout, the CLI link, and no mod errors after the switch.
-- [ ] A scratch home at v0.2.0 updates through `automagik-herdr update` to v0.3.0 and keeps its bots, icons and colours. `--rollback` returns it to v0.2.0.
+- [ ] A scratch home at v0.2.0 reruns the curl installer to v0.3.0 and keeps its bots, icons, colours, key bindings, layouts (backed up) and briefing hooks. `automagik-herdr update --rollback` returns the pack folders to their v0.2.0 copies; the migration's backups restore the layouts and keys.
 - [ ] `mods/pocket-link` and any other non-pack folder in the scratch home are byte-identical before and after install, update and rollback.
 - [ ] The footer Bots tab opens New bot. The Quota tab opens the panel. The Pocket Link tab shows only when Pocket Link is installed.
 
@@ -450,7 +480,8 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 |------|----------|------------|
 | The installer touches a mod it doesn't own (the 18:40 incident) | High | D10; PACK_MODS allowlist; a planted pocket-link byte-identical test in Groups 3 and 6; scratch homes only |
 | A credential leaks from am-quota | High | Group 2's 0600/atomic/no-argv criteria and a separate security pass |
-| v0.2.0 installs stranded by the new tarball shape | Medium | The D11 bridge asset; a test with a v0.2.0-shaped home |
+| v0.2.0 installs stay on v0.2.0 until someone reruns the installer | Low | v0.2.0 runs only on the owner's team's machines: one message with the curl command at release; README upgrade note |
+| The migration rewrites the person's layouts, keys, shared state and Claude settings | High | Group 6a/6b: a backup before every rewrite, unrecognised shapes left alone, idempotent plan, owner-shaped scratch home in tests |
 | Rebase conflicts: the pack branch was cut from 695eced, and dev has since gained G8–G11 and G5 | Medium | Group 1 resolves them with the README rule stated; G5's RECIPE wins |
 | Group size over the band (the pack is ~97 files) | Medium | Two PRs in Group 1; pruned icons; typings out of git |
 | am-automations name not confirmed by the owner | Low | Rename it before Group 7 if the owner prefers another |
@@ -474,7 +505,7 @@ scripts/install.mjs                              (deleted, Group 3)
 mods/sidebar-chrome/main.js, mods/spaces-agents/main.js   (Group 4)
 mods/markdown/                                   (Group 5a; md-menu and markdown-browser deleted)
 mods/spaces-agents/spaceIcon.js, emoji-data.js   (Group 5b; mods/space-icon deleted)
-mods/spaces-agents/migrate.js                    (Group 6)
+mods/spaces-agents/migrate.js, briefingText.mjs   (Groups 6a, 6b)
 mods/am-* (git mv)                               (Group 7)
 test/*.test.mjs
 ```
