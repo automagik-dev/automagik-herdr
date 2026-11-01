@@ -31,6 +31,8 @@ The source is branch `pack/vendor-on-dev` at 0722de1: nine mods vendored on dev 
 
 6. **New bot leaves the sidebar body.** The whole "New bot" line moves into `am-footer`. The bot management suite (create, edit, start, attach, the list) is reached from the footer.
 7. **Every mod is Apache-2.0.**
+8. **automations is vendored** (coordinator recommendation, for the owner to confirm). The pack layout places it and the footer's Automations tab toggles `automations-panel`. It is DnzzL/herdr-automations, MIT, so the MIT notice is kept.
+9. **One layout: `automagik`.** v0.1.0 ships a bots-only `mods/spaces-agents/layouts/automagik.json`. The pack's full root `layouts/automagik.json` replaces it on upgrade only when the installed copy is byte-identical to the v0.1.0 copy. `spaces-agents` has place `"none"`, so Herdr never docks a second sidebar.
 
 ## Constraints the plan must honour
 
