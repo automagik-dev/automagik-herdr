@@ -8,6 +8,17 @@ import { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS, noticeText } from "./release.
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS };
 
+/** The shared value (Herdr's `shared`/`setShared`) holding the version already announced, so a
+ *  mod reload or a second sidebar view doesn't announce it again. */
+export const SHOWN_KEY = "spaces-agents.update-shown";
+
+/** The announced version from the shared value, or null when it isn't one. */
+export const shownFrom = (value) => (typeof value === "string" && value !== "" ? value : null);
+
+/** How long one `node update.mjs check` may take before the next node is tried (ms). */
+export const EXEC_TIMEOUT_MS = 30_000;
+const TIMED_OUT = Symbol("timed out");
+
 /** Where node is looked for, in order: PATH, then Homebrew on Apple silicon, then on Intel. */
 export const NODE_PATHS = Object.freeze(["node", "/opt/homebrew/bin/node", "/usr/local/bin/node"]);
 
@@ -29,16 +40,24 @@ function answerOf(stdout) {
 }
 
 /**
- * Runs `<node> <script> check` with the first node that starts and answers. `exec(command,
- * args)` resolves `{ code, stdout, stderr }` and rejects when the program can't start (Herdr's
- * exec). A node that starts but gives no answer of update.mjs's (too old to load it, say) is
- * passed over too. Resolves `{ node, result }`, node null when none answered.
+ * Runs `<node> <script> check [--mods <mods>]` with the first node that starts and answers.
+ * `exec(command, args)` resolves `{ code, stdout, stderr }` and rejects when the program can't
+ * start (Herdr's exec). A node that starts but gives no answer of update.mjs's (too old to load
+ * it, say), or takes longer than `timeoutMs`, is passed over too. `sleep(ms)` resolves after
+ * ms (the mod builds it on Herdr's timer, which has no setTimeout); without it nothing is timed.
+ * `mods`: the app home's mods folder, so update.mjs reads the installed version from the same
+ * Herdr. Resolves `{ node, result }`, node null when none answered.
  */
-export async function runCheck(exec, script, last = null) {
+export async function runCheck(exec, script, last = null, { mods = null, sleep = null, timeoutMs = EXEC_TIMEOUT_MS } = {}) {
+  const args = [script, "check", ...(mods ? ["--mods", mods] : [])];
   let fallback = null;
   for (const node of nodeOrder(last)) {
     let result;
-    try { result = await exec(node, [script, "check"]); } catch { continue; }
+    try {
+      const run = exec(node, args);
+      result = sleep ? await Promise.race([run, sleep(timeoutMs).then(() => TIMED_OUT)]) : await run;
+    } catch { continue; }
+    if (result === TIMED_OUT) continue;
     if (answerOf(result?.stdout)) return { node, result };
     fallback ??= { node: null, result };
   }
@@ -68,7 +87,8 @@ export function nextCheckIn(kind) {
   return kind === "retry" ? RETRY_MS : CHECK_EVERY_MS;
 }
 
-/** The notice for a check, once per version: null when there is no update or it was shown. */
+/** The notice for a check, once per version: null when there is no update or it was shown
+ *  (`shownVersion`: shownFrom(shared(SHOWN_KEY)), kept across reloads and views). */
 export function noticeFor(check, shownVersion = null) {
   if (check?.kind !== "update" || check.update.version === shownVersion) return null;
   return { title: "Automagik Herdr update", body: noticeText(check.update), level: "info" };

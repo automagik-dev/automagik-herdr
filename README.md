@@ -3,7 +3,7 @@
 Autonomous teams of coding agents across harnesses (Claude Code, Codex, Gemini, Kimi, Oh My Pi…)
 with a main bot, captains and members, running in [Herdr](https://dev.herdr.app).
 
-![Automagik Herdr: a team of bots in Herdr's sidebar](docs/hero.png)
+<!-- hero: docs/hero.png, a sidebar screenshot with a team running -->
 
 ## Install
 
@@ -164,7 +164,8 @@ already running may need `/hooks` once to load the hook.
 ### Requirements
 
 - macOS, Herdr and herdr-core (`hc`).
-- Node 22.7 or later, for the CLI, updates and the briefing. The sidebar itself does not need it.
+- Node 22.7 or later, for the CLI, the briefing and updates. The sidebar works without it, but
+  its update check needs it.
 - herdr-core's typed notes left on (`~/.config/herdr-core/config.toml` must not say
   `notes = false`).
 

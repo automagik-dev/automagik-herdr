@@ -16,7 +16,7 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
-import { FIRST_CHECK_MS, nextCheckIn, noticeFor, readCheck, runCheck } from "./updateCheck.js";
+import { FIRST_CHECK_MS, SHOWN_KEY, nextCheckIn, noticeFor, readCheck, runCheck, shownFrom } from "./updateCheck.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -150,7 +150,7 @@ export default class Spaces extends View {
     cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); });
     // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
     // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js).
-    this.updates = { node: null, shown: null };
+    this.updates = { node: null };
     cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
     // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
@@ -388,12 +388,15 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       let check = { kind: "retry" };
       try {
-        const { node, result } = await runCheck(exec, `${appHome()}/mods/spaces-agents/update.mjs`, this.updates.node);
+        const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+        const { node, result } = await runCheck(exec, `${appHome()}/mods/spaces-agents/update.mjs`, this.updates.node,
+          { mods: `${appHome()}/mods`, sleep });
         if (node) this.updates.node = node;
         check = readCheck(result);
       } catch {}
-      const note = noticeFor(check, this.updates.shown);
-      if (note) { this.updates.shown = check.update.version; try { notify(note); } catch {} }
+      // The version already announced is shared, so a reload or a second view stays quiet.
+      const note = noticeFor(check, shownFrom(shared(SHOWN_KEY)));
+      if (note) { try { setShared(SHOWN_KEY, check.update.version); notify(note); } catch {} }
       const wait = nextCheckIn(check.kind);
       if (wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
     });
