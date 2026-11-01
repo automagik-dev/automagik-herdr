@@ -37,6 +37,7 @@ main() {
   MARK=$STATE/installed-by-install.sh
   BEFORE=$STATE/spaces-agents.before-install
   LAYOUT=$APP_HOME/layouts/automagik.json
+  HINT=no
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
@@ -59,6 +60,11 @@ main() {
 
   # The test hooks: a release from a file:// folder or this repository's GitHub pages only.
   if [ -n "${AUTOMAGIK_HERDR_RELEASE_URL:-}" ]; then
+    # curl collapses dot segments (.../automagik-herdr/../../x is x), so `..` and `%`
+    # (an escaped dot) are refused before the prefix is checked.
+    case $AUTOMAGIK_HERDR_RELEASE_URL in
+      *..*|*%*) fail "AUTOMAGIK_HERDR_RELEASE_URL must not contain '..' or '%'; not $AUTOMAGIK_HERDR_RELEASE_URL." ;;
+    esac
     case $AUTOMAGIK_HERDR_RELEASE_URL in
       file://*|"https://github.com/$REPO/"*) RELEASES=$AUTOMAGIK_HERDR_RELEASE_URL ;;
       *) fail "AUTOMAGIK_HERDR_RELEASE_URL must be a file:// folder or https://github.com/$REPO/…; not $AUTOMAGIK_HERDR_RELEASE_URL." ;;
@@ -104,15 +110,52 @@ ask() {
   return 1
 }
 
-# The marker's `before=` line: "kept" when a pack was there at the first install (copied to
-# $BEFORE), "none" when there was none.
-before_state() { sed -n 's/^before=//p' "$MARK" 2>/dev/null | head -n 1; }
+# A line of the marker: `before=` is "kept" when a pack was there at the first install
+# (copied to $BEFORE) or "none"; `layout=added` when this script added $LAYOUT.
+mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
+
+# The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
+# is unavailable.
+shown_layout() {
+  command -v herdr-app >/dev/null 2>&1 || return 0
+  st=$(herdr-app status </dev/null 2>/dev/null) || return 0
+  printf '%s\n' "$st" | sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+# The sidebar mod has place "none": it shows only in a layout that names it. While Herdr shows
+# another layout, this offers the switch (--yes switches), but only to the pack's own copy;
+# an edited layout, no herdr-app or no status get the printed command (HINT) and nothing else.
+offer_switch() {
+  [ -f "$LAYOUT" ] || return 0
+  shown=$(shown_layout)
+  [ "$shown" != automagik ] || return 0
+  if [ -z "$shown" ] || [ ! -f "$PACK/layouts/automagik.json" ] || ! cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
+    HINT=yes
+    return 0
+  fi
+  if ask "Switch Herdr to the automagik layout now? The Automagik sidebar appears after this."; then
+    if herdr-app 'do' layout.switch '{"name":"automagik"}' </dev/null >/dev/null 2>&1; then
+      say "Switched Herdr to the automagik layout."
+      return 0
+    fi
+    say "Herdr didn't switch."
+  fi
+  HINT=yes
+}
+
+switch_hint() {
+  [ "$HINT" = yes ] || return 0
+  say "To show the Automagik sidebar, switch Herdr to the automagik layout; the sidebar appears after this:"
+  say "  herdr-app do layout.switch '{\"name\":\"automagik\"}'"
+}
 
 uninstall() {
   [ -f "$MARK" ] || { say "Nothing to uninstall: this installer did not install the pack in $MODS."; exit 0; }
-  before=$(before_state)
-  # The automagik layout goes only when it is still the pack's own (cmp): an edited one stays.
-  if [ -f "$LAYOUT" ] && [ -f "$PACK/layouts/automagik.json" ] && cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
+  [ ! -L "$PACK" ] || fail "$PACK is a symlink, not a pack this script installed: nothing was changed. Remove the link, then run --uninstall again."
+  before=$(mark_get before)
+  # The automagik layout goes only when this script added it and it is still the pack's own
+  # (cmp): an edited one, or one copied by hand, stays.
+  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$PACK/layouts/automagik.json" ] && cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi
@@ -182,7 +225,7 @@ install() {
   # ---- d. the pack ----
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
   if [ -n "$WANT" ]; then base=$RELEASES/download/v$WANT; else base=$RELEASES/latest/download; fi
-  curl -fsSL "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
+  curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
   # The release names its tarball automagik-herdr-<version>.tgz; SHA256SUMS lists it.
   TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
   [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-<version>.tgz."
@@ -194,18 +237,22 @@ install() {
   target=$PACK/bin/automagik-herdr.mjs
   if [ "$installed" = "$VERSION" ] && [ -f "$MARK" ] && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
     say "Automagik Herdr $VERSION is already up to date ($PACK, $LINK)."
+    offer_switch
+    switch_hint
     exit 0
   fi
 
   mkdir -p "$STATE"
+  rm -rf "$BEFORE.tmp"
   copied=no
+  laid=$(mark_get layout)
   # What --uninstall puts back: "kept" (the pack there at the first install, copied once to
   # $BEFORE and never overwritten) or "none". Later runs keep what the first one found.
-  if [ -f "$MARK" ]; then first=$(before_state); elif [ -e "$PACK" ] && [ ! -L "$PACK" ]; then first=kept; else first=none; fi
+  if [ -f "$MARK" ]; then first=$(mark_get before); elif [ -e "$PACK" ] && [ ! -L "$PACK" ]; then first=kept; else first=none; fi
 
   if [ "$installed" != "$VERSION" ]; then
     say "Downloading Automagik Herdr $VERSION..."
-    curl -fsSL "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
+    curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
     if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
     sum=${sum%% *}
     want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
@@ -219,7 +266,7 @@ install() {
     for f in update.mjs release.js; do
       { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
     done
-    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then cp -RP "$PACK" "$BEFORE"; copied=yes; fi
+    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; copied=yes; fi
     if ! out=$(node "$TMP/x/spaces-agents/update.mjs" install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>&1); then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
       if [ "$copied" = yes ]; then rm -rf "$BEFORE"; fi
@@ -232,24 +279,19 @@ install() {
     # before-install copy: a pack already at this version (placed by hand) gets no marker,
     # so --uninstall leaves it in mods/.
     printf 'version=%s\nbefore=%s\n' "$VERSION" "$first" >"$MARK"
+    if [ "$laid" = added ]; then printf 'layout=added\n' >>"$MARK"; fi
   elif [ ! -f "$MARK" ]; then
     say "The pack in $PACK is already $VERSION and was not installed by this script: it is left as it is, and --uninstall won't move it."
   fi
 
-  # ---- the automagik layout: added when the app home has none, switched to when you say so ----
-  # The sidebar mod has place "none": it shows only in a layout that names it, this one.
-  switched=no
+  # ---- the automagik layout: added when the app home has none, then the switch offered ----
   if [ -f "$PACK/layouts/automagik.json" ] && [ ! -e "$LAYOUT" ]; then
     mkdir -p "$APP_HOME/layouts"
     cp "$PACK/layouts/automagik.json" "$LAYOUT"
+    if [ -f "$MARK" ] && [ "$(mark_get layout)" != added ]; then printf 'layout=added\n' >>"$MARK"; fi
     say "Added the automagik layout ($LAYOUT): Herdr's main layout with the Automagik sidebar."
-    if command -v herdr-app >/dev/null 2>&1 && ask "Switch Herdr to the automagik layout now?"; then
-      if herdr-app do layout.switch '{"name":"automagik"}' </dev/null >/dev/null 2>&1; then
-        switched=yes
-        say "Switched Herdr to the automagik layout."
-      else say "Herdr didn't switch (is it open?)."; fi
-    fi
   fi
+  offer_switch
 
   # ---- e. the command ----
   chmod +x "$target"
@@ -268,10 +310,7 @@ install() {
   # ---- f. next ----
   say "Done: Automagik Herdr $VERSION. Open Herdr (or reload its mods), or in a project folder run:"
   say "  automagik-herdr create --kind=main --name=<name> --agent=claude && automagik-herdr start <name>"
-  if [ "$switched" = no ]; then
-    say "The Automagik sidebar shows only in the automagik layout. Switch Herdr to it with:"
-    say "  herdr-app do layout.switch '{\"name\":\"automagik\"}'"
-  fi
+  switch_hint
 }
 
 main "$@"
