@@ -81,6 +81,10 @@ space: the main bot as a card, categories as headers, captains with their member
 under them, planned bots dimmed with their wave. Each bot shows its character, its role and
 model, its agent's icon and its status. Right-click a bot to edit, start or attach it.
 
+On its first load the pack switches Herdr to the Automagik theme, light or dark following the
+system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
+switches it once and never again.
+
 ## The command line
 
 `automagik-herdr` does everything the sidebar does, without a Herdr window. Agents use it to
@@ -262,9 +266,19 @@ projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are
 cut by CI on every push to `dev` with something new (see `AGENTS.md`).
 
+The two theme files are built from Automagik's colours by `node scripts/themes.mjs`; edit that
+script, not the JSON (`test/theme.test.mjs` fails when they differ).
+
+### Publishing
+
+The public repository carries the `herdr-mod` topic, which is set on GitHub (repository
+settings), not in a file. `mods/spaces-agents/RECIPE.md` (how the pack is built) and
+`mods/spaces-agents/preview.png` (the bot view) are Herdr's share files: they describe the pack
+to readers of the repository and are inert in an installed copy.
+
 ## License and credits
 
 Apache-2.0 (`LICENSE`; the pack folder carries a copy). The sidebar is derived from Herdr's
 shipped `spaces` mod 0.1.7 (`LICENSE-herdr`); `main.js` says so at its top, and `mod.json`'s
-`place` changed from `none` to `left`. The characters come from Automagik by Namastex Labs
+`title` changed to "Automagik Sidebar". The characters come from Automagik by Namastex Labs
 (`LICENSE-automagik`), whose drawing comes from DS Bot. See `mods/spaces-agents/NOTICE`.
