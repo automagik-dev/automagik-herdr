@@ -181,3 +181,46 @@ test("discoverProjects: the CLI's project list is found with no space; a gone on
   writeFileSync(list, "{nope");
   assert.deepEqual(await discoverProjects(), []);
 });
+
+test("writeBots after an edit relabels the changed bots' live local panes without waiting; failures in one notice", async (t) => {
+  reset();
+  const { main } = await repo(t);
+  await writeBots(main, sample(), null);
+  let text = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
+  const row = (address, labels) => ({ address, labels, state: "live", program: { agent: true } });
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  Object.assign(state, {
+    terminals: [row("t1", { bot: ID.main, role: "main" }), row("t5", { bot: ID.dev }), row("t6", { bot: ID.dev }), row("far/t7", { bot: ID.dev })],
+    hcCalls: [], notes: [],
+    hcAnswer: async (args) => { await gate; return { code: args[1] === "t6" ? 1 : 0, stdout: "{}", stderr: "" }; },
+  });
+  t.after(() => { state.terminals = []; state.hcCalls = []; state.notes = []; });
+  const edited = sample();
+  edited.bots[1].rank = "pm";
+  // The save resolves while hc is still held: the labels follow on their own.
+  const { relabel } = await writeBots(main, edited, text);
+  assert.equal(JSON.parse(readFileSync(join(main, ".herdr", "bots.json"), "utf8")).bots[1].rank, "pm");
+  release();
+  assert.deepEqual(await relabel, { done: ["t5"], failed: ["t6"] });
+  assert.deepEqual(state.hcCalls, [["label", "t5", "role=pm"], ["label", "t6", "role=pm"]]); // never far/t7
+  assert.equal(state.notes.length, 1);
+  assert.match(state.notes[0].body, /these panes' labels weren't updated: t6/);
+  // terminals() itself failing: the save still resolves; one notice.
+  text = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
+  Object.defineProperty(state, "terminals", { configurable: true, get() { throw new Error("terminals gone"); } });
+  try {
+    const again = sample();
+    again.bots[1].rank = "dev";
+    const out = await writeBots(main, again, text);
+    assert.deepEqual((await out.relabel).done, []);
+  } finally {
+    Object.defineProperty(state, "terminals", { configurable: true, writable: true, value: [] });
+  }
+  assert.equal(state.notes.length, 2);
+  // A new file relabels nothing (no pane can carry its bots yet).
+  state.hcCalls = [];
+  const other = await repo(t);
+  assert.deepEqual(await (await writeBots(other.main, sample(), null)).relabel, { done: [], failed: [] });
+  assert.deepEqual(state.hcCalls, []);
+});

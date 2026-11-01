@@ -363,3 +363,47 @@ test("the CLI's project list: absolute keys once each, the newest last, at most 
   assert.equal(next.length, MAX_LISTED_PROJECTS);
   assert.deepEqual([next[0], next.at(-1)], ["/p1", "/new"]);
 });
+
+// ---- A16: rank ----
+import { RANKS } from "../mods/spaces-agents/model.js";
+
+test("rank: an unknown one is warned about and dropped when shown, and refused when written; role stays free text", () => {
+  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"]);
+  const raw = { version: 1, categories: [], bots: [bot(ID.main, "main", { rank: "owner", role: "Runs it all" }), bot(ID.cap, "member", { rank: "boss" })] };
+  const { file, warnings } = parseBots(JSON.stringify(raw));
+  assert.equal(file.bots[0].rank, "owner");
+  assert.equal(file.bots[0].role, "Runs it all");
+  assert.equal("rank" in file.bots[1], false);
+  assert.ok(warnings.some((w) => w.includes(ID.cap) && /unknown rank "boss"/.test(w)));
+  assert.ok(checkBots(raw).some((e) => /unknown rank "boss"/.test(e)));
+  assert.deepEqual(checkBots({ ...raw, bots: [raw.bots[0]] }), []);
+});
+
+test("applyBotEdit sets a rank, clears it when named empty, and keeps it when the entry leaves it out", () => {
+  const start = { version: 1, categories: [], bots: [bot(ID.main, "main")] };
+  const set = applyBotEdit(start, { ...bot(ID.main, "main"), rank: "pm" });
+  assert.equal(set.bots[0].rank, "pm");
+  const kept = applyBotEdit(set, bot(ID.main, "main", { role: "new role" }));
+  assert.deepEqual([kept.bots[0].rank, kept.bots[0].role], ["pm", "new role"]);
+  assert.equal("rank" in applyBotEdit(set, { ...bot(ID.main, "main"), rank: "" }).bots[0], false);
+});
+
+test("category ids: parseBots warns about a non-slug id; checkBots refuses only a new one; newCategoryId makes slugs", () => {
+  const raw = { version: 1, categories: [{ id: "Knowledge", title: "Knowledge" }, { id: "ok-1", title: "Fine" }], bots: [bot(ID.main, "main"), bot(ID.cap, "member", { category: "Knowledge" })] };
+  const { file, warnings } = parseBots(JSON.stringify(raw));
+  assert.equal(file.categories.length, 2);
+  assert.equal(file.bots[1].category, "Knowledge");
+  assert.ok(warnings.some((w) => /"Knowledge": an id is a lowercase slug/.test(w)));
+  // A hand-written file stays writable: the id was there before the edit.
+  assert.deepEqual(checkBots(raw, raw), []);
+  assert.deepEqual(checkBots(raw, JSON.stringify(raw)), []);
+  // A new non-slug id (no file before, or not in it) is refused.
+  assert.ok(checkBots(raw).some((e) => /"Knowledge": a new id is a lowercase slug/.test(e)));
+  const added = { ...raw, categories: [...raw.categories, { id: "Ops Team", title: "Ops" }] };
+  assert.deepEqual(checkBots(added, raw).filter((e) => /lowercase slug/.test(e)).length, 1);
+  for (const bad of ["a--b", "-a", "a-", "A", "a b", "ação", ""]) assert.ok(checkBots({ ...raw, categories: [{ id: bad, title: "x" }] }).length, bad);
+  assert.deepEqual(checkBots({ ...raw, bots: [raw.bots[0]], categories: [raw.categories[1]] }), []);
+  for (const title of ["Ação & Studio", "  --Quality \"gate\"-- ", "!!!", "Platform 2"]) {
+    assert.match(newCategoryId(title, []), /^[a-z0-9]+(-[a-z0-9]+)*$/, title);
+  }
+});
