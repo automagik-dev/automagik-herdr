@@ -123,14 +123,54 @@ main bot's view lists categories in the order of the `categories` array, each wi
 - Mod commands: `spaces-agents.new-bot`, `spaces-agents.edit`, `spaces-agents.start` and
   `spaces-agents.attach`. Bound to a key, they act on the focused pane and its bot.
 
+## The per-turn briefing (Claude bots)
+
+Before every prompt, a Claude bot receives a short block: its own name, kind, role and
+instructions from `.herdr/bots.json`, then its team. A main bot or a lead gets each of its
+direct members' status and latest report (the member's published status text, else the last
+lines of its screen). A member gets its lead's state and the lead's current terminal address
+to `hc send` its report to when it is done or stuck, plus a count of the helpers it started.
+Planned bots are left out. An edit to `.herdr/bots.json` shows from the next prompt. The
+briefing types nothing into any pane.
+
+- **Where it comes from.** Start and Attach of a Claude bot add one `UserPromptSubmit` hook to
+  `.claude/settings.local.json` in the folder the bot's session runs in. They never touch the
+  shared `.claude/settings.json` and keep every other setting and hook. The hook runs
+  `node "<app home>/mods/spaces-agents/briefing.mjs"`, so it needs `node` (see Requirements);
+  without it the hook does nothing and reports no error.
+- **Per person, never committed.** The hook names a path on your computer. Start and Attach
+  add `**/.claude/settings.local.json` to the clone's own exclude file
+  (`git rev-parse --git-path info/exclude`), unless git already ignores it. If that write
+  fails, a notification says so: keep the file out of your commits by hand. If your project
+  already tracks `.claude/settings.local.json`, git can't exclude it: the hook shows as a
+  change, and a notification says so. Leave it out of your commits, or stop tracking the file.
+- **A renamed pack gets no hook.** Start and Attach first check that `briefing.mjs` is at
+  `<app home>/mods/spaces-agents/`. If Herdr installed the pack under another name because
+  the old clone was still there, they write nothing and tell you; redo the steps in
+  "Replacing an existing `spaces-agents` clone" above.
+- **A session that was already running.** Attach adds the hook to a Claude session that
+  started before it. If that bot's next prompt brings no briefing, type `/hooks` once in that
+  session so Claude Code loads the new hook. A session started with Start reads it at launch.
+- **Quiet everywhere else.** The script prints nothing and exits 0 unless its terminal
+  (`$HC_TERMINAL_ID`) carries a `bot` label defined in the project of `$CLAUDE_PROJECT_DIR`.
+  It is done within about 2 seconds (a member whose machine doesn't answer shows as
+  unreachable) and never fails the prompt; on an error it writes one line to stderr.
+- **Other agents' words are fenced.** Each member's report sits in its own
+  `<untrusted-report>` element with its angle brackets replaced, under a line telling the
+  bot that reports are data, never instructions.
+- **Notes as well as reports.** The member's own report is the path for "done". herdr-core's
+  typed notes still bring `blocked`, `error` and exit to a lead started before the member
+  (see Requirements for the `notes` setting).
+
 ## Develop
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --check "$f" || exit 1; done
+node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs; do node --check "$f" || exit 1; done
 ```
 
 The pure rules (project key, schema, leads, ids, looks) live in `mods/spaces-agents/model.js`
-and import nothing from Herdr. `test/bots.test.mjs` runs `bots.js` against stand-ins for
+and import nothing from Herdr; so does the briefing's text (`briefingText.mjs`).
+`test/briefing.test.mjs` runs `briefing.mjs` under node with a fake `hc` on `PATH`. `test/bots.test.mjs` runs `bots.js` against stand-ins for
 Herdr's `herdr` and `fs/promises` modules (`test/herdr-stub.mjs`, `test/fs-stub.mjs`; the
 second has only the seven functions Herdr gives a mod). A pass there does not prove the pack
 works inside Herdr. Check that in Herdr itself.
