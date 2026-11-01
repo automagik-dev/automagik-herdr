@@ -341,6 +341,11 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Criteria review, round 1: SHIP** (LOW: bare start/edit with no bot only warns; dialog `init` should prefer `props()`; Bots list overlaps Group 3's row menu; half-failed attach message; lead picker offers own descendants).
 - **Quality pass, round 1: FIX-FIRST.** MEDIUM: two concurrent Starts of one bot can launch two agents with one label. LOW: half-failed attach message; Attach steals another bot's pane silently; `liveTerminalOf` counts remote holders Attach can't clear; a throw ends the command loop; Edit rebuilds `planned` dropping extra keys. Clean: argv-only `hc` calls with `--` before agent argv, name slugs strip dashes, write path with snapshot.
 - **Route:** fix loop 1 of 2 (quality loop 1 of 1) to g1-engineer, all findings except the Bots-list overlap, which Group 3 folds into the bot-row menu.
+- **Fix loop 1:** 9f8b75a, 9b56d6c: `starting` set plus a 60 s memory of the just-started pane; half-failed attach message; Attach refuses another bot's pane; `liveTerminalOf` local-only; command loop survives a throw; bare start/edit opens the Bots list; `props() ?? given`; `plannedOf` keeps extra keys; lead choices exclude self and descendants (`descendantsOf`).
+- **Criteria review, round 2: SHIP** (58/58). Note for Group 3: `liveTerminalOf` is local-only by design for Start/Attach; the sidebar rows need their own lookup that also counts remote live bots.
+- **Quality pass, round 2: PASS.** LOW left: a pane not yet listed in `terminals()` within the 60 s window can still let a twin start (reported as a duplicate if it happens); `agent.focus` on a pane whose agent is not up may not switch.
+- **Merged into `dev`:** 6727fa5; on merged `dev` `node --test` 58/58, `node --check` clean.
+- **Card:** open until live steps A–E (scratch Create/Start/Attach, refusals, attach brain-orchestrator `t1bw`, brain-v3 MR) run.
 
 ---
 
