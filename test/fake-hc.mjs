@@ -1,0 +1,75 @@
+// A stand-in for herdr-core's `hc`, for the CLI tests: every call is appended to
+// $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
+// $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
+// change. Only the calls herdr-bots makes: ls [--label k=v], get, read, label, run.
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+appendFileSync(process.env.HC_FAKE_LOG, `${JSON.stringify(args)}\n`);
+const state = JSON.parse(readFileSync(process.env.HC_FAKE_STATE, "utf8"));
+const save = () => writeFileSync(process.env.HC_FAKE_STATE, JSON.stringify(state, null, 2));
+const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
+const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
+const words = args.filter((a) => a !== "--json");
+const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
+
+switch (words[0]) {
+  case "ls": {
+    const want = [];
+    for (let i = 1; i < words.length; i += 1) if (words[i] === "--label") want.push(words[++i]);
+    const rows = state.terminals.filter((t) => t.state !== "finished" && want.every((kv) => {
+      const [k, v] = [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)];
+      return (t.labels ?? {})[k] === v;
+    }));
+    // Like the real one: rows carry no labels and no created_ms.
+    out({ terminals: rows.map(({ address, name, cwd, state: s, parent, status }) => ({ address, name, cwd, state: s, parent, status: status?.state, agent: status?.app })) });
+    break;
+  }
+  case "get": {
+    const t = find(words[1]);
+    if (!t) fail(`no terminal ${words[1]}`);
+    out(t);
+    break;
+  }
+  case "read": {
+    const t = find(words[1]);
+    if (!t) fail(`no terminal ${words[1]}`);
+    out({ text: t.screen ?? "" });
+    break;
+  }
+  case "label": {
+    const t = find(words[1]);
+    if (!t) fail(`no terminal ${words[1]}`);
+    if (state.failLabel === words[1]) fail(`label refused on ${words[1]}`);
+    t.labels ??= {};
+    for (const kv of words.slice(2)) {
+      const eq = kv.indexOf("=");
+      const [k, v] = [kv.slice(0, eq), kv.slice(eq + 1)];
+      if (v === "") delete t.labels[k]; else t.labels[k] = v;
+    }
+    save();
+    out({ address: t.address, labels: t.labels });
+    break;
+  }
+  case "run": {
+    const labels = {};
+    let name = null, cwd = null, parent = null;
+    let i = 1;
+    for (; i < words.length && words[i] !== "--"; i += 1) {
+      if (words[i] === "--label") { const kv = words[++i]; labels[kv.slice(0, kv.indexOf("="))] = kv.slice(kv.indexOf("=") + 1); }
+      else if (words[i] === "--name") name = words[++i];
+      else if (words[i] === "--cwd") cwd = words[++i];
+      else if (words[i] === "--parent") parent = words[++i];
+    }
+    const argv = words.slice(i + 1);
+    const address = `t${state.next ?? 100}`;
+    state.next = (state.next ?? 100) + 1;
+    state.terminals.push({ address, name, cwd, labels, parent, state: "live", created_ms: Date.now(),
+      foreground: { argv, cwd }, status: { app: argv[0] === "claude" ? "claude-code" : argv[0], state: "working" } });
+    save();
+    out({ address });
+    break;
+  }
+  default:
+    fail(`fake hc: no ${words[0]}`, 2);
+}
