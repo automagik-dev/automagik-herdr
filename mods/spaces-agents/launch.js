@@ -2,10 +2,11 @@
 // pane is the terminal carrying `bot=<id>` with an agent in front. The argument building
 // and messages live in launchArgs.js. Apache-2.0.
 
-import { hc, terminals, spaces, focused, run, knownAgents, readTextFile } from "herdr";
+import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTextFile, exec, appHome, notify } from "herdr";
 import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
 import { keyOf, rememberProject } from "./bots.js";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal } from "./launchArgs.js";
+import { briefingPath, hookCommand, mergeHook, withExclude, EXCLUDE_LINE } from "./briefingText.mjs";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
 
@@ -44,8 +45,75 @@ export async function liveTerminalOf(botId) {
   return { terminal: pick?.address ?? live[0], duplicate: true };
 }
 
-/** Called after a pane is tied to a bot, with the folder its session runs in. Group 4 fills it. */
-export async function afterBind(_bot, _sessionFolder) {}
+/**
+ * The per-turn briefing for a Claude bot (DESIGN Approach "Group 3", Decision 9): merges the
+ * hook entry, if absent, into `<sessionFolder>/.claude/settings.local.json` (never the shared
+ * settings.json) and keeps that file out of git through the clone's exclude file. Writes
+ * nothing, and tells the owner the README fix, when the pack's briefing.mjs isn't at the path
+ * computed from appHome(). `claude`: whether the session is Claude Code (other agents get
+ * nothing). Never throws: a failure is a notification, never a refused Start or Attach.
+ * Resolves with { written } (true when the hook entry was added or updated).
+ */
+export async function afterBind(bot, sessionFolder, claude = bot?.agent === "claude") {
+  if (!claude || !sessionFolder) return { written: false };
+  try {
+    return await writeBriefingHook(bot, sessionFolder.length > 1 ? sessionFolder.replace(/\/+$/, "") : sessionFolder);
+  } catch (e) {
+    notify({ title: "Bots", body: `${bot.name} gets no briefing: ${e?.message ?? e}`, level: "warning", timeout: 12000 });
+    return { written: false };
+  }
+}
+
+async function writeBriefingHook(bot, folder) {
+  const script = briefingPath(appHome());
+  if ((await readTextFile(script)) === null) {
+    notify({ title: "Bots", level: "warning", timeout: 20000,
+      body: `${bot.name} gets no per-turn briefing: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
+        + "whose name is taken. The README's install step fixes it: move the old spaces-agents clone out of mods/, remove the "
+        + "renamed copy, and copy the pack in again as mods/spaces-agents." });
+    return { written: false };
+  }
+  const settingsPath = `${folder}/.claude/settings.local.json`;
+  // The exclude first, so the settings file never shows in git status, even for a moment.
+  await excludeFromGit(folder, settingsPath);
+  const before = await readTextFile(settingsPath);
+  const merged = mergeHook(before, hookCommand(appHome()));
+  if (merged.error) throw new Error(`${settingsPath} was left as it is: ${merged.error}.`);
+  if (!merged.changed) return { written: false };
+  if (before === null) {
+    const r = await exec("mkdir", ["-p", `${folder}/.claude`]);
+    if (r.code !== 0) throw new Error(`couldn't make ${folder}/.claude: ${r.stderr.trim()}`);
+  }
+  await writeTextFile(settingsPath, merged.text, before);
+  return { written: true };
+}
+
+// Adds EXCLUDE_LINE to the exclude file git names for this folder (a worktree's `.git` is a
+// file, so the path is asked of git), when git doesn't ignore the settings file already.
+// Not in git: nothing to do. A failure only warns.
+async function excludeFromGit(folder, settingsPath) {
+  const git = async (args) => { try { return await exec("git", args, { cwd: folder }); } catch { return null; } };
+  const ignored = await git(["check-ignore", "-q", ".claude/settings.local.json"]);
+  if (!ignored || ignored.code !== 1) return; // 0: ignored already; 128 or no git: not a repository
+  let excludePath = null;
+  try {
+    const r = await git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
+    excludePath = r?.code === 0 ? r.stdout.trim() : null;
+    if (!excludePath) throw new Error((r?.stderr ?? "git failed").trim());
+    const before = await readTextFile(excludePath);
+    const after = withExclude(before);
+    if (after === null) return;
+    if (before === null) {
+      const m = await exec("mkdir", ["-p", excludePath.slice(0, excludePath.lastIndexOf("/"))]);
+      if (m.code !== 0) throw new Error(m.stderr.trim());
+    }
+    await writeTextFile(excludePath, after, before);
+  } catch (e) {
+    notify({ title: "Bots", level: "warning", timeout: 15000,
+      body: `Couldn't add ${EXCLUDE_LINE} to ${excludePath ?? "the git exclude file"} (${e?.message ?? e}). `
+        + `Keep ${settingsPath} out of your commits: it holds a path on this computer.` });
+  }
+}
 
 // Where a started bot opens: the first space of this computer whose folder keys to the
 // project, else the shown space; in that space's active tab.
@@ -109,6 +177,8 @@ async function startOnce(projectKey, botId) {
   const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
   const { space, tab } = await placeFor(projectKey);
   const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: agent.run });
+  // The briefing hook goes in before the session starts, so Claude Code reads it at startup.
+  await afterBind(bot, projectKey, agent.key === "claude");
   let r;
   try { r = await hc(args); } catch (e) { return { refused: `hc run failed: ${e?.message ?? e}` }; }
   if (r.code !== 0) return { refused: `hc run failed: ${(r.stderr || r.stdout).trim()}` };
@@ -117,7 +187,6 @@ async function startOnce(projectKey, botId) {
   if (!terminal) return { refused: `hc run gave no terminal address: ${r.stdout.trim()}` };
   started.set(botId, { terminal, at: Date.now() });
   rememberProject(projectKey);
-  await afterBind(bot, projectKey);
   return { terminal };
 }
 
@@ -165,6 +234,12 @@ export async function attachBot(projectKey, botId, terminal) {
       : `hc ${args.join(" ")} failed: ${why}` };
   }
   rememberProject(projectKey);
-  await afterBind(bot, sessionFolder);
+  // Only a Claude pane: its session folder is the one the check above tied to the project.
+  const { written } = await afterBind(bot, sessionFolder, isClaude(row, get));
+  if (written) {
+    notify({ title: "Bots", level: "info", timeout: 15000,
+      body: `${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no `
+        + "briefing, open /hooks once in that session to load it." });
+  }
   return { ok: true };
 }

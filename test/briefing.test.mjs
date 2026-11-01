@@ -1,0 +1,392 @@
+// The per-turn briefing: the pure text (briefingText.mjs) for a main bot, a captain and a
+// member; the 10,000-character cap; planned bots skipped; the hook and exclude merges; then
+// briefing.mjs itself under node with a fake `hc` on PATH and a scratch git project, for the
+// blocks end to end and the silent exits; then launch.js afterBind over the Herdr stand-ins.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+
+import { state } from "./use-stubs.mjs";
+import { parseBots } from "../mods/spaces-agents/model.js";
+import { briefingText, directMembers, mergeHook, hookCommand, briefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT } from "../mods/spaces-agents/briefingText.mjs";
+const { afterBind } = await import("../mods/spaces-agents/launch.js");
+
+const run = promisify(execFile);
+// git here must not read this host's global ignore (it may list settings.local.json already).
+process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "herdr-xdg-"));
+process.on("exit", () => rmSync(process.env.XDG_CONFIG_HOME, { recursive: true, force: true }));
+const NODE_DIR = dirname(process.execPath);
+const SCRIPT = new URL("../mods/spaces-agents/briefing.mjs", import.meta.url).pathname;
+const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", tester: "b-dddddddddd", plan: "b-eeeeeeeeee", solo: "b-ffffffffff" };
+const bot = (id, kind, extra = {}) => ({ id, name: id, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "", agent: "claude", ...extra });
+const team = () => ({
+  version: 1,
+  categories: [],
+  bots: [
+    bot(ID.main, "main", { name: "Genie", role: "Runs the project", instructions: "Keep the board green." }),
+    bot(ID.cap, "member", { name: "Captain", role: "Squad lead", instructions: "Lead the squad." }),
+    bot(ID.dev, "member", { name: "Dev", role: "Builds", instructions: "Write the code.", lead: ID.cap }),
+    bot(ID.tester, "member", { name: "Tester", role: "Tests", lead: ID.cap }),
+    bot(ID.plan, "member", { name: "Studio", role: "Access", agent: undefined, lead: ID.cap, planned: { wave: 3, note: "later" } }),
+    bot(ID.solo, "member", { name: "Solo", role: "Docs" }),
+  ],
+});
+const byId = (f, id) => f.bots.find((b) => b.id === id);
+
+// ---- pure ----
+
+test("direct members: by effective lead, planned skipped, a fallen-back lead counts under the main bot", () => {
+  const f = team();
+  assert.deepEqual(directMembers(f, ID.main).map((b) => b.id), [ID.cap, ID.solo]);
+  assert.deepEqual(directMembers(f, ID.cap).map((b) => b.id), [ID.dev, ID.tester]);
+  assert.deepEqual(directMembers(f, ID.dev), []);
+  byId(f, ID.dev).lead = "b-zzzzzzzzzz"; // missing: reports to the main bot
+  assert.deepEqual(directMembers(f, ID.main).map((b) => b.id), [ID.cap, ID.dev, ID.solo]);
+});
+
+test("main bot block: its own entry first, then each direct member's status and latest report", () => {
+  const f = team();
+  const text = briefingText({
+    self: byId(f, ID.main), file: f, helpers: [],
+    members: [
+      { bot: byId(f, ID.cap), terminal: "t2", status: "working", report: "Reviewing PR 12" },
+      { bot: byId(f, ID.solo) },
+      { bot: byId(f, ID.plan), terminal: "t9", status: "working", report: "should not show" },
+    ],
+  });
+  const lines = text.split("\n");
+  assert.equal(lines[0], "<herdr-bot>");
+  assert.match(lines[2], /^You are Genie, this project's main bot \(bot b-aaaaaaaaaa\)\.$/);
+  assert.equal(lines[3], "Role: Runs the project");
+  assert.match(text, /Instructions:\nKeep the board green\./);
+  assert.match(text, /- Captain \(bot b-bbbbbbbbbb, Squad lead\): working at t2\.\n {2}Latest report:\n {4}Reviewing PR 12/);
+  assert.match(text, /- Solo \(bot b-ffffffffff, Docs\): not running\./);
+  assert.doesNotMatch(text, /Studio|should not show/);
+  assert.doesNotMatch(text, /Your lead/);
+  assert.ok(text.endsWith("</herdr-bot>"));
+});
+
+test("captain block: its lead's state and current address, its members, its helpers", () => {
+  const f = team();
+  const text = briefingText({
+    self: byId(f, ID.cap), file: f,
+    lead: { bot: byId(f, ID.main), terminal: "t1", status: "idle" },
+    members: [{ bot: byId(f, ID.dev), terminal: "t3", status: "blocked", report: "line a\nline b" }, { bot: byId(f, ID.tester) }],
+    helpers: [{ status: "working" }],
+  });
+  assert.match(text, /You are Captain, a team member \(bot b-bbbbbbbbbb\)\./);
+  assert.match(text, /Instructions:\nLead the squad\./);
+  assert.match(text, /Your lead: Genie \(bot b-aaaaaaaaaa\), idle\./);
+  assert.match(text, /hc send t1 "<result or blocker>"/);
+  assert.match(text, /- Dev \(bot b-cccccccccc, Builds\): stuck \(blocked: needs a person\) at t3\.\n {2}Latest report:\n {4}line a\n {4}line b/);
+  assert.match(text, /- Tester \(bot b-dddddddddd, Tests\): not running\./);
+  assert.match(text, /Your helpers \(terminals you started that are not bots\): 1: 1 working\./);
+  // Its own entry comes before the team.
+  assert.ok(text.indexOf("You are Captain") < text.indexOf("Your team"));
+});
+
+test("member block: lead's address to report to, its children counted; a lead that isn't running says so", () => {
+  const f = team();
+  const live = briefingText({ self: byId(f, ID.dev), file: f, members: [], lead: { bot: byId(f, ID.cap), terminal: "t2", status: "working" }, helpers: [{ status: "working" }, { status: "done" }, { status: "working" }] });
+  assert.match(live, /Your lead: Captain \(bot b-bbbbbbbbbb\), working\./);
+  assert.match(live, /`hc send t2 "<result or blocker>"`.*t2 is its current terminal/);
+  assert.match(live, /: 3: 2 working, 1 finished \(done\)\./);
+  assert.doesNotMatch(live, /Your team/);
+  const down = briefingText({ self: byId(f, ID.dev), file: f, members: [], lead: { bot: byId(f, ID.cap), terminal: "" }, helpers: [] });
+  assert.match(down, /Your lead: Captain \(bot b-bbbbbbbbbb\), not running\./);
+  assert.match(down, /hc ls --label bot=b-bbbbbbbbbb/);
+  assert.doesNotMatch(down, /hc send/);
+  assert.doesNotMatch(down, /Your helpers/);
+});
+
+test("cap: 4,000-character instructions and twelve members with long reports stay under 10,000", () => {
+  const f = team();
+  const self = { ...byId(f, ID.main), instructions: "i".repeat(4000) };
+  const members = Array.from({ length: 12 }, (_, i) => ({
+    bot: bot(`b-${String(i).padStart(10, "k")}`, "member", { name: `Member ${i}`, role: "x".repeat(80) }),
+    terminal: `t${i}`, status: "working", report: `${"old ".repeat(800)}newest line ${i}`,
+  }));
+  const text = briefingText({ self, file: f, members, helpers: [] });
+  assert.ok(text.length < 10000, `length ${text.length}`);
+  assert.ok(text.length <= BRIEFING_LIMIT);
+  assert.ok(text.includes("i".repeat(4000)), "the whole instructions survive");
+  for (let i = 0; i < 12; i++) assert.match(text, new RegExp(`newest line ${i}\\b`), "each report keeps its newest end");
+  // A hand-edited file past the 4,000 limit, and a hundred members: still under the cap.
+  const huge = briefingText({ self: { ...self, instructions: "j".repeat(9000) }, file: f, members: [...members, ...members, ...members, ...members, ...members, ...members, ...members, ...members], helpers: [] });
+  assert.ok(huge.length <= BRIEFING_LIMIT, `length ${huge.length}`);
+  assert.match(huge, /cut at 4000 characters/);
+  assert.ok(huge.endsWith("</herdr-bot>"));
+});
+
+test("hook command: names the installed script by its absolute path, quoted, and never fails", () => {
+  assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs");
+  assert.equal(hookCommand("/Users/x/.config/herdr-app"), 'command -v node >/dev/null && node "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs" || true');
+  assert.equal(hookCommand('/odd "$HOME`'), 'command -v node >/dev/null && node "/odd \\"\\$HOME\\`/mods/spaces-agents/briefing.mjs" || true');
+});
+
+test("hook merge: keeps every other key and hook, adds ours once, updates a moved path, leaves odd files alone", () => {
+  const cmd = hookCommand("/h");
+  const existing = JSON.stringify({
+    permissions: { allow: ["Bash(ls)"] },
+    hooks: {
+      UserPromptSubmit: [{ hooks: [{ type: "command", command: "brain recall" }] }],
+      Stop: [{ matcher: "", hooks: [{ type: "command", command: "say done" }] }],
+    },
+    env: { A: "1" },
+  }, null, 2);
+  const first = mergeHook(existing, cmd);
+  assert.equal(first.changed, true);
+  const s = JSON.parse(first.text);
+  assert.deepEqual(s.permissions, { allow: ["Bash(ls)"] });
+  assert.deepEqual(s.env, { A: "1" });
+  assert.deepEqual(s.hooks.Stop, [{ matcher: "", hooks: [{ type: "command", command: "say done" }] }]);
+  assert.deepEqual(s.hooks.UserPromptSubmit, [
+    { hooks: [{ type: "command", command: "brain recall" }] },
+    { hooks: [{ type: "command", command: cmd, timeout: 10 }] },
+  ]);
+  // Present: no change, the text untouched.
+  assert.deepEqual(mergeHook(first.text, cmd), { text: first.text, changed: false });
+  // The app home moved: the one entry is updated in place, not doubled.
+  const moved = mergeHook(first.text, hookCommand("/new-home"));
+  assert.equal(moved.changed, true);
+  const m = JSON.parse(moved.text).hooks.UserPromptSubmit;
+  assert.equal(m.length, 2);
+  assert.equal(m[1].hooks[0].command, hookCommand("/new-home"));
+  // No file, an empty one.
+  assert.deepEqual(JSON.parse(mergeHook(null, cmd).text), { hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: cmd, timeout: 10 }] }] } });
+  assert.equal(mergeHook("", cmd).changed, true);
+  // Never rewritten: not JSON, not an object, hooks of another shape.
+  assert.match(mergeHook("{ nope", cmd).error, /not valid JSON/);
+  assert.match(mergeHook("[]", cmd).error, /not a JSON object/);
+  assert.match(mergeHook('{"hooks": []}', cmd).error, /"hooks" is not an object/);
+  assert.match(mergeHook('{"hooks": {"UserPromptSubmit": {}}}', cmd).error, /not a list/);
+});
+
+test("exclude: the line is added once, after a missing final newline", () => {
+  assert.equal(withExclude(null), `${EXCLUDE_LINE}\n`);
+  assert.equal(withExclude("# git ls-files\n*.log"), `# git ls-files\n*.log\n${EXCLUDE_LINE}\n`);
+  assert.equal(withExclude(`a\n${EXCLUDE_LINE}\n`), null);
+});
+
+// ---- briefing.mjs under node, with a fake hc ----
+
+// A fake `hc`: answers ls (with --label), get and read from a fixture file, like hc --json.
+const FAKE_HC = `#!/usr/bin/env node
+const fx = JSON.parse(require("fs").readFileSync(process.env.FAKE_HC, "utf8"));
+const a = process.argv.slice(2).filter((x) => x !== "--json");
+const out = (x) => process.stdout.write(JSON.stringify(x));
+const all = Object.values(fx.terminals);
+const row = (t) => ({ address: t.address, state: "live", status: t.status?.state, parent: t.parent ?? null });
+if (a[0] === "ls") {
+  const i = a.indexOf("--label");
+  const [k, v] = i >= 0 ? a[i + 1].split("=") : [];
+  out({ machines: [], terminals: all.filter((t) => i < 0 || t.labels?.[k] === v).map(row) });
+} else if (a[0] === "get" && fx.terminals[a[1]]) out(fx.terminals[a[1]]);
+else if (a[0] === "read" && fx.terminals[a[1]]) out({ text: fx.screens?.[a[1]] ?? "", complete: true, how: "screen" });
+else { process.stderr.write("not_found"); process.exit(1); }
+`;
+const term = (address, labels, extra = {}) => ({ address, labels, created_ms: 1000, parent: null, foreground: { argv: ["claude"], cwd: "/" }, status: { app: "claude-code", state: "idle" }, ...extra });
+const FIXTURE = {
+  terminals: {
+    t1: term("t1", { bot: ID.main }, { status: { state: "idle" } }),
+    t2: term("t2", { bot: ID.cap }, { parent: "t1", created_ms: 5000, status: { state: "working", msg: "Reviewing PR 12" } }),
+    t7: term("t7", { bot: ID.cap }, { created_ms: 2000, status: { state: "idle" } }), // the captain's older pane
+    t3: term("t3", { bot: ID.dev }, { parent: "t2", status: { state: "blocked" } }),
+    t4: term("t4", { bot: ID.solo }, { status: { state: "done" } }),
+    t5: term("t5", {}, { parent: "t3", status: { state: "working" } }), // Dev's helper
+    t6: term("t6", { bot: "b-gggggggggg" }, { parent: "t3", status: { state: "working" } }), // a bot, never a helper
+    t8: term("t8", { bot: "b-zzzzzzzzzz" }), // a bot of another project
+    t9: term("t9", { bot: ID.tester }, { foreground: { argv: ["-zsh"], cwd: "/" } }), // its agent exited: not running
+  },
+  screens: { t3: "\n\x1b[1mPermission needed\x1b[0m\n\n  Allow edit of src/x.rs?\n", t4: "Wrote docs/guide.md\nAll done." },
+};
+
+async function scratch(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-brief-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const main = join(root, "proj");
+  mkdirSync(join(main, ".herdr"), { recursive: true });
+  await run("git", ["init", "-q", main]);
+  await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: main });
+  const tree = join(root, "proj-wt");
+  await run("git", ["worktree", "add", "-q", "-b", "wt", tree], { cwd: main });
+  writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(team()));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "hc"), FAKE_HC);
+  chmodSync(join(bin, "hc"), 0o755);
+  const fixture = join(root, "hc.json");
+  writeFileSync(fixture, JSON.stringify(FIXTURE));
+  const brief = async (env) => {
+    const r = await run(process.execPath, [SCRIPT], { env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, HOME: root, ...env } });
+    return r;
+  };
+  return { root, main, tree, bin, brief };
+}
+
+test("briefing.mjs: silent exits — no HC_TERMINAL_ID, no CLAUDE_PROJECT_DIR, no bot label, an id not in the file, no hc", async (t) => {
+  const { tree, brief } = await scratch(t);
+  for (const env of [
+    { CLAUDE_PROJECT_DIR: tree },
+    { HC_TERMINAL_ID: "t1" },
+    { HC_TERMINAL_ID: "t5", CLAUDE_PROJECT_DIR: tree },
+    { HC_TERMINAL_ID: "t8", CLAUDE_PROJECT_DIR: tree },
+    { HC_TERMINAL_ID: "t404", CLAUDE_PROJECT_DIR: tree },
+    { HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, PATH: `${NODE_DIR}:/usr/bin:/bin` },
+  ]) {
+    const r = await brief(env);
+    assert.equal(r.stdout, "", JSON.stringify(env));
+    assert.equal(r.stderr, "", JSON.stringify(env));
+  }
+});
+
+test("briefing.mjs: silent for a bot of a project with no bots.json, and for a planned bot's id", async (t) => {
+  const { root, main, tree, brief } = await scratch(t);
+  const other = join(root, "elsewhere");
+  mkdirSync(other);
+  assert.equal((await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: other })).stdout, "");
+  const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
+  fx.terminals.t1.labels.bot = ID.plan;
+  writeFileSync(join(root, "hc.json"), JSON.stringify(fx));
+  assert.equal((await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree })).stdout, "");
+  writeFileSync(join(main, ".herdr", "bots.json"), "{ broken");
+  fx.terminals.t1.labels.bot = ID.main;
+  writeFileSync(join(root, "hc.json"), JSON.stringify(fx));
+  const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree });
+  assert.equal(r.stdout, "");
+  assert.equal(r.stderr, "");
+});
+
+test("briefing.mjs: the main bot, from a worktree session, reads the main checkout's file and its team", async (t) => {
+  const { tree, brief } = await scratch(t);
+  const { stdout, stderr } = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree });
+  assert.equal(stderr, "");
+  assert.match(stdout, /You are Genie, this project's main bot/);
+  assert.match(stdout, /Captain \(bot b-bbbbbbbbbb, Squad lead\): working at t2\.\n {2}Latest report:\n {4}Reviewing PR 12/);
+  assert.match(stdout, /Solo \(bot b-ffffffffff, Docs\): finished \(done\) at t4\.\n {2}Latest report:\n {4}Wrote docs\/guide\.md\n {4}All done\./);
+  assert.doesNotMatch(stdout, /Dev|Tester|Studio/); // the captain's members, and the planned one
+  assert.ok(stdout.length < 10000);
+});
+
+test("briefing.mjs: the captain sees its lead's address, its members (a stuck one's screen tail), never its old pane", async (t) => {
+  const { main, brief } = await scratch(t);
+  const { stdout } = await brief({ HC_TERMINAL_ID: "t2", CLAUDE_PROJECT_DIR: main });
+  assert.match(stdout, /You are Captain, a team member/);
+  assert.match(stdout, /Your lead: Genie \(bot b-aaaaaaaaaa\), idle\./);
+  assert.match(stdout, /hc send t1 /);
+  assert.match(stdout, /Dev \(bot b-cccccccccc, Builds\): stuck \(blocked: needs a person\) at t3\.\n {2}Latest report:\n {4}Permission needed\n {4} {2}Allow edit of src\/x\.rs\?/);
+  assert.match(stdout, /Tester \(bot b-dddddddddd, Tests\): not running\./);
+  assert.doesNotMatch(stdout, /Studio/);
+  // Dev's own label holder t3 is a child of t2 but a bot: no helpers line.
+  assert.doesNotMatch(stdout, /Your helpers/);
+});
+
+test("briefing.mjs: a member reports to its lead's newest pane and counts only unlabelled children", async (t) => {
+  const { main, brief } = await scratch(t);
+  const { stdout } = await brief({ HC_TERMINAL_ID: "t3", CLAUDE_PROJECT_DIR: join(main, ".herdr") });
+  assert.match(stdout, /You are Dev, a team member \(bot b-cccccccccc\)\.\nRole: Builds\nInstructions:\nWrite the code\./);
+  assert.match(stdout, /Your lead: Captain \(bot b-bbbbbbbbbb\), working\./);
+  assert.match(stdout, /hc send t2 /);
+  assert.doesNotMatch(stdout, /t7/);
+  assert.match(stdout, /Your helpers \(terminals you started that are not bots\): 1: 1 working\./);
+});
+
+// ---- launch.js afterBind over the Herdr stand-ins ----
+
+async function session(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-hook-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appHome = join(root, "herdr-app");
+  mkdirSync(join(appHome, "mods", "spaces-agents"), { recursive: true });
+  writeFileSync(join(appHome, "mods", "spaces-agents", "briefing.mjs"), "// installed\n");
+  const proj = join(root, "proj");
+  await run("git", ["init", "-q", proj]);
+  await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: proj });
+  state.appHome = appHome;
+  state.notes = [];
+  return { root, appHome, proj };
+}
+const status = async (cwd) => (await run("git", ["status", "--porcelain", "--untracked-files=all"], { cwd })).stdout;
+
+test("afterBind: a Claude bot gets the hook merged into settings.local.json, settings.json untouched, the file excluded", async (t) => {
+  const { appHome, proj } = await session(t);
+  mkdirSync(join(proj, ".claude"));
+  const shared = '{ "hooks": { "UserPromptSubmit": [] } }\n';
+  writeFileSync(join(proj, ".claude", "settings.json"), shared);
+  writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "brain recall" }] }] }, model: "opus" }));
+  assert.deepEqual(await afterBind(bot(ID.main, "main", { name: "Genie" }), `${proj}/`), { written: true });
+  const local = JSON.parse(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8"));
+  assert.equal(local.model, "opus");
+  assert.deepEqual(local.hooks.UserPromptSubmit.map((g) => g.hooks[0].command), ["brain recall", hookCommand(appHome)]);
+  assert.equal(readFileSync(join(proj, ".claude", "settings.json"), "utf8"), shared);
+  assert.deepEqual(state.notes, []);
+  assert.match(readFileSync(join(proj, ".git", "info", "exclude"), "utf8"), /^\*\*\/\.claude\/settings\.local\.json$/m);
+  assert.equal(await status(proj), "?? .claude/settings.json\n"); // the shared file is the project's business
+  // Again: nothing changes, nothing doubles.
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: false });
+  assert.equal(JSON.parse(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8")).hooks.UserPromptSubmit.length, 2);
+  assert.equal(readFileSync(join(proj, ".git", "info", "exclude"), "utf8").split(EXCLUDE_LINE).length, 2);
+  assert.deepEqual(state.notes, []);
+});
+
+test("afterBind: in a worktree with no .claude yet, the folder is made and git's own exclude path is used", async (t) => {
+  const { proj, root } = await session(t);
+  const tree = join(root, "proj-wt");
+  await run("git", ["worktree", "add", "-q", "-b", "wt", tree], { cwd: proj });
+  assert.deepEqual(await afterBind(bot(ID.dev, "member"), tree), { written: true });
+  assert.ok(existsSync(join(tree, ".claude", "settings.local.json")));
+  assert.equal(await status(tree), "");
+  assert.deepEqual(state.notes, []);
+});
+
+test("afterBind: briefing.mjs not at the computed path: the owner is told the fix and nothing is written", async (t) => {
+  const { proj, root } = await session(t);
+  state.appHome = join(root, "moved-home");
+  assert.deepEqual(await afterBind(bot(ID.main, "main", { name: "Genie" }), proj), { written: false });
+  assert.equal(existsSync(join(proj, ".claude")), false);
+  assert.doesNotMatch(readFileSync(join(proj, ".git", "info", "exclude"), "utf8"), /settings\.local/);
+  assert.equal(state.notes.length, 1);
+  assert.match(state.notes[0].body, /moved-home\/mods\/spaces-agents\/briefing\.mjs isn't there/);
+  assert.match(state.notes[0].body, /copy the pack in again as mods\/spaces-agents/);
+});
+
+test("afterBind: not Claude, or a settings file that isn't JSON: nothing written, never a throw", async (t) => {
+  const { proj } = await session(t);
+  assert.deepEqual(await afterBind(bot(ID.main, "main", { agent: "codex" }), proj), { written: false });
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj, false), { written: false });
+  assert.equal(existsSync(join(proj, ".claude")), false);
+  mkdirSync(join(proj, ".claude"));
+  writeFileSync(join(proj, ".claude", "settings.local.json"), "{ not json");
+  assert.deepEqual(await afterBind(bot(ID.main, "main", { name: "Genie" }), proj), { written: false });
+  assert.equal(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8"), "{ not json");
+  assert.equal(state.notes.length, 1);
+  assert.match(state.notes[0].body, /Genie gets no briefing: .*settings\.local\.json was left as it is: not valid JSON/);
+});
+
+test("afterBind: a settings file git ignores already adds no exclude line", async (t) => {
+  const { proj } = await session(t);
+  writeFileSync(join(proj, ".gitignore"), ".claude/\n");
+  const before = readFileSync(join(proj, ".git", "info", "exclude"), "utf8");
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: true });
+  assert.equal(readFileSync(join(proj, ".git", "info", "exclude"), "utf8"), before);
+  assert.equal(await status(proj), "?? .gitignore\n");
+});
+
+test("afterBind: outside git the hook is written and no exclude is tried", async (t) => {
+  const { root } = await session(t);
+  const plain = join(root, "plain");
+  mkdirSync(plain);
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), plain), { written: true });
+  assert.ok(existsSync(join(plain, ".claude", "settings.local.json")));
+  assert.deepEqual(state.notes, []);
+});
+
+test("parseBots reads the fixture team as written (guards the fixtures above)", () => {
+  const { warnings } = parseBots(JSON.stringify(team()));
+  assert.deepEqual(warnings, []);
+});

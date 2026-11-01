@@ -18,6 +18,13 @@ export const knownAgents = async () => state.agents;
 export function run(name, args) { state.runs.push([name, args]); return null; }
 export async function hc(args) { state.hcCalls.push(args); return state.hcAnswer(args); }
 
+// The briefing hook (launch.js afterBind): the app home it computes the script path from,
+// and every notification posted.
+state.appHome = "/nonexistent/herdr-app";
+state.notes = [];
+export const appHome = () => state.appHome;
+export function notify(n) { state.notes.push(n); return `n${state.notes.length}`; }
+
 export const spaces = () => state.spaces;
 export const home = () => homedir();
 export const shared = (key) => state.shared.get(key);
