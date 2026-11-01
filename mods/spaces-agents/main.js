@@ -26,7 +26,7 @@ import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, proj
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
     ? { mod: "spaces-agents", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
-    : { mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: form });
+    : { mod: "spaces-agents", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? { width: 1000, height: 840 } : { width: 560, height: 0.85 }), props: form });
 }
 
 // Agent naming, as in the agents mod.

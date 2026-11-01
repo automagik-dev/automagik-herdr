@@ -1,0 +1,302 @@
+// The Create / Edit bot form's rules over plain data (A13, to the approved mockup
+// mockup/create-form.dc.html): the form's state from a bot, the bots it may report to, the
+// model line and pin list (A12: picked from the agent's list, never typed), what stops a
+// save, the entry a save writes, the `herdr-bots create|edit …` line it matches (A11), and
+// the sidebar preview's second line. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`,
+// so `node --test` runs it. Apache-2.0.
+
+import { MAX_INSTRUCTIONS, OMNI_LOOK, defaultLook, descendantsOf, effectiveLead, mainBotOf, newCategoryId, plannedOf } from "./model.js";
+import { defaultModelFrom, knownModelsFrom } from "./models.js";
+
+/** Waves the stepper offers (the mockup's 1..9); a stored later wave stays reachable. */
+export const MAX_WAVE = 9;
+/** The counter turns to a warning colour past this many characters (the mockup's 3,600). */
+export const NEAR_LIMIT = 3600;
+/** The "+ New" category chip's value. */
+export const NEW_CATEGORY = "+new";
+
+/** A word as a POSIX shell reads it: bare when it is plain, else single-quoted. */
+export function shellQuote(value) {
+  const v = String(value ?? "");
+  return /^[A-Za-z0-9._/:@%+=,-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
+/** 4000 → "4,000" (no Intl: Herdr's runtime may not carry locales). */
+export function thousands(n) {
+  return String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * The form's state. Create: a new bot (`id`), its default look, the project's main bot when
+ * it has none yet, else a member reporting to the main bot. Edit: every field from the
+ * stored entry (`bot`, as parseBots' raw copy holds it), so a field left alone is written
+ * back as it was (a pin the list no longer has, a lead that fell back, planned's other keys).
+ */
+export function formFrom({ mode = "create", bot = null, file = null, id = null, agent = "" } = {}) {
+  if (mode === "edit" && bot) {
+    return {
+      mode, id: bot.id, name: bot.name ?? "", kind: bot.kind === "main" ? "main" : "member",
+      character: bot.look?.character ?? defaultLook(bot.id).character, colour: bot.look?.colour ?? defaultLook(bot.id).colour,
+      role: bot.role ?? "", instructions: bot.instructions ?? "", agent: bot.agent ?? "", pin: bot.model ?? "",
+      lead: bot.kind === "main" ? "" : bot.lead ?? "", category: bot.category ?? "", catTitle: "", catSub: "",
+      planned: Boolean(bot.planned), wave: bot.planned?.wave ?? 1, note: bot.planned?.note ?? "",
+      storedPlanned: bot.planned ?? null,
+    };
+  }
+  const look = defaultLook(id);
+  return {
+    mode: "create", id, name: "", kind: file && mainBotOf(file) ? "member" : "main",
+    character: look.character, colour: look.colour, role: "", instructions: "", agent, pin: "",
+    lead: "", category: "", catTitle: "", catSub: "", planned: false, wave: 1, note: "", storedPlanned: null,
+  };
+}
+
+/** The Omni preset's look. */
+export const omniLook = () => ({ character: OMNI_LOOK.character, colour: OMNI_LOOK.colour });
+
+/** The lead a member's state means: its own `lead` when that one may lead it, else the main bot. */
+export function leadIdOf(state, file) {
+  const main = file ? mainBotOf(file) : null;
+  if (state.kind === "main" || !main) return "";
+  if (!state.lead || state.lead === main.id) return main.id;
+  const ok = leadOptions(file, state.id).some((o) => o.id === state.lead);
+  return ok ? state.lead : main.id;
+}
+
+/**
+ * The bots `selfId` may report to (A1), in tree order for an indented list: the main bot,
+ * then every member that is not planned, not `selfId` and not under it, each under its own
+ * effective lead. `note`: "Main bot", else its role and, for one the main bot leads, its
+ * category's title ("Captain · Platform").
+ */
+export function leadOptions(file, selfId) {
+  const main = file ? mainBotOf(file) : null;
+  if (!main) return [];
+  const below = selfId ? descendantsOf(file, selfId) : new Set();
+  const can = (b) => b.kind === "member" && !b.planned && b.id !== selfId && !below.has(b.id);
+  const title = new Map((file.categories ?? []).map((c) => [c.id, c.title]));
+  const kids = new Map();
+  for (const b of file.bots) {
+    if (!can(b)) continue;
+    const lead = effectiveLead(file, b.id).lead || main.id;
+    if (!kids.has(lead)) kids.set(lead, []);
+    kids.get(lead).push(b);
+  }
+  const out = [{ id: main.id, name: main.name, look: main.look, note: "Main bot", depth: 0, main: true }];
+  const seen = new Set([main.id]);
+  const walk = (leadId, depth) => {
+    for (const b of kids.get(leadId) ?? []) {
+      if (seen.has(b.id)) continue;
+      seen.add(b.id);
+      const cat = leadId === main.id && b.category ? title.get(b.category) : null;
+      out.push({ id: b.id, name: b.name, look: b.look, note: [b.role, cat].filter(Boolean).join(" · "), depth, main: false });
+      walk(b.id, depth + 1);
+    }
+  };
+  walk(main.id, 1);
+  return out;
+}
+
+/**
+ * Where the bot sits (the "Place in the team" block): which kind buttons are offered and why
+ * one is not, its lead, and whether it picks a category (only a member the main bot leads,
+ * A2) or shows under its lead's.
+ */
+export function placeOf(state, file) {
+  const main = file ? mainBotOf(file) : null;
+  const editing = state.mode === "edit";
+  const why = { main: null, member: null };
+  if (editing) {
+    why[state.kind === "main" ? "member" : "main"] = "A bot's kind is set when it is created.";
+  } else if (main) {
+    why.main = `${main.name} is this project's main bot.`;
+  } else {
+    why.member = "A project's first bot is its main bot.";
+  }
+  const leadId = leadIdOf(state, file);
+  const member = state.kind === "member";
+  const byMain = member && Boolean(main) && leadId === main.id;
+  const lead = leadOptions(file, state.id).find((o) => o.id === leadId) ?? null;
+  const stale = member && Boolean(state.lead) && state.lead !== leadId ? effectiveLead(file, state.id).warning ?? null : null;
+  return { why, leadId, lead, byMain, underLead: member && !byMain, stale };
+}
+
+/** Where an agent's own default model is read from, as the model line names it. */
+const SOURCES = { claude: "your Claude settings", codex: "your Codex config", gemini: "your Gemini settings" };
+
+/**
+ * An agent's model facts for the form: its own default (A12, from its config) and where that
+ * comes from, and the models a bot may be pinned to. `texts`: configPaths' names mapped to
+ * each file's text, as for models.js.
+ */
+export function modelInfo(agentKey, texts = {}) {
+  const def = agentKey ? defaultModelFrom(agentKey, texts) : null;
+  return { def, from: def ? SOURCES[agentKey] ?? "its own settings" : null, models: agentKey ? knownModelsFrom(agentKey, texts) : [] };
+}
+
+/**
+ * The pin list: "Default (…)" first (no pin), then only the agent's known models (A12),
+ * never a typed one. A stored pin the list no longer has is kept as the selected entry,
+ * marked, so opening the list doesn't silently drop it.
+ */
+export function modelOptions(info, pin = "") {
+  const out = [{ id: "", label: `Default (${info.def ?? "its own"})`, hint: info.from ?? "" }];
+  for (const m of info.models) out.push({ id: m, label: m, hint: m === info.def ? "default" : "" });
+  if (pin && !info.models.includes(pin)) out.push({ id: pin, label: pin, hint: "not in the list" });
+  return out;
+}
+
+/**
+ * The model line: what the bot runs and why. `detected`: the model read from the bot's
+ * running pane (edit of a live bot), with `terminal` its address.
+ */
+export function modelLine({ agentName, pin, info, detected = null, terminal = null }) {
+  const name = agentName || "The agent";
+  if (detected) {
+    const shown = pin || detected;
+    const note = pin && pin !== detected
+      ? `Pinned. ${terminal ?? "Its pane"} runs ${detected} now; the pin applies at the next Start.`
+      : `Running in ${terminal ?? "its pane"}, read from the pane.${pin ? " Pinned." : ""}`;
+    return { shown, note, source: pin ? "pinned" : "detected" };
+  }
+  if (pin) return { shown: pin, note: `Pinned. Start runs ${name} with this model; the sidebar shows what the pane really runs.`, source: "pinned" };
+  if (info.def) return { shown: info.def, note: `${name}'s default, from ${info.from}. Read from the running pane once started.`, source: "default" };
+  return { shown: "its own default", note: `${name} doesn't list its models. Read from the running pane once started.`, source: null };
+}
+
+/** The sidebar preview's second line, as the row draws a stopped or planned bot. */
+export function rowLineOf(state, modelShown) {
+  const first = state.planned ? `planned · wave ${state.wave}` : "not running";
+  const role = state.role.trim() || (state.kind === "main" ? "Main bot" : "no role");
+  return [first, role, modelShown].filter(Boolean).join(" · ");
+}
+
+/** The instructions counter's tone: "ok", "near" (past NEAR_LIMIT) or "over". */
+export function countTone(n) {
+  return n > MAX_INSTRUCTIONS ? "over" : n > NEAR_LIMIT ? "near" : "ok";
+}
+
+/**
+ * Why the form can't be saved as it is, or null. The CLI's create/edit rules (entryFrom in
+ * bin/herdr-bots.mjs): a name not taken in the project (names pick bots), the first bot is
+ * the main bot and there is only one, instructions within the limit, a planned bot's wave,
+ * an agent unless planned, a pin from the agent's list, a new category's title.
+ * `ctx`: { key, loadError, file, info } (`info` from modelInfo for state.agent).
+ */
+export function problemOf(state, { key = null, loadError = null, file = null, info = null } = {}) {
+  if (!key) return "Pick the project folder first.";
+  if (loadError) return loadError;
+  const name = state.name.trim();
+  if (!name) return "Give the bot a name.";
+  const bots = file?.bots ?? [];
+  const twin = bots.find((b) => b.id !== state.id && String(b.name).toLowerCase() === name.toLowerCase());
+  if (twin) return `${twin.name} already has that name in this project; names pick bots, so pick another.`;
+  const main = file ? mainBotOf(file) : null;
+  if (state.mode === "create" && !main && state.kind !== "main") return "The first bot in a project must be its main bot.";
+  if (state.kind === "main" && main && main.id !== state.id) return `This project already has a main bot, ${main.name}.`;
+  const n = state.instructions.length;
+  if (n > MAX_INSTRUCTIONS) return `Instructions are ${thousands(n)} characters; the limit is ${thousands(MAX_INSTRUCTIONS)}.`;
+  if (state.planned && !(Number.isInteger(state.wave) && state.wave > 0)) return "A planned bot needs a wave: a whole number from 1.";
+  if (!state.planned && !state.agent) return "Pick what it runs on (or plan it for later).";
+  if (state.pin && !state.agent) return "A model pin needs a coding agent.";
+  if (state.pin && info && !info.models.includes(state.pin)) {
+    return `${state.pin} isn't a model ${state.agent} lists; pick one from the list or use the default.`;
+  }
+  const { byMain } = placeOf(state, file);
+  if (byMain && state.category === NEW_CATEGORY && !state.catTitle.trim()) return "Give the new category a title.";
+  return null;
+}
+
+/**
+ * What a save writes: the bot entry for applyBotEdit (every field the form edits; an
+ * optional one left empty is removed there) and a new category, or null. A member the main
+ * bot doesn't lead carries no category; the main bot no lead.
+ */
+export function entryOf(state, file) {
+  const { leadId, byMain } = placeOf(state, file);
+  const main = file ? mainBotOf(file) : null;
+  const member = state.kind === "member";
+  const newCat = byMain && state.category === NEW_CATEGORY;
+  return {
+    entry: {
+      id: state.id, name: state.name.trim(), kind: state.kind,
+      look: { character: state.character, colour: state.colour },
+      role: state.role.trim(), instructions: state.instructions,
+      agent: state.agent || undefined, model: state.pin || undefined,
+      // An untouched stale lead is written back as stored; the view keeps warning on it.
+      lead: member ? (state.lead && state.lead !== leadId ? state.lead : leadId && leadId !== main?.id ? leadId : undefined) : undefined,
+      category: byMain && state.category && !newCat ? state.category : undefined,
+      planned: state.planned ? plannedOf(state.storedPlanned, state.wave, state.note.trim()) : undefined,
+    },
+    newCategory: newCat ? { title: state.catTitle.trim(), sub: state.catSub.trim() } : null,
+  };
+}
+
+/**
+ * The `herdr-bots` line that does what the form will do (A11), shown live in the footer and
+ * copied by Copy. Create: every chosen field, in the mockup's order. Edit: `edit <bot>` and
+ * only what changed since `initial`, with the CLI's clearing spellings (--no-model,
+ * --no-category, --unplanned). A new category is added first with `category add`. The
+ * project is named with --project, so the line writes the same file from any folder.
+ * Instructions go inline with --instructions (the mockup's `--instructions-file -` would
+ * wait on stdin when pasted).
+ */
+export function commandOf(state, { key = null, file = null, initial = null } = {}) {
+  const q = shellQuote;
+  const { leadId, byMain } = placeOf(state, file);
+  const project = key ? [`--project ${q(key)}`] : [];
+  const cats = file?.categories ?? [];
+  const pre = [];
+  let categoryId = state.category;
+  if (byMain && state.category === NEW_CATEGORY) {
+    categoryId = newCategoryId(state.catTitle.trim() || "category", cats);
+    pre.push(["herdr-bots category add", `--title ${q(state.catTitle.trim())}`,
+      ...(state.catSub.trim() ? [`--sub ${q(state.catSub.trim())}`] : []), ...project].join(" "));
+  }
+  const parts = [];
+  const was = state.mode === "edit" && initial ? initial : null;
+  const changed = (k) => !was || was[k] !== state[k];
+  if (!was) {
+    parts.push("herdr-bots create", `--name ${q(state.name.trim() || "new-bot")}`);
+    if (state.kind === "main") parts.push("--kind main");
+    if (state.agent) parts.push(`--agent ${q(state.agent)}`);
+    if (state.role.trim()) parts.push(`--role ${q(state.role.trim())}`);
+    if (state.kind === "member" && leadId) parts.push(`--lead ${q(leadId)}`);
+    if (byMain && categoryId) parts.push(`--category ${q(categoryId)}`);
+    parts.push(`--character ${q(state.character)}`, `--colour ${q(state.colour)}`);
+    if (state.pin) parts.push(`--model ${q(state.pin)}`);
+    if (state.planned) {
+      parts.push(`--planned-wave ${state.wave}`);
+      if (state.note.trim()) parts.push(`--planned-note ${q(state.note.trim())}`);
+    }
+    parts.push(...project);
+    if (state.instructions) parts.push(`--instructions ${q(state.instructions)}`);
+  } else {
+    parts.push(`herdr-bots edit ${q(state.id)}`);
+    if (changed("name")) parts.push(`--name ${q(state.name.trim())}`);
+    if (changed("agent") && state.agent) parts.push(`--agent ${q(state.agent)}`);
+    if (changed("role")) parts.push(`--role ${q(state.role.trim())}`);
+    const wasPlace = placeOf(was, file);
+    if (state.kind === "member" && leadId !== wasPlace.leadId) parts.push(`--lead ${q(leadId)}`);
+    if (byMain && (categoryId !== was.category || !wasPlace.byMain)) {
+      parts.push(categoryId ? `--category ${q(categoryId)}` : "--no-category");
+    }
+    if (changed("character") || changed("colour")) parts.push(`--character ${q(state.character)}`, `--colour ${q(state.colour)}`);
+    if (changed("pin") || (changed("agent") && was.pin)) parts.push(state.pin ? `--model ${q(state.pin)}` : "--no-model");
+    if (!state.planned && was.planned) parts.push("--unplanned");
+    if (state.planned && (!was.planned || changed("wave") || changed("note"))) {
+      parts.push(`--planned-wave ${state.wave}`);
+      if (state.note.trim() || was.note) parts.push(`--planned-note ${q(state.note.trim())}`);
+    }
+    parts.push(...project);
+    if (changed("instructions")) parts.push(`--instructions ${q(state.instructions)}`);
+  }
+  return [...pre, parts.join(" ")].join(" && ");
+}
+
+/** Whether an edit changed anything the form edits. */
+export function editChanged(state, initial) {
+  if (!initial) return true;
+  return ["name", "kind", "character", "colour", "role", "instructions", "agent", "pin", "lead", "category",
+    "catTitle", "catSub", "planned", "wave", "note"].some((k) => state[k] !== initial[k]);
+}
