@@ -233,6 +233,28 @@ export async function projectKeyOf(folder, git, exists) {
   return start;
 }
 
+/** The bots under `botId` at any depth (by effective lead): none of them can be its lead. */
+export function descendantsOf(file, botId) {
+  const out = new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of file.bots) {
+      if (out.has(b.id) || b.id === botId || b.kind !== "member") continue;
+      const { lead } = effectiveLead(file, b.id);
+      if (lead === botId || out.has(lead)) { out.add(b.id); grew = true; }
+    }
+  }
+  return out;
+}
+
+/** `planned` from the form: wave and note from it, the stored object's other keys kept. */
+export function plannedOf(stored, wave, note) {
+  const out = { ...(stored ?? {}), wave };
+  if (note) out.note = note; else delete out.note;
+  return out;
+}
+
 /** Automagik's Omni look: the octopus in deepseek. */
 export const OMNI_LOOK = Object.freeze({ character: "octopus", colour: "deepseek" });
 

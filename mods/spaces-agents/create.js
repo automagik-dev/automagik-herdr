@@ -7,7 +7,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run } from "herdr";
-import { BOTS_PATH, CHARACTERS, COLOURS, MAX_INSTRUCTIONS, OMNI_LOOK, parseBots, mainBotOf, newBotId, defaultLook, applyBotEdit } from "./model.js";
+import { BOTS_PATH, CHARACTERS, COLOURS, MAX_INSTRUCTIONS, OMNI_LOOK, parseBots, mainBotOf, newBotId, defaultLook, applyBotEdit, descendantsOf, plannedOf } from "./model.js";
 import { discoverProjects, keyOf, writeBots } from "./bots.js";
 import { attachBot, startBot } from "./launch.js";
 
@@ -105,6 +105,7 @@ export class BotForm {
     this.lead = b.lead ?? "";
     this.category = b.category ?? "";
     this.planned = Boolean(b.planned);
+    this.storedPlanned = b.planned ?? null; // keys besides wave and note survive an edit
     this.wave.set_value(b.planned ? String(b.planned.wave) : "");
     this.note.set_value(b.planned?.note ?? "");
   }
@@ -128,7 +129,7 @@ export class BotForm {
         agent: this.agent || undefined, model: this.model.value().trim() || undefined,
         lead: this.kind === "member" ? this.lead || undefined : undefined,
         category: this.category && this.category !== "+new" ? this.category : undefined,
-        planned: this.planned ? (note ? { wave, note } : { wave }) : undefined,
+        planned: this.planned ? plannedOf(this.storedPlanned, wave, note) : undefined,
       },
       newCategory: this.category === "+new" ? { title: this.catTitle.value(), sub: this.catSub.value() } : null,
     };
@@ -250,7 +251,9 @@ export class BotForm {
     });
     const main = mainBotOf(this.file ?? { bots: [] });
     const count = this.instructions.value().length;
-    const leads = (this.file?.bots ?? []).filter((b) => b.kind === "member" && !b.planned && b.id !== this.id);
+    // Not itself, nor a bot under it (that would make a cycle).
+    const below = this.file ? descendantsOf(this.file, this.id) : new Set();
+    const leads = (this.file?.bots ?? []).filter((b) => b.kind === "member" && !b.planned && b.id !== this.id && !below.has(b.id));
     const cats = this.file?.categories ?? [];
     const look = this.look ?? { character: "", colour: "" };
     const el = v_flex().p(14).gap(4)

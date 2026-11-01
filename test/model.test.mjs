@@ -332,3 +332,19 @@ test("create: instructions over 4,000 characters can't be written", () => {
   const out = applyBotEdit(raw, bot("b-ffffffffff", "member", { instructions: "x".repeat(MAX_INSTRUCTIONS + 1) }));
   assert.ok(checkBots(out).some((e) => /4000/.test(e)));
 });
+
+test("lead choices: a bot's descendants at any depth can't be its lead", async () => {
+  const { descendantsOf } = await import("../mods/spaces-agents/model.js");
+  const f = sample();
+  assert.deepEqual([...descendantsOf(f, ID.cap)].sort(), [ID.dev, ID.tst].sort());
+  assert.deepEqual([...descendantsOf(f, ID.dev)], []);
+  const deeper = sample((x) => { x.bots[2].lead = ID.tst; return x; }); // cap -> tst -> dev
+  assert.deepEqual([...descendantsOf(deeper, ID.cap)].sort(), [ID.dev, ID.tst].sort());
+  assert.equal(descendantsOf(f, ID.main).size, 4);
+});
+
+test("edit: planned keeps its other keys; wave and note come from the form", async () => {
+  const { plannedOf } = await import("../mods/spaces-agents/model.js");
+  assert.deepEqual(plannedOf({ wave: 3, note: "old", squad: "access" }, 4, ""), { wave: 4, squad: "access" });
+  assert.deepEqual(plannedOf(null, 1, "later"), { wave: 1, note: "later" });
+});

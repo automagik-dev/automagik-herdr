@@ -112,7 +112,7 @@ export function tone(t, status) {
 export default class Spaces extends View {
   init(given, cx) {
     // Opened as a dialog (New bot, Edit, Attach as bot…): the form only, no sidebar.
-    const p = given ?? props();
+    const p = props() ?? given;
     if (p?.form) { this.form = new BotForm(p, cx); return; }
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
@@ -145,7 +145,10 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const { name: c, args } = parseCommand(await nextCommand());
-        if (["new-bot", "edit", "start", "attach", "refresh"].includes(c)) await this.botCommand(c, args, cx);
+        if (["new-bot", "edit", "start", "attach", "refresh"].includes(c)) {
+          // A throw here must not end this loop (paste and every command would stop).
+          try { await this.botCommand(c, args, cx); } catch (e) { notify({ title: "Bots", body: String(e?.message ?? e), level: "error" }); }
+        }
         else if (c === "paste" || c === "paste_image") {
           const address = focused()?.terminal;
           const image = await imageOnly();
@@ -427,7 +430,8 @@ export default class Spaces extends View {
     if (c === "attach" && !terminal) return notify({ title, body: "Focus the pane to attach first.", level: "warning" });
     // Attach with no bot named: the picker, for the pane.
     if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal });
-    if (!bot) return notify({ title, body: "No bot given, and the focused pane isn't one.", level: "warning" });
+    // No bot named and the focused pane isn't one: the Bots list, to pick one.
+    if (!bot) return openBotForm({ form: "pick" }, "popup");
     if (c === "edit") return openBotForm({ form: "edit", bot });
     // A bot's project: looked up by its id (ids are random, so it is one project).
     const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
