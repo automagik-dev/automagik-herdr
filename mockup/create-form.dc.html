@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>New bot</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#06080C}
+a{color:#22D3EE}a:hover{color:#7fe5f5}
+button{font-family:inherit;cursor:pointer}
+button:disabled{cursor:not-allowed}
+input,textarea{font-family:inherit}
+input:focus,textarea:focus{outline:none;border-color:#22D3EE !important}
+button:focus-visible{outline:2px solid #22D3EE;outline-offset:2px}
+.tile:hover{background:#1A2130 !important}
+.opt:hover{background:#1A2130 !important}
+.pet-body{-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+.m-whale{-webkit-mask-image:url(/_blob/85a959a4bb7f49f1825fc8fd6d119dc9);mask-image:url(/_blob/85a959a4bb7f49f1825fc8fd6d119dc9)}
+.m-octopus{-webkit-mask-image:url(/_blob/159f1ce5634745c0d10c39115f549d3a);mask-image:url(/_blob/159f1ce5634745c0d10c39115f549d3a)}
+.m-star{-webkit-mask-image:url(/_blob/bad175444066dd99b5e1dbf4519ece35);mask-image:url(/_blob/bad175444066dd99b5e1dbf4519ece35)}
+.m-moon{-webkit-mask-image:url(/_blob/3b89849ead6d3f510d477b8111432b97);mask-image:url(/_blob/3b89849ead6d3f510d477b8111432b97)}
+.m-wave{-webkit-mask-image:url(/_blob/84cefd8aa347e022818ad7daba25c4a6);mask-image:url(/_blob/84cefd8aa347e022818ad7daba25c4a6)}
+.m-squircle{-webkit-mask-image:url(/_blob/24c5f298a4257e7e59a2bcae34b4ed1d);mask-image:url(/_blob/24c5f298a4257e7e59a2bcae34b4ed1d)}
+.m-zed{-webkit-mask-image:url(/_blob/4378ff654f0e95a2b46b17187f0ab089);mask-image:url(/_blob/4378ff654f0e95a2b46b17187f0ab089)}
+.m-hex{-webkit-mask-image:url(/_blob/e86abe57e78dc124293e7e36e4478958);mask-image:url(/_blob/e86abe57e78dc124293e7e36e4478958)}
+.m-gumdrop{-webkit-mask-image:url(/_blob/807bed00a76de7a19d765d30a02fa734);mask-image:url(/_blob/807bed00a76de7a19d765d30a02fa734)}
+.m-peanut{-webkit-mask-image:url(/_blob/4bfdf2422989c1a1391dae79910c9616);mask-image:url(/_blob/4bfdf2422989c1a1391dae79910c9616)}
+.m-saucer{-webkit-mask-image:url(/_blob/061805a162ec5aacb33678bd6287dd4f);mask-image:url(/_blob/061805a162ec5aacb33678bd6287dd4f)}
+.m-bunny{-webkit-mask-image:url(/_blob/fdb1a378c89a25094eb10a5e5d027f2f);mask-image:url(/_blob/fdb1a378c89a25094eb10a5e5d027f2f)}
+.m-kitty{-webkit-mask-image:url(/_blob/2dbe702a2aa7afdb18e3990ee599fa66);mask-image:url(/_blob/2dbe702a2aa7afdb18e3990ee599fa66)}
+.m-beacon{-webkit-mask-image:url(/_blob/66bf905617e02ae0a6753b25237b7506);mask-image:url(/_blob/66bf905617e02ae0a6753b25237b7506)}
+.m-plus{-webkit-mask-image:url(/_blob/1355928d07c0821a2e18ea8401158e51);mask-image:url(/_blob/1355928d07c0821a2e18ea8401158e51)}
+.m-magnet{-webkit-mask-image:url(/_blob/82fcc38f4a0278443c6ca92df9b95ce5);mask-image:url(/_blob/82fcc38f4a0278443c6ca92df9b95ce5)}
+.m-acorn{-webkit-mask-image:url(/_blob/7b842e1c1e8813400fa083a90c7264b9);mask-image:url(/_blob/7b842e1c1e8813400fa083a90c7264b9)}
+.m-pebbles{-webkit-mask-image:url(/_blob/644e72b64d2b72901b3647d5bbc2b25b);mask-image:url(/_blob/644e72b64d2b72901b3647d5bbc2b25b)}
+.m-cushion{-webkit-mask-image:url(/_blob/5ef696fdba192bdccd85faee6332fbf8);mask-image:url(/_blob/5ef696fdba192bdccd85faee6332fbf8)}
+.m-ring{-webkit-mask-image:url(/_blob/d0cc79d5ca1750a139bd93b3b1e1cef5);mask-image:url(/_blob/d0cc79d5ca1750a139bd93b3b1e1cef5)}
+.m-gem{-webkit-mask-image:url(/_blob/598d877896a7828fa1d8ed0d18ec3280);mask-image:url(/_blob/598d877896a7828fa1d8ed0d18ec3280)}
+</style>
+</helmet>
+<div style="width: 1000px; height: 840px; box-sizing: border-box; background: #0E1117; color: #E6EAF0; font-family: Inter, system-ui, sans-serif; font-size: 13px; border: 1px solid #232A36; border-radius: 14px; display: flex; flex-direction: column; overflow: hidden">
+
+<div style="display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #1E2430">
+<div style="flex-grow: 1; display: flex; align-items: baseline; gap: 12px">
+<h1 style="margin: 0; font-size: 17px; font-weight: 600">New bot</h1>
+<button type="button" aria-label="Project: brain-v3. Change project" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid #2A3242; background: #11151D; color: #C3CAD5; font-size: 12px">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8B93A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+<span>brain-v3</span>
+<span style="color: #8B93A3">· Brain HQ</span>
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8B93A3" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+</div>
+<button type="button" aria-label="Close" style="width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: #8B93A3; display: flex; align-items: center; justify-content: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+</button>
+</div>
+
+<div style="flex-grow: 1; min-height: 0; display: flex">
+
+<div style="width: 340px; flex: none; box-sizing: border-box; padding: 18px 20px; background: #0B0E14; border-right: 1px solid #1E2430; display: flex; flex-direction: column; gap: 16px">
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0 12px 0; border-radius: 12px; background: #11151D; border: 1px solid #1E2430">
+<div style="position: relative; width: 112px; height: 112px">
+<div class="{{chosen.mask}}" style="position: absolute; inset: 0; background: {{chosen.paint}}"></div>
+<img src="{{chosen.over}}" alt="" style="position: absolute; inset: 0; width: 100%; height: 100%">
+</div>
+<div style="display: flex; gap: 6px">
+<button type="button" onClick="{{omni}}" style="padding: 4px 10px; border-radius: 999px; border: 1px solid #2A3242; background: transparent; color: #C3CAD5; font-size: 11px">Omni preset</button>
+<button type="button" onClick="{{shuffle}}" style="padding: 4px 10px; border-radius: 999px; border: 1px solid #2A3242; background: transparent; color: #C3CAD5; font-size: 11px; display: flex; align-items: center; gap: 5px">
+<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg>
+Shuffle</button>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="bot-name" style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Name</label>
+<input id="bot-name" value="{{name}}" onChange="{{onName}}" style="height: 36px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 1px solid #2A3242; background: #11151D; color: #E6EAF0; font-size: 14px; font-weight: 600">
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Character</span>
+<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px">
+<sc-for list="{{pets}}" as="item" hint-placeholder-count="21">
+<button type="button" class="tile" onClick="{{item.pick}}" aria-label="{{item.name}}" aria-pressed="{{item.selected}}" style="height: 40px; padding: 4px; border-radius: 8px; border: 1px solid {{item.border}}; background: {{item.bg}}; position: relative">
+<div style="position: relative; width: 100%; height: 100%">
+<div class="{{item.mask}}" style="position: absolute; inset: 0; background: {{chosen.paint}}"></div>
+<img src="{{item.over}}" alt="" style="position: absolute; inset: 0; width: 100%; height: 100%">
+</div>
+</button>
+</sc-for>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Colour</span>
+<div style="display: flex; flex-wrap: wrap; gap: 7px">
+<sc-for list="{{swatches}}" as="item" hint-placeholder-count="19">
+<button type="button" onClick="{{item.pick}}" aria-label="{{item.name}}" aria-pressed="{{item.selected}}" style="width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 0; background: {{item.paint}}; box-shadow: {{item.ring}}"></button>
+</sc-for>
+</div>
+</div>
+
+<div style="margin-top: auto; display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">In the sidebar</span>
+<div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #11151D; border: 1px solid #1E2430">
+<div style="position: relative; width: 26px; height: 26px; flex: none">
+<div class="{{chosen.mask}}" style="position: absolute; inset: 0; background: {{chosen.paint}}"></div>
+<img src="{{chosen.over}}" alt="" style="position: absolute; inset: 0; width: 100%; height: 100%">
+</div>
+<div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px">
+<span style="font-weight: 600; font-size: 13px; color: {{chosen.ink}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{nameShown}}</span>
+<span style="font-size: 11px; color: #8B93A3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{rowLine}}</span>
+</div>
+<sc-if value="{{agentIs.claude}}" hint-placeholder-val="{{true}}"><svg width="15" height="15" viewBox="0 0 24 24" aria-label="Claude Code" style="flex: none"><path fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" fill="#D97757"></path></svg></sc-if>
+<sc-if value="{{agentIs.codex}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" aria-label="Codex" style="flex: none"><path fill="#D7DCE4" fill-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg></sc-if>
+<sc-if value="{{agentIs.omp}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 800 800" aria-label="Oh My Pi" style="flex: none"><path fill="#D7DCE4" fill-rule="evenodd" d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"></path><path fill="#D7DCE4" d="M517.36 400H634.72V634.72H517.36Z"></path></svg></sc-if>
+<sc-if value="{{agentIs.gemini}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" viewBox="0 0 24 24" aria-label="Gemini" style="flex: none"><path fill="#D7DCE4" d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"></path></svg></sc-if>
+<span aria-label="Not running" style="flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #7A8294; margin: 0 3px"></span>
+</div>
+</div>
+
+</div>
+
+<div style="flex-grow: 1; min-width: 0; box-sizing: border-box; padding: 18px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px">
+
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="bot-role" style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Role</label>
+<input id="bot-role" value="{{role}}" onChange="{{onRole}}" placeholder="What it is, in a few words" style="height: 36px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 1px solid #2A3242; background: #11151D; color: #E6EAF0; font-size: 13px">
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: baseline; gap: 8px">
+<label for="bot-instr" style="flex-grow: 1; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Instructions</label>
+<span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: {{countColor}}">{{count}} / 4,000</span>
+</div>
+<textarea id="bot-instr" value="{{instructions}}" onChange="{{onInstr}}" rows="5" style="box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid #2A3242; background: #11151D; color: #E6EAF0; font-size: 13px; line-height: 1.5; resize: none"></textarea>
+<span style="font-size: 11px; color: #8B93A3">Given to the bot before every turn, with its team's status.</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px">
+<span style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Runs on</span>
+<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{agents}}" as="item" hint-placeholder-count="5">
+<button type="button" onClick="{{item.pick}}" disabled="{{item.disabled}}" aria-pressed="{{item.selected}}" style="height: 56px; box-sizing: border-box; padding: 6px; border-radius: 10px; border: 1px solid {{item.border}}; background: {{item.bg}}; color: {{item.fg}}; opacity: {{item.opacity}}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px">
+<sc-if value="{{item.isClaude}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" fill="#D97757"></path></svg></sc-if>
+<sc-if value="{{item.isCodex}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#D7DCE4" fill-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg></sc-if>
+<sc-if value="{{item.isOmp}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 800 800" aria-hidden="true"><path fill="#D7DCE4" fill-rule="evenodd" d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"></path><path fill="#D7DCE4" d="M517.36 400H634.72V634.72H517.36Z"></path></svg></sc-if>
+<sc-if value="{{item.isGemini}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#D7DCE4" d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"></path></svg></sc-if>
+<sc-if value="{{item.isKimi}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0z" fill="#1783FF"></path><path d="M11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z" fill="#fff"></path></svg></sc-if>
+<span style="font-size: 11px; font-weight: 500; white-space: nowrap">{{item.label}}</span>
+</button>
+</sc-for>
+</div>
+
+<div style="position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid #1E2430; background: #11151D">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="M12 2a10 10 0 1 0 10 10"></path><path d="M12 6v6l4 2"></path></svg>
+<div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 13px; font-weight: 500">Model: <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #22D3EE">{{modelShown}}</span></span>
+<span style="font-size: 11px; color: #8B93A3">{{modelNote}}</span>
+</div>
+<sc-if value="{{canPin}}" hint-placeholder-val="{{true}}">
+<button type="button" onClick="{{toggleModels}}" aria-expanded="{{modelsOpen}}" style="flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid #2A3242; background: #0E1117; color: #C3CAD5; font-size: 12px">{{pinLabel}}
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+</sc-if>
+<sc-if value="{{modelsOpen}}" hint-placeholder-val="{{false}}">
+<div role="listbox" aria-label="Pin a model" style="position: absolute; right: 8px; top: 52px; z-index: 5; width: 260px; padding: 4px; border-radius: 10px; border: 1px solid #2A3242; background: #161B24; box-shadow: 0 12px 32px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 1px">
+<sc-for list="{{models}}" as="item" hint-placeholder-count="6">
+<button type="button" class="opt" role="option" aria-selected="{{item.selected}}" onClick="{{item.pick}}" style="display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; border: 0; background: {{item.bg}}; color: #E6EAF0; font-size: 12px; text-align: left">
+<span style="flex-grow: 1; font-family: {{item.font}}">{{item.label}}</span>
+<span style="font-size: 11px; color: #8B93A3">{{item.hint}}</span>
+</button>
+</sc-for>
+</div>
+</sc-if>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 12px">
+<span style="font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #8B93A3">Place in the team</span>
+
+<div style="display: flex; align-items: center; gap: 12px">
+<div role="group" aria-label="Kind" style="display: flex; padding: 3px; border-radius: 9px; background: #11151D; border: 1px solid #1E2430">
+<button type="button" disabled="{{true}}" style="padding: 6px 14px; border-radius: 7px; border: 0; background: transparent; color: #5D6577; font-size: 12px; font-weight: 500">Main bot</button>
+<button type="button" aria-pressed="true" style="padding: 6px 14px; border-radius: 7px; border: 0; background: #1F2735; color: #E6EAF0; font-size: 12px; font-weight: 600">Team member</button>
+</div>
+<span style="font-size: 11px; color: #8B93A3">brain-orchestrator is this project's main bot.</span>
+</div>
+
+<div style="position: relative; display: flex; align-items: center; gap: 12px">
+<span style="width: 84px; flex: none; font-size: 12px; color: #C3CAD5">Reports to</span>
+<button type="button" onClick="{{toggleLeads}}" aria-expanded="{{leadsOpen}}" style="flex-grow: 1; display: flex; align-items: center; gap: 8px; height: 38px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid #2A3242; background: #11151D; color: #E6EAF0; text-align: left">
+<div style="position: relative; width: 22px; height: 22px; flex: none">
+<div class="{{lead.mask}}" style="position: absolute; inset: 0; background: {{lead.paint}}"></div>
+<img src="{{lead.over}}" alt="" style="position: absolute; inset: 0; width: 100%; height: 100%">
+</div>
+<span style="font-weight: 600; font-size: 13px; color: {{lead.ink}}">{{lead.name}}</span>
+<span style="flex-grow: 1; font-size: 11px; color: #8B93A3">{{lead.note}}</span>
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8B93A3" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+<sc-if value="{{leadsOpen}}" hint-placeholder-val="{{false}}">
+<div role="listbox" aria-label="Reports to" style="position: absolute; left: 96px; right: 0; top: 44px; z-index: 5; padding: 4px; border-radius: 10px; border: 1px solid #2A3242; background: #161B24; box-shadow: 0 12px 32px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 1px">
+<sc-for list="{{leads}}" as="item" hint-placeholder-count="4">
+<button type="button" class="opt" role="option" aria-selected="{{item.selected}}" onClick="{{item.pick}}" style="display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px {{item.indent}}; border-radius: 7px; border: 0; background: {{item.bg}}; color: #E6EAF0; text-align: left">
+<div style="position: relative; width: 20px; height: 20px; flex: none">
+<div class="{{item.mask}}" style="position: absolute; inset: 0; background: {{item.paint}}"></div>
+<img src="{{item.over}}" alt="" style="position: absolute; inset: 0; width: 100%; height: 100%">
+</div>
+<span style="font-weight: 600; font-size: 12px; color: {{item.ink}}">{{item.name}}</span>
+<span style="flex-grow: 1; font-size: 11px; color: #8B93A3">{{item.note}}</span>
+</button>
+</sc-for>
+</div>
+</sc-if>
+</div>
+
+<div style="display: flex; align-items: flex-start; gap: 12px">
+<span style="width: 84px; flex: none; padding-top: 6px; font-size: 12px; color: #C3CAD5">Category</span>
+<sc-if value="{{byMain}}" hint-placeholder-val="{{true}}">
+<div style="flex-grow: 1; display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{categories}}" as="item" hint-placeholder-count="6">
+<button type="button" onClick="{{item.pick}}" aria-pressed="{{item.selected}}" style="padding: 5px 11px; border-radius: 999px; border: 1px solid {{item.border}}; background: {{item.bg}}; color: {{item.fg}}; font-size: 12px; font-weight: 500">{{item.title}}</button>
+</sc-for>
+<button type="button" style="padding: 5px 11px; border-radius: 999px; border: 1px dashed #2E3646; background: transparent; color: #8B93A3; font-size: 12px">+ New</button>
+</div>
+</sc-if>
+<sc-if value="{{byCaptain}}" hint-placeholder-val="{{false}}">
+<span style="flex-grow: 1; padding-top: 6px; font-size: 12px; color: #8B93A3">Shows under {{lead.name}}, in its category.</span>
+</sc-if>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px {{plannedBorder}} #2A3242; background: {{plannedBg}}">
+<div style="display: flex; align-items: center; gap: 10px">
+<button type="button" role="switch" aria-checked="{{planned}}" aria-label="Planned for a later wave" onClick="{{togglePlanned}}" style="width: 34px; height: 20px; flex: none; padding: 2px; border-radius: 999px; border: 0; background: {{switchBg}}; display: flex; justify-content: {{switchSide}}">
+<span style="width: 16px; height: 16px; border-radius: 50%; background: #E6EAF0"></span>
+</button>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 1px">
+<span style="font-size: 13px; font-weight: 500">Planned for later</span>
+<span style="font-size: 11px; color: #8B93A3">Shows dimmed in the sidebar with its wave; it can't start until you clear this.</span>
+</div>
+</div>
+<sc-if value="{{planned}}" hint-placeholder-val="{{false}}">
+<div style="display: flex; align-items: center; gap: 10px; padding-left: 44px">
+<div role="group" aria-label="Wave" style="display: flex; align-items: center; border-radius: 8px; border: 1px solid #2A3242; background: #11151D">
+<button type="button" onClick="{{waveDown}}" aria-label="Earlier wave" style="width: 28px; height: 30px; border: 0; background: transparent; color: #C3CAD5">−</button>
+<span style="min-width: 54px; text-align: center; font-size: 12px; font-weight: 600">Wave {{wave}}</span>
+<button type="button" onClick="{{waveUp}}" aria-label="Later wave" style="width: 28px; height: 30px; border: 0; background: transparent; color: #C3CAD5">+</button>
+</div>
+<input aria-label="Why it waits" value="{{plannedNote}}" onChange="{{onNote}}" placeholder="Why it waits" style="flex-grow: 1; height: 32px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid #2A3242; background: #11151D; color: #E6EAF0; font-size: 12px">
+</div>
+</sc-if>
+</div>
+</div>
+
+</div>
+</div>
+
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-top: 1px solid #1E2430; background: #0B0E14">
+<div style="flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border-radius: 8px; border: 1px solid #1E2430; background: #0E1117">
+<span style="flex: none; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: #8B93A3">$</span>
+<code style="flex-grow: 1; min-width: 0; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: #C3CAD5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{cli}}</code>
+<button type="button" onClick="{{copy}}" aria-label="Copy the command" style="flex: none; display: flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 6px; border: 0; background: #161B24; color: #C3CAD5; font-size: 11px">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"></path></svg>
+{{copyLabel}}</button>
+</div>
+<button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 0; background: transparent; color: #C3CAD5; font-size: 13px; font-weight: 500">Cancel</button>
+<button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid #2A3242; background: #161B24; color: #E6EAF0; font-size: 13px; font-weight: 600">{{createLabel}}</button>
+<sc-if value="{{canStart}}" hint-placeholder-val="{{true}}">
+<button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 0; background: #22D3EE; color: #06232A; font-size: 13px; font-weight: 700">Create &amp; start</button>
+</sc-if>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":840}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = {
+name: 'runtime-dev', who: 'hex', colour: 'sky', role: 'Builder', agent: 'codex', pin: '',
+instructions: 'Build what runtime-cap assigns, one issue at a time, in its worktree. Keep each change small and tested. When a task is done or you are stuck, report to runtime-cap with hc send.',
+lead: 'runtime-cap', category: 'platform', planned: false, wave: 2, plannedNote: '',
+modelsOpen: false, leadsOpen: false, copied: false
+};
+}
+renderVals() {
+const s = this.state;
+const set = (o) => this.setState(o);
+const NAMES = ["whale","octopus","star","moon","wave","squircle","zed","hex","gumdrop","peanut","saucer","bunny","kitty","beacon","plus","magnet","acorn","pebbles","cushion","ring","gem"];
+const OVER = {
+acorn:'/_blob/803e74341fba5db6d4f79f223fbca9d4', beacon:'/_blob/289c1dc62a299999e87846ee40edcc70', bunny:'/_blob/e07a77d1f73d8e4927a804a30d88aa5d',
+cushion:'/_blob/4eb8d03cc6a6fc1169620e108b9d06b9', gem:'/_blob/c98ffaa3703b6603e5f8e9eca415bfa5', gumdrop:'/_blob/e1970f8fba71fef638c327a843419a40',
+hex:'/_blob/bc76d1f8dcbf7d4fd6d3f1cbc985a70c', kitty:'/_blob/26e234f032ee6268c9a6c782bfd0c64f', magnet:'/_blob/8524401c74eeee483c25d0be184386e9',
+moon:'/_blob/0b1f21c38e3d48453adf7573e2779c35', octopus:'/_blob/27585732ee1a475bac7162689ecf23d4', peanut:'/_blob/71cc44e7429a5c7139c9d49015962ff2',
+pebbles:'/_blob/cb25d3b7e8a0a37401384e9a9f51b615', plus:'/_blob/28404c9249b546ae8193ca49478a084b', ring:'/_blob/1cd9cd7b312123f47d8c619147ce2314',
+saucer:'/_blob/87f959b44de15a8dccd5739ad0da92d1', squircle:'/_blob/02af8929b75703721a3184e0a49d0046', star:'/_blob/8b3ecc93c3dafbeff2fb55728b5ea566',
+wave:'/_blob/144d705cb685cdac98a6cd04393f00fd', whale:'/_blob/019a3414ad39d5ee54d301e168560333', zed:'/_blob/aab7899ebffb379c5f88b491f729c6de'
+};
+const C = {"deepseek":["#7fe5f5","#22D3EE","#1898ab","#22D3EE"],"charcoal":["#f7f7f9","#F1F2F4","#aeaeb0","#F1F2F4"],"graphite":["#e7e7ea","#D6D6DA","#9a9a9d","#D6D6DA"],"rose":["#ff9fb2","#FF5A7A","#b84158","#FF5A7A"],"sky":["#86f1ed","#2EE6E0","#21a6a1","#2EE6E0"],"tangerine":["#ffbb86","#FF8A2E","#b86321","#FF8A2E"],"cobalt":["#a0b1ff","#5C78FF","#4256b8","#5C78FF"],"black":["#ffffff","#FFFFFF","#b8b8b8","#9AA3B2"],"brown":["#b8a08a","#855C36","#604227","#B8A08A"],"red":["#ed7e8a","#E02135","#a11826","#ED7E8A"],"orange":["#ffa76b","#FF6700","#b84a00","#FF6700"],"yellow":["#ffc36b","#FF9800","#b86d00","#FF9800"],"green":["#6bc49e","#009957","#006e3f","#6BC49E"],"cyan":["#6bcbc0","#00A592","#007769","#6BCBC0"],"blue":["#73aeed","#0E74E0","#0a54a1","#73AEED"],"violet":["#b598ed","#804EE0","#5c38a1","#B598ED"],"magenta":["#ed83ba","#E02A88","#a11e62","#ED83BA"],"gray":["#b0b0b0","#777777","#565656","#B0B0B0"],"aurora":["#A4FFB0","#00F0E4","#2E9EF7","#2EE6E0"]};
+const paint = (c) => { const v = C[c] || C.gray; return `linear-gradient(145deg, ${v[0]} 8%, ${v[1]} 50%, ${v[2]} 96%)`; };
+const look = (who, colour) => ({ mask: `pet-body m-${who}`, over: OVER[who], paint: paint(colour), ink: (C[colour] || C.gray)[3] });
+
+const AGENTS = [
+{ key: 'claude', label: 'Claude Code', installed: true, def: 'sonnet', from: 'your Claude settings', models: ['opus','sonnet','haiku','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5','claude-fable-5-1'] },
+{ key: 'codex', label: 'Codex', installed: true, def: 'gpt-6.1-sol', from: 'your Codex config', models: ['gpt-6.1-sol','gpt-6.1-terra','gpt-6-astra','gpt-6-sol','gpt-6-luna','gpt-5.6-sol'] },
+{ key: 'omp', label: 'Oh My Pi', installed: true, def: '', from: '', models: [] },
+{ key: 'gemini', label: 'Gemini', installed: true, def: '', from: '', models: [] },
+{ key: 'kimi', label: 'Kimi', installed: false, def: '', from: '', models: [] }
+];
+const A = AGENTS.find((a) => a.key === s.agent) || AGENTS[0];
+const modelShown = s.pin || A.def || 'its own default';
+const modelNote = s.pin
+? `Pinned. Start runs ${A.label} with this model; the sidebar shows what the pane really runs.`
+: (A.def ? `${A.label}'s default, from ${A.from}. Read from the running pane once started.` : `${A.label} doesn't list its models. Read from the running pane once started.`);
+
+const LEADS = [
+{ id: 'brain-orchestrator', name: 'brain-orchestrator', note: 'Main bot', who: 'octopus', colour: 'deepseek', depth: 0, main: true },
+{ id: 'pm', name: 'pm', note: 'Shared', who: 'bunny', colour: 'violet', depth: 1 },
+{ id: 'runtime-cap', name: 'runtime-cap', note: 'Captain · Platform', who: 'whale', colour: 'blue', depth: 1 },
+{ id: 'memory-cap', name: 'memory-cap', note: 'Captain · Knowledge', who: 'star', colour: 'yellow', depth: 1 },
+{ id: 'tooling-cap', name: 'tooling-cap', note: 'Captain · Engineering', who: 'zed', colour: 'graphite', depth: 1 }
+];
+const L = LEADS.find((l) => l.id === s.lead) || LEADS[0];
+const byMain = !!L.main;
+
+const CATS = [
+{ id: 'shared', title: 'Shared' }, { id: 'knowledge', title: 'Knowledge' }, { id: 'platform', title: 'Platform' },
+{ id: 'engineering', title: 'Engineering' }, { id: 'quality', title: 'Quality' }, { id: 'access', title: 'Access' }
+];
+
+const count = s.instructions.length;
+const name = s.name.trim() || 'new-bot';
+const q = (v) => /^[A-Za-z0-9._\/-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
+const parts = ['herdr-bots create', `--name ${q(name)}`, `--agent ${s.agent}`];
+if (s.role.trim()) parts.push(`--role ${q(s.role.trim())}`);
+parts.push(`--lead ${L.id}`);
+if (byMain) parts.push(`--category ${s.category}`);
+parts.push(`--character ${s.who}`, `--colour ${s.colour}`);
+if (s.pin) parts.push(`--model ${s.pin}`);
+if (s.planned) { parts.push(`--planned-wave ${s.wave}`); if (s.plannedNote.trim()) parts.push(`--planned-note ${q(s.plannedNote.trim())}`); }
+parts.push('--instructions-file -');
+const cli = parts.join(' ');
+
+return {
+name: s.name, role: s.role, instructions: s.instructions, plannedNote: s.plannedNote, wave: s.wave,
+nameShown: name,
+rowLine: `${s.planned ? `planned · wave ${s.wave}` : 'not running'} · ${s.role.trim() || 'no role'} · ${modelShown}`,
+onName: (e) => set({ name: e.target.value }),
+onRole: (e) => set({ role: e.target.value }),
+onInstr: (e) => set({ instructions: e.target.value.slice(0, 4000) }),
+onNote: (e) => set({ plannedNote: e.target.value }),
+count: count.toLocaleString('en-US'),
+countColor: count > 3600 ? '#FF9800' : '#8B93A3',
+chosen: look(s.who, s.colour),
+pets: NAMES.map((n) => ({
+name: n, mask: `pet-body m-${n}`, over: OVER[n], selected: n === s.who,
+border: n === s.who ? (C[s.colour] || C.gray)[1] : 'transparent',
+bg: n === s.who ? '#1A2130' : '#11151D',
+pick: () => set({ who: n })
+})),
+swatches: Object.keys(C).map((c) => ({
+name: c, selected: c === s.colour, paint: paint(c),
+ring: c === s.colour ? `0 0 0 2px #0B0E14, 0 0 0 4px ${C[c][1]}` : 'none',
+pick: () => set({ colour: c })
+})),
+omni: () => set({ who: 'octopus', colour: 'deepseek' }),
+shuffle: () => set({ who: NAMES[Math.floor(Math.random() * NAMES.length)], colour: Object.keys(C)[Math.floor(Math.random() * 19)] }),
+agentIs: { claude: s.agent === 'claude', codex: s.agent === 'codex', omp: s.agent === 'omp', gemini: s.agent === 'gemini' },
+agents: AGENTS.map((a) => ({
+label: a.installed ? a.label : `${a.label} · not installed`, disabled: !a.installed, selected: a.key === s.agent,
+isClaude: a.key === 'claude', isCodex: a.key === 'codex', isOmp: a.key === 'omp', isGemini: a.key === 'gemini', isKimi: a.key === 'kimi',
+border: a.key === s.agent ? '#22D3EE' : '#1E2430', bg: a.key === s.agent ? '#122530' : '#11151D',
+fg: a.key === s.agent ? '#E6EAF0' : '#C3CAD5', opacity: a.installed ? 1 : 0.45,
+pick: () => set({ agent: a.key, pin: '', modelsOpen: false })
+})),
+modelShown, modelNote,
+canPin: A.models.length > 0,
+pinLabel: s.pin ? 'Change pin' : 'Pin a model',
+modelsOpen: s.modelsOpen,
+toggleModels: () => set({ modelsOpen: !s.modelsOpen, leadsOpen: false }),
+models: [{ id: '', label: `Default (${A.def})`, hint: A.from }, ...A.models.map((m) => ({ id: m, label: m, hint: m === A.def ? 'default' : '' }))].map((m) => ({
+label: m.label, hint: m.hint, selected: m.id === s.pin,
+font: m.id ? "'JetBrains Mono', ui-monospace, monospace" : 'inherit',
+bg: m.id === s.pin ? '#1F2735' : 'transparent',
+pick: () => set({ pin: m.id, modelsOpen: false })
+})),
+lead: { ...look(L.who, L.colour), name: L.name, note: L.note },
+leadsOpen: s.leadsOpen,
+toggleLeads: () => set({ leadsOpen: !s.leadsOpen, modelsOpen: false }),
+leads: LEADS.map((l) => ({
+...look(l.who, l.colour), name: l.name, note: l.note, selected: l.id === s.lead,
+indent: `${10 + l.depth * 18}px`, bg: l.id === s.lead ? '#1F2735' : 'transparent',
+pick: () => set({ lead: l.id, leadsOpen: false })
+})),
+byMain, byCaptain: !byMain,
+categories: CATS.map((c) => ({
+title: c.title, selected: c.id === s.category,
+border: c.id === s.category ? '#22D3EE' : '#2A3242', bg: c.id === s.category ? '#122530' : 'transparent',
+fg: c.id === s.category ? '#E6EAF0' : '#C3CAD5',
+pick: () => set({ category: c.id })
+})),
+planned: s.planned,
+togglePlanned: () => set({ planned: !s.planned }),
+plannedBorder: s.planned ? 'dashed' : 'solid',
+plannedBg: s.planned ? '#0F131A' : '#11151D',
+switchBg: s.planned ? '#22D3EE' : '#2A3242',
+switchSide: s.planned ? 'flex-end' : 'flex-start',
+waveUp: () => set({ wave: Math.min(9, s.wave + 1) }),
+waveDown: () => set({ wave: Math.max(1, s.wave - 1) }),
+cli,
+copyLabel: s.copied ? 'Copied' : 'Copy',
+copy: () => { try { navigator.clipboard.writeText(cli); } catch (e) {} set({ copied: true }); },
+createLabel: s.planned ? 'Create planned bot' : 'Create',
+canStart: !s.planned
+};
+}
+}
+</script>
+</body>
+</html>
