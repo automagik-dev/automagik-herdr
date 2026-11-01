@@ -61,6 +61,8 @@ test("planRelease: a tag without its release is resumed before anything new is c
   assert.deepEqual(planRelease({ last: "v0.1.1", published: true, subjects: ["feat: x"] }), { action: "cut" });
   assert.deepEqual(planRelease({ last: "v0.1.1", published: true, subjects: ["chore: deps", "docs: y"] }), { action: "none" });
   assert.deepEqual(planRelease({ last: "v0.1.1", published: true, subjects: [] }), { action: "none" });
+  assert.deepEqual(planRelease({ last: "v0.1.1", published: "partial", subjects: ["feat: x"] }), { action: "repair", version: "0.1.1" },
+    "a release missing an asset is repaired before anything new");
 });
 
 test("set writes every field, check finds drift, set refuses a non-version", () => {
@@ -100,6 +102,8 @@ test("the CLI over git: ships, next, set and check as release.yml runs them", ()
     assert.equal(cli(root, "last"), "v0.1.0");
     assert.equal(cli(root, "plan", "yes"), "none");
     assert.equal(cli(root, "plan", "no"), "resume 0.1.0", "tagged, never published");
+    assert.equal(cli(root, "plan", "partial"), "repair 0.1.0", "published without both assets");
+    assert.throws(() => cli(root, "plan", "maybe"), /Command failed/);
     commit(root, "fix(update): retry");
     assert.equal(cli(root, "ships"), "yes");
     assert.equal(cli(root, "next"), "0.1.1");
@@ -127,7 +131,8 @@ test("the tag's subject carries the release kind, and a resume reads it back", (
     git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.0", "-m", cli(root, "tag-subject", "0.1.0", "false"));
     git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.1", "-m", cli(root, "tag-subject", "0.1.1", "true"));
     assert.equal(cli(root, "prerelease", "v0.1.0"), "false");
-    assert.equal(cli(root, "prerelease", "v0.1.1"), "true");
+    assert.equal(cli(root, "prerelease", "v0.1.1"), "true", "a resumed prerelease tag publishes as a prerelease");
+    assert.equal(cli(root, "plan", "no"), "resume 0.1.1", "the prerelease tag is the newest, never published");
     assert.throws(() => cli(root, "prerelease", "v9.9.9"), /Command failed/, "no such tag");
     assert.throws(() => cli(root, "tag-subject", "1.0.0", "true"), /Command failed/, "not a version");
   } finally {

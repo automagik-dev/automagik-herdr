@@ -15,8 +15,9 @@
  *   node scripts/version.mjs last           the newest release tag (v0.N.P), or nothing
  *   node scripts/version.mjs tag-subject <version> <true|false>   the release tag's subject; true: a prerelease
  *   node scripts/version.mjs prerelease <tag>   true when the tag's subject marks a prerelease, else false
- *   node scripts/version.mjs plan <yes|no>  what release.yml does, given whether the newest tag's
- *                                           GitHub release exists: `cut`, `resume <version>` or `none`
+ *   node scripts/version.mjs plan <yes|no|partial>  what release.yml does, given whether the newest tag's
+ *                                           GitHub release exists (partial: without both assets):
+ *                                           `cut`, `resume <version>`, `repair <version>` or `none`
  *
  * Shipping: every commit but those that ship nothing: `chore` (the release's own
  * `chore(release)` among them), `ci`, `docs`, `test`; Automagik's "anything new" gate plus `chore`.
@@ -111,12 +112,14 @@ export const isPrereleaseSubject = (subject) => / \(prerelease\)$/.test(String(s
 
 /**
  * What a release run does: `{ action: "resume", version }` when the newest tag `last` has no GitHub
- * release (`published` false: its run pushed the tag, then failed to publish), else
+ * release (`published` false: its run pushed the tag, then failed to publish), `{ action: "repair",
+ * version }` when it has one without both assets (`published` "partial": the upload failed), else
  * `{ action: "cut" }` when there is no release yet or something since `last` ships, else
  * `{ action: "none" }`. A resume cuts nothing new: the next push or dispatch does.
  */
 export function planRelease({ last, published, subjects = [] }) {
   if (last && published === false) return { action: "resume", version: last.slice(1) };
+  if (last && published === "partial") return { action: "repair", version: last.slice(1) };
   if (!last || shipping(subjects).length > 0) return { action: "cut" };
   return { action: "none" };
 }
@@ -149,17 +152,18 @@ if (invoked) {
   } else if (command === "tag-subject" && arg && VERSION.test(arg)) {
     console.log(tagSubject(arg, process.argv[4] === "true"));
   } else if (command === "prerelease" && arg) {
-    const subject = git(["tag", "--list", "--format=%(contents:subject)", arg], ROOT).trim();
+    const subject = git(["for-each-ref", "--format=%(contents:subject)", `refs/tags/${arg}`], ROOT).trim();
     if (!subject) { console.error(`version: no annotated tag ${arg}`); process.exit(1); }
     console.log(isPrereleaseSubject(subject) ? "true" : "false");
   } else if (command === "last") {
     console.log(lastReleaseTag(tagsOf(ROOT)) ?? "");
-  } else if (command === "plan" && (arg === "yes" || arg === "no")) {
+  } else if (command === "plan" && ["yes", "no", "partial"].includes(arg)) {
     const last = lastReleaseTag(tagsOf(ROOT));
-    const plan = planRelease({ last, published: arg === "yes", subjects: subjectsSince(last, ROOT) });
-    console.log(plan.action === "resume" ? `resume ${plan.version}` : plan.action);
+    const published = arg === "partial" ? "partial" : arg === "yes";
+    const plan = planRelease({ last, published, subjects: subjectsSince(last, ROOT) });
+    console.log(plan.version ? `${plan.action} ${plan.version}` : plan.action);
   } else {
-    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no> | tag-subject <version> <true|false> | prerelease <tag>");
+    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no|partial> | tag-subject <version> <true|false> | prerelease <tag>");
     process.exit(2);
   }
 }

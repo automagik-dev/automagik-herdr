@@ -72,21 +72,29 @@ jobs:
         id: new
         run: |
           set -euo pipefail
-          # The newest v0.N.P has no GitHub release when its run failed after pushing it: publish
-          # it first. Otherwise cut when something since it ships (scripts/version.mjs
-          # NOT_SHIPPING: chore, ci, docs and test do not), or when there is no release yet.
+          # The newest v0.N.P has no GitHub release (404) when its run failed after pushing it, or
+          # one without both assets when the upload failed: publish or repair it first, cutting
+          # nothing new. Any other answer from GitHub fails the run. Otherwise cut when something
+          # since it ships (scripts/version.mjs NOT_SHIPPING: chore, ci, docs and test do not),
+          # or when there is no release yet.
           last=$(node scripts/version.mjs last)
           published=yes
-          if [[ -n "${last}" ]] && ! gh release view "${last}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            published=no
+          if [[ -n "${last}" ]]; then
+            if assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${last}" --jq '.assets[].name' 2> "${RUNNER_TEMP}/gh.err"); then
+              grep -qx "automagik-herdr-${last#v}.tgz" <<< "${assets}" && grep -qx SHA256SUMS <<< "${assets}" || published=partial
+            elif grep -q 'HTTP 404' "${RUNNER_TEMP}/gh.err"; then
+              published=no
+            else
+              cat "${RUNNER_TEMP}/gh.err" >&2
+              exit 1
+            fi
           fi
           plan=$(node scripts/version.mjs plan "${published}")
           case "${plan}" in
             cut) echo "action=cut" >> "$GITHUB_OUTPUT" ;;
-            "resume "*)
-              echo "${last} was tagged but never published: publishing it, cutting nothing new"
-              echo "action=resume" >> "$GITHUB_OUTPUT"
-              echo "version=${plan#resume }" >> "$GITHUB_OUTPUT" ;;
+            "resume "* | "repair "*)
+              echo "${last}: ${plan%% *} its release (published: ${published}), cutting nothing new"
+              { echo "action=${plan%% *}"; echo "version=${plan#* }"; } >> "$GITHUB_OUTPUT" ;;
             none) echo "dev has nothing since ${last}: no release" ;;
             *) echo "::error::unexpected plan: ${plan}"; exit 1 ;;
           esac
@@ -129,14 +137,20 @@ jobs:
 
       - name: The release this run publishes
         id: release
-        if: steps.cut.outputs.version != '' || steps.new.outputs.action == 'resume'
+        if: steps.cut.outputs.version != '' || steps.new.outputs.version != ''
         env:
           VERSION: ${{ steps.cut.outputs.version || steps.new.outputs.version }}
+          CUT: ${{ steps.cut.outputs.version }}
         run: |
           set -euo pipefail
           sha=$(git rev-parse "v${VERSION}^{commit}")
-          # The kind it was cut as, from the tag: a resumed prerelease stays one.
-          prerelease=$(node scripts/version.mjs prerelease "v${VERSION}")
+          # A cut is the kind this run asked for; a resumed or repaired tag the kind it was cut
+          # as, from its subject (`… (prerelease)`): a resumed prerelease stays one.
+          if [[ -n "${CUT}" ]]; then
+            prerelease=$([[ "${PRERELEASE}" == "true" ]] && echo true || echo false)
+          else
+            prerelease=$(node scripts/version.mjs prerelease "v${VERSION}")
+          fi
           { echo "version=${VERSION}"; echo "sha=${sha}"; echo "prerelease=${prerelease}"; } >> "$GITHUB_OUTPUT"
           echo "v${VERSION} at ${sha}, prerelease: ${prerelease}"
 
@@ -157,8 +171,13 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
           KIND_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          ACTION: ${{ steps.new.outputs.action }}
         run: |
           set -euo pipefail
+          if [[ "${ACTION}" == "repair" ]]; then
+            gh release upload "v${VERSION}" release/* --clobber --repo "${GITHUB_REPOSITORY}"
+            exit 0
+          fi
           flags=(--latest)
           [[ "${KIND_PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
           gh release create "v${VERSION}" release/* "${flags[@]}" \

@@ -304,8 +304,14 @@ test("applyUpdate refuses a tarball whose VERSION is not the release's, and need
   }
 });
 
-test("a pack made as release.yml makes it (git archive of the tag's mods/spaces-agents) installs", async () => {
+test("a pack made as release.yml makes it (git archive of the tag's mods/spaces-agents) installs", async (t) => {
   const repo = fileURLToPath(new URL("..", import.meta.url));
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: repo, stdio: "ignore" });
+  } catch {
+    t.skip("not a git checkout (an export?): git archive needs the repository's history");
+    return;
+  }
   const { home, mods } = appHome("0.0.0");
   const tgz = join(home, "pack.tgz");
   try {
