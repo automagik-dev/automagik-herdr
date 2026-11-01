@@ -624,6 +624,27 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - Draft PR #2 shows as merged, because its commits are in #5.
 - **Not yet done:** the live install of v0.2.0 against a scratch `HERDR_APP_HOME`, and the owner's click-through.
 
+
+### Live checks on the installed v0.2.0 — Groups 2, 3, 4, 6, 10 — 2026-11-01
+
+- **Run by:** g6-review on the owner's Mac (v0.2.0 installed by the owner with install.sh). CLI and hc only, with no change to the owner's window. Demo project in the scratchpad, cleaned up afterwards. `herdr-app status` showed `errors: []` before and after.
+- **G2 Start/Attach: PASS.**
+  - A member started while its captain ran got the captain's pane as hc parent (t1z7 → t1z6, die_with_parent false).
+  - A main bot, or a bot whose lead wasn't running, started with no parent.
+  - Re-attach in the same project worked (movedFrom []).
+- **G3 view: PASS**, on two pieces of evidence:
+  - Live shot: brain-v3's main card shows the raised ink border, octopus, "Main bot · claude-opus-5-5 · brain-v3", the agent icon and the status ring, plus a member inside a solid guide line.
+  - G5 preview.png (aa13f16): the main card, uppercase category headers with muted subs, a captain folded by default, and a dimmed, dashed, asleep planned row with a "Wave 2" pill and no icon or status.
+  - The demo tree itself was below the fold. Scrolling would have changed the owner's window, which was not done.
+- **G4 briefing: PASS.** The hook was written to `.claude/settings.local.json`. `briefing.mjs` printed its block in 178 ms (lead and report address included). It printed 0 bytes with no pane, on a non-bot pane, and after detach.
+- **G6 CLI: PASS.** create, category, edit, ls --json, show and `update --check --json` all worked, the last giving `{"current":"0.2.0","latest":"0.2.0"}`.
+- **G10 labels: PASS.**
+  - role, category, a copied squad and the mark were set.
+  - The copied squad followed a lead change.
+  - Detach removed all but squads set by hand.
+- **Leftovers, filed as automagik-herdr#11:** hb-proj is still remembered, and the deleted demo path stays in `spaces-agents-projects.json` (hidden in the sidebar).
+- **G7 stays open** for the owner's click-through of the form, which needs typing in a frontmost Herdr window.
+
 ---
 
 ## Files to Create/Modify
