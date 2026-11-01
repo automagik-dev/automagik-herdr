@@ -118,6 +118,10 @@ The shape (`version` 1):
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `herdr-bots ls` and `show` print its pin, else that default.
+- `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `integrator`, `pm`,
+  `main`, `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). The
+  free-text `role` is separate and goes to the briefing. An unknown rank is ignored with a
+  warning. The create form doesn't edit ranks yet; `herdr-bots edit <bot> --rank R` does.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -142,6 +146,23 @@ main bot's view lists categories in the order of the `categories` array, each wi
 - Mod commands: `spaces-agents.new-bot`, `spaces-agents.edit`, `spaces-agents.start` and
   `spaces-agents.attach`. Bound to a key, they act on the focused pane and its bot.
 
+## Pane labels
+
+A bot's pane carries hc labels that say which bot it is, so tools such as herdr-meter can
+stamp events with them (`actor.bot`, `actor.role`, `actor.squad`):
+
+| Label | Value |
+|---|---|
+| `bot` | the bot's id |
+| `role` | `main` for the main bot; `captain` for a bot that leads other bots; otherwise its `rank`. No rank, no label. |
+| `category` | the category it shows under (a deeper member: its chain's category), when there is one |
+| `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, marked `herdr-bots.squad=1`. |
+
+Start and Attach set them. Detach takes off `bot`, `role` and `category`, and `squad` only
+when it carries the `herdr-bots.squad` mark. An edit that changes a bot's rank, lead or
+category, or a lead's captain status, rewrites the labels on the live panes of the bots it
+changes. Only panes on this computer are labelled.
+
 ## The command line: `herdr-bots`
 
 The CLI and the sidebar apply the same rules (they share `model.js`, `launchArgs.js`,
@@ -149,12 +170,13 @@ The CLI and the sidebar apply the same rules (they share `model.js`, `launchArgs
 bots. It talks to herdr-core with `hc` and never drives the Herdr window.
 
 ```text
-herdr-bots ls [--all]                 bots: kind, lead, category, planned, agent, model, pane, status
+herdr-bots ls [--all]                 bots: kind, lead, category, rank, planned, agent, model, pane, status
 herdr-bots show <bot>                 one bot in full, instructions included
 herdr-bots create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
-       [--character C --colour K | --omni] [--model M] [--planned-wave N [--planned-note T]]
-herdr-bots edit <bot> [the create options] [--unplanned] [--no-model] [--no-category]
+       [--character C --colour K | --omni] [--model M] [--rank R]
+       [--planned-wave N [--planned-note T]]
+herdr-bots edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank '']
 herdr-bots rm <bot>
 herdr-bots category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
        | rm <id> | order <id>...

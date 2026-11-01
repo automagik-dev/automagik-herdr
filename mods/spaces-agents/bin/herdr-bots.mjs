@@ -16,10 +16,10 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
-  PROJECTS_FILE, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId, parseBots,
-  plannedOf, projectKeyOf, withListedProject } from "../model.js";
-import { UNANSWERED, attachRefusal, hcName, isClaude, labelMoves, paneOf, parentArgs, placementFrom, rowsOf, startArgs,
-  startRefusal, youngPane } from "../launchArgs.js";
+  PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
+  parseBots, plannedOf, projectKeyOf, withListedProject } from "../model.js";
+import { UNANSWERED, attachRefusal, detachWords, hcName, isClaude, labelMoves, labelWords, paneLabels, paneOf, parentArgs,
+  placementFrom, relabelPlan, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
 import { installHook } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
@@ -272,7 +272,7 @@ async function describe(project, bot) {
     planned: bot.planned ?? null, agent: bot.agent ?? null,
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
     terminal: live?.address ?? null, status, duplicate: panes.duplicate,
-    role: bot.role, look: bot.look,
+    role: bot.role, rank: bot.rank ?? null, look: bot.look,
   };
   if (lead.warning) out.warning = lead.warning;
   if (hcError) out.hcError = hcError;
@@ -304,7 +304,7 @@ const OPTIONS = {
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
   lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
-  model: { type: "string" }, "no-model": { type: "boolean" },
+  model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" },
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
@@ -314,13 +314,13 @@ export const USAGE = `herdr-bots: a project's Bots from the command line
 
 Usage: herdr-bots <command> [options]      (every command takes --json and --project <folder>)
 
-  ls [--all]                    bots with kind, lead, category, planned, agent, model, pane, status
+  ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, pane, status
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
          [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
-         [--character C --colour K | --omni] [--model M]
+         [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
-  edit <bot> [the create options] [--unplanned] [--no-model] [--no-category]
+  edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank '']
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -328,6 +328,11 @@ Usage: herdr-bots <command> [options]      (every command takes --json and --pro
   attach <bot> <terminal>       tie a running pane to the bot
   detach <bot>                  take the bot's label off its panes (a removed bot: by its id)
   brief <bot>                   print the bot's per-turn briefing as it would be now
+
+--rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
+The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
+rank. Start, attach, detach and an edit keep the panes' bot, role, category and squad labels
+in step on this computer.
 
 A bot is its id or its name in the project. The project is the one the current folder
 keys to (its git main checkout), or --project's.`;
@@ -378,6 +383,12 @@ export function entryFrom(opts, base, project, { creating }) {
   if (entry.kind === "main" && main && main.id !== entry.id) throw new CliError(`This project already has a main bot, ${main.name} (${main.id}).`);
   if (opts.role !== undefined) entry.role = opts.role;
   entry.role ??= "";
+  // Rank (A16): one of RANKS, for the pane's role= label; --rank '' clears it (kept empty so
+  // applyBotEdit removes the stored one).
+  if (opts.rank !== undefined) {
+    if (opts.rank !== "" && !RANKS.includes(opts.rank)) throw new CliError(`--rank is one of ${RANKS.join(", ")} (or '' to clear), not "${opts.rank}".`, 2);
+    entry.rank = opts.rank;
+  }
   const instructions = readInstructions(opts);
   if (instructions !== undefined) entry.instructions = instructions;
   entry.instructions ??= "";
@@ -470,7 +481,7 @@ async function cmdLs(opts) {
       const where = b.kind === "main" ? "main" : `→ ${b.leadName ?? "?"}${b.category ? ` [${b.category}]` : ""}`;
       const model = b.model ? `${b.model} (${b.modelSource})` : "-";
       const status = b.planned ? `planned, wave ${b.planned.wave}` : b.terminal ? `${b.status} in ${b.terminal}${b.duplicate ? " (duplicate label)" : ""}` : b.status;
-      lines.push(`  ${b.id}  ${b.name}  ${where}  ${b.agent ?? "-"}  ${model}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
+      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
@@ -492,18 +503,60 @@ async function cmdShow(opts, [ref]) {
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal}` : ""}${info.duplicate ? " (duplicate label)" : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
+    `  rank         ${info.rank ?? "-"}`,
     ...(info.warning ? [`  warning      ${info.warning}`] : []),
     "  instructions", ...(info.instructions ? info.instructions.split("\n").map((l) => `    ${l}`) : ["    -"]),
   ].join("\n");
+}
+
+// ---- A16 pane labels (launchArgs.js paneLabels): this computer's panes only ----
+
+/** The labels of a bot's live pane on this computer (for the squad it passes on), or null. */
+async function leadLabelsOf(file, botId) {
+  const bot = file.bots.find((b) => b.id === botId);
+  const lead = bot?.kind === "member" ? effectiveLead(file, botId).lead : "";
+  if (!lead) return null;
+  return (await panesOf(lead, { localOnly: true })).live?.labels ?? null;
+}
+
+/**
+ * After a write, the live local panes of every bot whose labels the edit changed (rank,
+ * lead or category, and a lead's captain status) get them rewritten. The file is saved
+ * already, so a failing hc only warns. Resolves with the terminals relabelled.
+ */
+async function relabelAfter(beforeFile, afterRaw) {
+  let afterFile;
+  try { afterFile = parseBots(JSON.stringify(afterRaw)).file; } catch { return []; }
+  const done = [];
+  for (const item of relabelPlan(beforeFile, afterFile)) {
+    try {
+      const { gets } = await panesOf(item.id, { localOnly: true });
+      for (const get of gets.filter((g) => g?.state === "live" && g.address)) {
+        const have = get.labels ?? {};
+        const lead = have.squad ? null : await leadLabelsOf(afterFile, item.id);
+        const words = relabelWords(item.before, paneLabels(afterFile, item.id, have, lead), have);
+        if (!words.length) continue;
+        const r = await hc(["label", get.address, ...words]);
+        if (r.code !== 0) throw new CliError(`hc label ${get.address} failed: ${(r.stderr || r.stdout).trim()}`);
+        done.push(get.address);
+      }
+    } catch (e) {
+      if (!(e instanceof CliError)) throw e;
+      report([`${item.id}'s pane labels weren't updated: ${e.message}`]);
+    }
+  }
+  return done;
 }
 
 async function cmdCreate(opts) {
   const project = await projectFor(opts);
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
-  writeBotsFile(project.key, applyBotEdit(project.raw, entry), project.text);
+  const raw = applyBotEdit(project.raw, entry);
+  writeBotsFile(project.key, raw, project.text);
   listProject(project.key);
-  return opts.json ? { id, project: project.key, bot: entry } : id;
+  const relabelled = await relabelAfter(project.file, raw); // a lead that becomes a captain
+  return opts.json ? { id, project: project.key, bot: entry, relabelled } : id;
 }
 
 async function cmdEdit(opts, [ref]) {
@@ -511,9 +564,11 @@ async function cmdEdit(opts, [ref]) {
   const bot = findBot(project.file, ref);
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
-  writeBotsFile(project.key, applyBotEdit(project.raw, entry), project.text);
+  const raw = applyBotEdit(project.raw, entry);
+  writeBotsFile(project.key, raw, project.text);
   listProject(project.key);
-  return opts.json ? { id: bot.id, project: project.key, bot: entry } : `${entry.name} (${bot.id}) saved.`;
+  const relabelled = await relabelAfter(project.file, raw);
+  return opts.json ? { id: bot.id, project: project.key, bot: entry, relabelled } : `${entry.name} (${bot.id}) saved.`;
 }
 
 async function cmdRm(opts, [ref]) {
@@ -534,6 +589,7 @@ async function cmdRm(opts, [ref]) {
   // with members and no main bot is refused, never deleted).
   const last = raw.bots.length === 0;
   writeBotsFile(project.key, last ? null : raw, project.text);
+  if (!last) await relabelAfter(file, raw); // its lead may stop being a captain
   const notes = [];
   if (last) notes.push(`${bot.name} was the project's last bot: ${under(project.key, BOTS_PATH)} was deleted.`);
   // The file is written already: hc missing or failing only drops the label note.
@@ -644,12 +700,14 @@ async function cmdStart(opts, [ref]) {
   if (!onPath(agent.run[0])) throw new CliError(`${agent.name} (${agent.run[0]}) isn't installed on this computer.`);
   // A1: the effective lead's live terminal as parent, outliving it; the main bot has none.
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
-  const leadLive = lead ? (await panesOf(lead, { localOnly: true })).live?.address ?? null : null;
+  const leadGet = lead ? (await panesOf(lead, { localOnly: true })).live : null;
+  const leadLive = leadGet?.address ?? null;
   const parent = parentArgs(file, bot.id, (id) => (id === lead ? leadLive : null));
+  const labels = paneLabels(file, bot.id, {}, leadGet?.labels ?? null); // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   const argv = [...agent.run, ...modelArgs(bot.agent, bot.model)];
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : await placementOf(key);
-  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: place?.space, tab: place?.tab, parent, argv });
+  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: place?.space, tab: place?.tab, parent, argv, labels });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = bot.agent === "claude" ? await writeBriefingHook(bot, key) : { written: false, warnings: [] };
   report(hook.warnings);
@@ -664,7 +722,7 @@ async function cmdStart(opts, [ref]) {
       + `Watch it with hc attach ${terminal}. To give the next start a pane, open a space on ${key} first, or pass --space <id> (herdr-app ls lists the ids).`);
     report(hook.warnings.slice(-1));
   }
-  return opts.json ? { id: bot.id, terminal, parent: parent[0] === "--parent" ? parent[1] : null, argv, space: place?.space ?? null, tab: place?.tab ?? null,
+  return opts.json ? { id: bot.id, terminal, parent: parent[0] === "--parent" ? parent[1] : null, argv, labels, space: place?.space ?? null, tab: place?.tab ?? null,
     hookWritten: hook.written, warnings: hook.warnings } : terminal;
 }
 
@@ -694,8 +752,8 @@ async function cmdAttach(opts, [ref, terminal]) {
     const refusal = attachRefusal({ botName: bot.name, projectKey: key, sessionFolder, sessionKey });
     if (refusal) throw new CliError(refusal);
   }
-  const { holders } = await panesOf(bot.id, { localOnly: true });
-  const moves = labelMoves(holders, address, bot.id);
+  const { holders, gets: holderGets } = await panesOf(bot.id, { localOnly: true });
+  const moves = labelMoves(holders, address, bot.id, (t) => holderGets.find((g) => g?.address === t)?.labels);
   for (const [i, args] of moves.entries()) {
     const r = await hc(args);
     if (r.code === 0) continue;
@@ -704,7 +762,17 @@ async function cmdAttach(opts, [ref, terminal]) {
     throw new CliError(lost ? `${bot.name} has no pane now (its label came off ${holders.filter((h) => h !== address).join(", ")}); attach again. hc said: ${why}`
       : `hc ${args.join(" ")} failed: ${why}`);
   }
+  // A16: role, category and a squad copied from the lead, beside the bot label. The pane
+  // plays the bot already, so a failure here only warns.
+  const have = { ...(get.labels ?? {}), [BOT_LABEL]: bot.id };
+  const words = labelWords(paneLabels(file, bot.id, have, await leadLabelsOf(file, bot.id).catch(() => null)), have);
+  const labelWarnings = [];
+  if (words.length) {
+    const r = await hc(["label", address, ...words]);
+    if (r.code !== 0) labelWarnings.push(`${address} plays ${bot.name}, but its labels ${words.join(" ")} weren't set: ${(r.stderr || r.stdout).trim()}`);
+  }
   const hook = claude ? await writeBriefingHook(bot, sessionFolder) : { written: false, warnings: [] };
+  hook.warnings.unshift(...labelWarnings);
   if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, open /hooks once in that session to load it.`);
   report(hook.warnings);
   listProject(key);
@@ -720,10 +788,12 @@ async function cmdDetach(opts, [ref]) {
   try { bot = findBot((await projectFor(opts)).file, ref); } catch (e) { if (!bareId || !(e instanceof CliError)) throw e; }
   const id = bot?.id ?? ref;
   const name = bot?.name ?? `bot ${id}`;
-  const { holders } = await panesOf(id, { localOnly: true });
+  const { holders, gets } = await panesOf(id, { localOnly: true });
   for (const t of holders) {
-    const r = await hc(["label", t, `${BOT_LABEL}=`]);
-    if (r.code !== 0) throw new CliError(`hc label ${t} ${BOT_LABEL}= failed: ${(r.stderr || r.stdout).trim()}`);
+    // A16: role= and category= go with bot=; squad= only when this pack copied it there.
+    const words = detachWords(gets.find((g) => g?.address === t)?.labels ?? {});
+    const r = await hc(["label", t, ...words]);
+    if (r.code !== 0) throw new CliError(`hc label ${t} ${words.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);
   }
   return opts.json ? { id, defined: Boolean(bot), detached: holders }
     : holders.length ? `${name} detached from ${holders.join(", ")}.` : `${name} has no pane on this computer.`;

@@ -5,11 +5,14 @@
 import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTextFile, exec, appHome, notify, home } from "herdr";
 import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
 import { keyOf, rememberProject } from "./bots.js";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal } from "./launchArgs.js";
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal,
+  paneLabels, labelWords } from "./launchArgs.js";
 import { installHook } from "./briefingText.mjs";
 import { configPaths, knownModelsFrom, modelArgs } from "./models.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
+// A terminal's labels as terminals() has them (null: no such terminal, or none given).
+const labelsOf = (address) => (address ? terminals().find((t) => t?.address === address)?.labels ?? null : null);
 
 async function hcGet(address) {
   try {
@@ -142,6 +145,8 @@ async function startOnce(projectKey, botId) {
   const lead = bot.kind === "member" ? effectiveLead(file, botId).lead : "";
   const leadLive = lead ? (await liveTerminalOf(lead))?.terminal ?? null : null;
   const parent = parentArgs(file, botId, (id) => (id === lead ? leadLive : null));
+  // A16: role, category and the lead pane's squad as labels on the new pane.
+  const labels = paneLabels(file, botId, {}, labelsOf(leadLive));
   const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
   const { space, tab } = await placeFor(projectKey);
   // A12: a pinned model goes to the agent with its own flag, as the CLI passes it; a pin the
@@ -152,7 +157,7 @@ async function startOnce(projectKey, botId) {
     else notify({ title: "Bots", level: "warning", timeout: 15000,
       body: `${bot.name} is pinned to "${bot.model}", which isn't a ${agent.name ?? agent.key} model this computer lists; it starts on the agent's default. Edit the bot to pick a listed model, or clear the pin.` });
   }
-  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin] });
+  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin], labels });
   // The briefing hook goes in before the session starts, so Claude Code reads it at startup.
   await afterBind(bot, projectKey, agent.key === "claude");
   let r;
@@ -196,7 +201,7 @@ export async function attachBot(projectKey, botId, terminal) {
     if (refusal) return { refused: refusal };
   }
   const holders = terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && local(t.address)).map((t) => t.address);
-  const moves = labelMoves(holders, terminal, botId);
+  const moves = labelMoves(holders, terminal, botId, labelsOf);
   for (const [i, args] of moves.entries()) {
     let why = null;
     try {
@@ -208,6 +213,16 @@ export async function attachBot(projectKey, botId, terminal) {
     const lost = i === moves.length - 1 && moves.length > 1;
     return { refused: lost ? `${bot.name} has no pane now (its label came off ${holders.filter((h) => h !== terminal).join(", ")}); attach again. hc said: ${why}`
       : `hc ${args.join(" ")} failed: ${why}` };
+  }
+  // A16: role, category and a squad copied from the lead, beside the bot label. The pane
+  // plays the bot already, so a failure here only warns.
+  const have = { ...(row.labels ?? {}), [BOT_LABEL]: botId };
+  const lead = bot.kind === "member" ? effectiveLead(file, botId).lead : "";
+  const words = labelWords(paneLabels(file, botId, have, lead ? labelsOf((await liveTerminalOf(lead))?.terminal) : null), have);
+  if (words.length) {
+    let why = null;
+    try { const r = await hc(["label", terminal, ...words]); if (r.code !== 0) why = (r.stderr || r.stdout).trim(); } catch (e) { why = String(e?.message ?? e); }
+    if (why !== null) notify({ title: "Bots", level: "warning", timeout: 12000, body: `${terminal} plays ${bot.name}, but its labels ${words.join(" ")} weren't set: ${why}` });
   }
   rememberProject(projectKey);
   // Only a Claude pane: its session folder is the one the check above tied to the project.

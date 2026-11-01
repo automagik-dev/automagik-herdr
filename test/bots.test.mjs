@@ -181,3 +181,25 @@ test("discoverProjects: the CLI's project list is found with no space; a gone on
   writeFileSync(list, "{nope");
   assert.deepEqual(await discoverProjects(), []);
 });
+
+test("writeBots after an edit relabels the changed bots' live local panes (A16), never another machine's", async (t) => {
+  reset();
+  const { main } = await repo(t);
+  await writeBots(main, sample(), null);
+  const text = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
+  const row = (address, labels) => ({ address, labels, state: "live" });
+  Object.assign(state, {
+    terminals: [row("t1", { bot: ID.main, role: "main" }), row("t5", { bot: ID.dev }), row("far/t6", { bot: ID.dev })],
+    hcCalls: [], hcAnswer: () => ({ code: 0, stdout: "{}", stderr: "" }),
+  });
+  t.after(() => { state.terminals = []; state.hcCalls = []; });
+  const edited = sample();
+  edited.bots[1].rank = "pm";
+  assert.deepEqual(await writeBots(main, edited, text), ["t5"]);
+  assert.deepEqual(state.hcCalls, [["label", "t5", "role=pm"]]);
+  // A new file relabels nothing (no pane can carry its bots yet).
+  state.hcCalls = [];
+  const other = await repo(t);
+  assert.deepEqual(await writeBots(other.main, sample(), null), []);
+  assert.deepEqual(state.hcCalls, []);
+});

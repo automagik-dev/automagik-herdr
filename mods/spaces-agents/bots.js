@@ -5,8 +5,9 @@
 // No `fs/promises` here: Herdr's writes only under its app home, and has no access().
 // Files go through readTextFile/writeTextFile, folders through exec.
 
-import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome } from "herdr";
-import { BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
+import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals } from "herdr";
+import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects, effectiveLead } from "./model.js";
+import { paneLabels, relabelPlan, relabelWords } from "./launchArgs.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "spaces-agents.projects";
@@ -152,6 +153,8 @@ export async function discoverProjects() {
  * that can't be shown, and writing them would delete those entries. `expected` is required:
  * the text read (null when there was no file); a file changed since rejects (writeTextFile's
  * stale-snapshot rule). A file checkBots faults is refused before anything is written.
+ * After an edit, the labels of the changed bots' live local panes follow (relabelLocal);
+ * resolves with the terminals relabelled.
  */
 export async function writeBots(projectKey, file, expected) {
   if (expected === undefined) throw new Error("writeBots: pass the text the edit started from (null for a new file)");
@@ -166,6 +169,34 @@ export async function writeBots(projectKey, file, expected) {
   await writeTextFile(under(projectKey, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
   keys.clear(); // a folder outside git may belong to this project now
   rememberProject(projectKey, null);
+  if (expected !== null) return relabelLocal(expected, file);
+  return [];
+}
+
+/**
+ * A16: after an edit (the form's save, any writeBots), the live panes on this computer of
+ * every bot whose labels changed (rank, lead, category, a lead's captain status) get them
+ * rewritten (launchArgs.js relabelPlan / relabelWords). The file is saved already, so this is
+ * best effort: a failing hc is skipped. Another machine's panes are never touched.
+ * Resolves with the terminals relabelled.
+ */
+async function relabelLocal(beforeText, afterRaw) {
+  let before, after;
+  try { before = parseBots(beforeText).file; after = parseBots(JSON.stringify(afterRaw)).file; } catch { return []; }
+  const rows = terminals().filter((t) => t?.state === "live" && typeof t.address === "string" && !t.address.includes("/"));
+  const paneOf = (id) => rows.filter((t) => t.labels?.[BOT_LABEL] === id);
+  const done = [];
+  for (const item of relabelPlan(before, after)) {
+    const lead = effectiveLead(after, item.id).lead;
+    const leadLabels = lead ? paneOf(lead)[0]?.labels ?? null : null;
+    for (const t of paneOf(item.id)) {
+      const have = t.labels ?? {};
+      const words = relabelWords(item.before, paneLabels(after, item.id, have, leadLabels), have);
+      if (!words.length) continue;
+      try { if ((await hc(["label", t.address, ...words])).code === 0) done.push(t.address); } catch { /* best effort */ }
+    }
+  }
+  return done;
 }
 
 /**

@@ -2,7 +2,7 @@
 // rule (DESIGN Decision 3), which terminal counts among duplicates, the label moves of an
 // attach and its refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { BOT_LABEL, effectiveLead, mainBotOf } from "./model.js";
+import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
@@ -43,10 +43,12 @@ export function startRefusal(file, botId) {
  * `hc run` arguments for Start: in the background, labelled with the bot and Herdr's
  * adoption labels, named, in the project folder, with the parent rule, never --no-notify.
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {} }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
+  // A16's labels (paneLabels), the bot label already above.
+  for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
   return [...args, ...parent, "--", ...argv];
@@ -77,9 +79,98 @@ export function newest(gets) {
   return gets.reduce((a, b) => ((b?.created_ms ?? -1) > (a?.created_ms ?? -1) ? b : a), null);
 }
 
-/** The `hc label` calls of an attach: the label off every other holder, then on the target. */
-export function labelMoves(holders, target, botId) {
-  const off = [...new Set(holders)].filter((t) => t !== target).map((t) => ["label", t, `${BOT_LABEL}=`]);
+// ---- A16: the labels a bot pane carries for the event envelope (herdr-meter reads them) ----
+
+export const ROLE_LABEL = "role";
+export const CATEGORY_LABEL = "category";
+export const SQUAD_LABEL = "squad";
+/** Marks a `squad=` this pack copied from the lead's pane, so Detach removes only that one. */
+export const SQUAD_MARK = "herdr-bots.squad";
+
+/**
+ * A bot pane's `role=` (A16): the main bot is `main`; a member that leads another bot (by
+ * effective lead) is `captain`; else its rank. No rank: null (no label).
+ */
+export function roleOf(file, botId) {
+  const bot = file.bots.find((b) => b.id === botId);
+  if (!bot) return null;
+  if (bot === mainBotOf(file)) return "main";
+  if (file.bots.some((b) => b.id !== botId && b.kind === "member" && effectiveLead(file, b.id).lead === botId)) return "captain";
+  return bot.rank || null;
+}
+
+/**
+ * The labels a bot's pane should carry (A16): `bot=<id>`; `role=` (roleOf) when there is one;
+ * `category=<id>` when its effective category exists. `squad=` is never overwritten: when
+ * `existing` (the pane's labels now) has one, it isn't listed; else the lead's pane's squad
+ * (`leadLabels`) is copied, with SQUAD_MARK so Detach knows it was copied here.
+ */
+export function paneLabels(file, botId, existing = {}, leadLabels = null) {
+  const out = { [BOT_LABEL]: botId };
+  const role = roleOf(file, botId);
+  if (role) out[ROLE_LABEL] = role;
+  const category = effectiveCategory(file, botId);
+  if (category) out[CATEGORY_LABEL] = category;
+  const squad = leadLabels?.[SQUAD_LABEL];
+  if (!existing?.[SQUAD_LABEL] && squad) { out[SQUAD_LABEL] = squad; out[SQUAD_MARK] = "1"; }
+  return out;
+}
+
+/** `hc label` K=V words that bring a pane's labels (`have`) up to `want` (paneLabels): set only. */
+export function labelWords(want, have = {}) {
+  return Object.entries(want).filter(([k, v]) => v && have?.[k] !== v).map(([k, v]) => `${k}=${v}`);
+}
+
+/**
+ * The words after an edit (A16): `before` and `after` are paneLabels of the old and new file.
+ * A role or category that changed is set, or removed when the new file has none and the
+ * pane still carries the one the old file gave it; a squad is only ever added (labelWords).
+ */
+export function relabelWords(before, after, have = {}) {
+  const words = [];
+  for (const k of [ROLE_LABEL, CATEGORY_LABEL]) {
+    if (after[k] && have?.[k] !== after[k]) words.push(`${k}=${after[k]}`);
+    else if (!after[k] && before[k] && have?.[k] === before[k]) words.push(`${k}=`);
+  }
+  if (after[SQUAD_LABEL] && !have?.[SQUAD_LABEL]) words.push(`${SQUAD_LABEL}=${after[SQUAD_LABEL]}`, `${SQUAD_MARK}=1`);
+  return words;
+}
+
+/** The words Detach sends: bot, role and category off; squad only when this pack copied it. */
+export function detachWords(have = {}) {
+  const words = [`${BOT_LABEL}=`];
+  for (const k of [ROLE_LABEL, CATEGORY_LABEL]) if (have?.[k]) words.push(`${k}=`);
+  if (have?.[SQUAD_MARK]) words.push(`${SQUAD_LABEL}=`, `${SQUAD_MARK}=`);
+  return words;
+}
+
+/**
+ * The bots whose pane labels an edit changes (A16): every bot of the new file whose role or
+ * category differs from the old file's, or whose effective lead changed (a squad to copy).
+ * Planned bots have no pane. Returns [{ id, before, after, leadChanged }] (before/after:
+ * paneLabels with no pane labels known; the caller recomputes the squad with the real ones).
+ */
+export function relabelPlan(beforeFile, afterFile) {
+  const plan = [];
+  for (const b of afterFile?.bots ?? []) {
+    if (b.planned) continue;
+    const had = beforeFile?.bots?.some((x) => x.id === b.id);
+    const before = had ? paneLabels(beforeFile, b.id) : { [BOT_LABEL]: b.id };
+    const after = paneLabels(afterFile, b.id);
+    const leadChanged = had && effectiveLead(beforeFile, b.id).lead !== effectiveLead(afterFile, b.id).lead;
+    if (before[ROLE_LABEL] !== after[ROLE_LABEL] || before[CATEGORY_LABEL] !== after[CATEGORY_LABEL] || leadChanged) {
+      plan.push({ id: b.id, before, after, leadChanged: Boolean(leadChanged) });
+    }
+  }
+  return plan;
+}
+
+/**
+ * The `hc label` calls of an attach: the label off every other holder (with the role,
+ * category and copied squad Detach takes off, by `labelsOf(holder)`), then on the target.
+ */
+export function labelMoves(holders, target, botId, labelsOf = () => ({})) {
+  const off = [...new Set(holders)].filter((t) => t !== target).map((t) => ["label", t, ...detachWords(labelsOf(t) ?? {})]);
   return [...off, ["label", target, `${BOT_LABEL}=${botId}`]];
 }
 

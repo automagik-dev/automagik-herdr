@@ -195,7 +195,7 @@ test("attachBot: a Claude session in the project's worktree passes; the label mo
   state.terminals = [row("t1m", {}, { cwd: "/Users/x/workspace" }), row("t3", { bot: ID.main })];
   gets.t1m = { address: "t1m", foreground: { argv: ["claude"], cwd: tree }, labels: {} };
   assert.deepEqual(await attachBot(main, ID.main, "t1m"), { ok: true });
-  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t3", "bot="], ["label", "t1m", `bot=${ID.main}`]]);
+  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t3", "bot="], ["label", "t1m", `bot=${ID.main}`], ["label", "t1m", "role=main"]]);
   assert.deepEqual(await attachBot(main, ID.main, "far/t9"), { refused: "Attach works on this computer's panes only; far/t9 is on another machine." });
 });
 
@@ -261,4 +261,33 @@ test("startBot: a pinned model goes to the agent with its flag (A12); a pin the 
   assert.deepEqual(devRun.slice(devRun.indexOf("--")), ["--", "claude"]);
   assert.equal(pinNotes().length, 1);
   assert.match(pinNotes()[0].body, /pinned to "Opus 5.5", which isn't a Claude Code model this computer lists/);
+});
+
+// ---- A16: pane labels in the sidebar's Start and Attach ----
+
+const ranked = () => {
+  const f = team();
+  f.categories = [{ id: "eng", title: "Engineering" }];
+  f.bots.find((b) => b.id === ID.cap).category = "eng";
+  f.bots.find((b) => b.id === ID.dev).rank = "dev";
+  return f;
+};
+
+test("startBot labels the new pane: role, category, and the lead pane's squad, marked as copied", async (t) => {
+  reset();
+  const { main } = await project(t, ranked());
+  state.terminals = [row("t7", { bot: ID.cap, squad: "memory" }, { name: "cap" })];
+  assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
+  const runArgs = state.hcCalls.find((a) => a[0] === "run");
+  const labels = runArgs.flatMap((w, i) => (runArgs[i - 1] === "--label" ? [w] : []));
+  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "herdr-bots.squad=1"]);
+});
+
+test("attachBot labels the pane beside the bot label and keeps a squad it has", async (t) => {
+  reset();
+  const { main } = await project(t, ranked());
+  state.terminals = [row("t7", { bot: ID.cap, squad: "memory" }), row("t8", { squad: "infra" }, { program: { key: "codex", agent: true } })];
+  gets.t8 = { address: "t8", foreground: { argv: ["codex"], cwd: main }, labels: { squad: "infra" } };
+  assert.deepEqual(await attachBot(main, ID.dev, "t8"), { ok: true });
+  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t8", `bot=${ID.dev}`], ["label", "t8", "role=dev", "category=eng"]]);
 });
