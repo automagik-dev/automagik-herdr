@@ -21,13 +21,13 @@ The source is branch `pack/vendor-on-dev` at 0722de1: nine mods vendored on dev 
    | New mod | Made from | Notes |
    |---|---|---|
    | `am-sidebar` | spaces-agents + space-icon | The icon dialog is absorbed into the sidebar. |
-   | `am-footer` | sidebar-chrome | The rail gains a **Bots** entry and a **Subscriptions** icon. |
+   | `am-footer` | sidebar-chrome | The rail gains a **Bots** entry and a **Quota** icon. |
    | `am-markdown` | md-menu + markdown-browser | One mod. |
    | `am-tabs` | auto-tabs | |
    | `am-new-menu` | new-menu-tui | |
    | `am-pocket` | pocket-link | |
    | `am-mods` | mod-manager | |
-   | `am-subscriptions` | cliproxy | The owner wants it changed. Today it does nothing useful; the owner uses the CLIProxyAPI in other ways. |
+   | `am-quota` | cliproxy | The owner wants it changed. Today it does nothing useful; the owner uses the CLIProxyAPI in other ways. |
 
 6. **New bot leaves the sidebar body.** The whole "New bot" line moves into `am-footer`. The bot management suite (create, edit, start, attach, the list) is reached from the footer.
 7. **Every mod is Apache-2.0.**
@@ -36,7 +36,7 @@ The source is branch `pack/vendor-on-dev` at 0722de1: nine mods vendored on dev 
 
 - **MIT forks** (markdown-browser from ohneda, mod-manager from jacksonpires): they may be shipped under Apache-2.0 as derived works. The upstream MIT copyright and permission notice stays verbatim, in the mod's NOTICE plus a `LICENSE-upstream` file. The upstream author keeps their copyright.
 - **cliproxy** (0xRowdy/herdr-cliproxy) has no licence. Its code may not be copied, even to change it.
-  - `am-subscriptions` is written fresh, by us, against the CLIProxyAPI, with no lines taken from that repo.
+  - `am-quota` is written fresh, by us, against the CLIProxyAPI, with no lines taken from that repo.
   - NOTICE credits the idea.
   - If the author adds a licence later, vendoring that code becomes possible.
 - **Herdr mods cannot import across folders.** The footer opens other surfaces with `run("mod.open", …)` and `run("tab.new", {mod})`, as in `sidebar-chrome/main.js:28-57`.
