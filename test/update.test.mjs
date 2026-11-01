@@ -1,15 +1,16 @@
 // The pack's updates over a fake release: no network, a temp app home for mods/.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import {
   LATEST_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, installUpdate, latestRelease, noticeText, parseSums,
-  pickUpdate, prevDirOf, readVersion, rollback, stateDirOf, verifySha256,
+  pickUpdate, prevDirOf, readVersion, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/spaces-agents/update.mjs";
 
 const UPDATE = fileURLToPath(new URL("../mods/spaces-agents/update.mjs", import.meta.url));
@@ -124,7 +125,7 @@ test("applyUpdate swaps the pack in, keeps the old one outside mods/, and rollba
   const { home, mods } = appHome("0.1.0");
   const t = tarball("0.2.0");
   try {
-    const done = await applyUpdate({ tgzPath: t.path, modsDir: mods });
+    const done = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     assert.equal(done.version, "0.2.0");
     assert.equal(readVersion(join(mods, "spaces-agents")), "0.2.0");
     assert.equal(done.prev, join(home, "automagik-herdr", "spaces-agents.prev"));
@@ -138,7 +139,7 @@ test("applyUpdate swaps the pack in, keeps the old one outside mods/, and rollba
     assert.equal(rollback({ modsDir: mods }).version, "0.2.0", "a second rollback undoes the first");
 
     const t3 = tarball("0.3.0");
-    await applyUpdate({ tgzPath: t3.path, modsDir: mods });
+    await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: mods });
     assert.equal(readVersion(prevDirOf(mods)), "0.2.0", "only one pack is kept");
     rmSync(t3.src, { recursive: true, force: true });
   } finally {
@@ -152,8 +153,8 @@ test("applyUpdate refuses a pack without main.js or mod.json and leaves the inst
   const noMain = tarball("0.2.0", { main: false });
   const noMod = tarball("0.2.0", { mod: false });
   try {
-    await assert.rejects(applyUpdate({ tgzPath: noMain.path, modsDir: mods }), /no spaces-agents\/ with main\.js and mod\.json/);
-    await assert.rejects(applyUpdate({ tgzPath: noMod.path, modsDir: mods }), /refusing/);
+    await assert.rejects(applyUpdate({ tgzPath: noMain.path, version: "0.2.0", modsDir: mods }), /no spaces-agents\/ with main\.js and mod\.json/);
+    await assert.rejects(applyUpdate({ tgzPath: noMod.path, version: "0.2.0", modsDir: mods }), /refusing/);
     assert.equal(readVersion(join(mods, "spaces-agents")), "0.1.0");
     assert.equal(existsSync(prevDirOf(mods)), false);
     assert.deepEqual(execFileSync("ls", ["-A", stateDirOf(mods)], { encoding: "utf8" }).trim(), "", "staging removed");
@@ -168,12 +169,12 @@ test("applyUpdate installs into an empty mods/ and refuses a linked checkout; ro
   const t = tarball("0.2.0");
   try {
     assert.throws(() => rollback({ modsDir: mods }), /nothing to roll back to/);
-    const done = await applyUpdate({ tgzPath: t.path, modsDir: mods });
+    const done = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     assert.equal(done.prev, null);
     assert.equal(readVersion(join(mods, "spaces-agents")), "0.2.0");
     rmSync(join(mods, "spaces-agents"), { recursive: true });
     symlinkSync(t.src, join(mods, "spaces-agents"));
-    await assert.rejects(applyUpdate({ tgzPath: t.path, modsDir: mods }), /is a link/);
+    await assert.rejects(applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods }), /is a link/);
   } finally {
     rmSync(t.src, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -213,6 +214,122 @@ test("node update.mjs: one JSON line, no network with AUTOMAGIK_HERDR_NO_UPDATE=
     try { execFileSync(process.execPath, [UPDATE, "rollback", "--mods", mods], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (error) { failed = error; }
     assert.equal(failed.status, 1);
     assert.match(JSON.parse(failed.stdout).error, /nothing to roll back to/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** One ustar entry: `type` "0" file, "1" hard link, "2" symlink, "5" folder, "6" fifo. */
+function tarEntry(name, { type = "0", body = "", linkname = "", mode = 0o644 } = {}) {
+  const data = Buffer.from(body);
+  const h = Buffer.alloc(512);
+  h.write(name, 0, 100, "utf8");
+  h.write(`${mode.toString(8).padStart(7, "0")}\0`, 100);
+  h.write("0000000\0", 108);
+  h.write("0000000\0", 116);
+  h.write(`${data.length.toString(8).padStart(11, "0")}\0`, 124);
+  h.write("00000000000\0", 136);
+  h.write("        ", 148);
+  h.write(type, 156);
+  h.write(linkname, 157, 100, "utf8");
+  h.write("ustar\0", 257);
+  h.write("00", 263);
+  let sum = 0;
+  for (const b of h) sum += b;
+  h.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+  return Buffer.concat([h, data, Buffer.alloc((512 - (data.length % 512)) % 512)]);
+}
+/** A gzipped tarball of a valid 0.2.0 pack plus `extra` entries ([name, options]). */
+function crafted(dir, file, extra) {
+  const entries = [
+    ["spaces-agents/", { type: "5", mode: 0o755 }],
+    ["spaces-agents/main.js", { body: "export {};\n" }],
+    ["spaces-agents/mod.json", { body: '{ "place": "left" }\n' }],
+    ["spaces-agents/VERSION", { body: "0.2.0\n" }],
+    ...extra,
+  ];
+  const path = join(dir, file);
+  writeFileSync(path, gzipSync(Buffer.concat([...entries.map(([n, o]) => tarEntry(n, o)), Buffer.alloc(1024)])));
+  return path;
+}
+
+test("unsafeEntries: only plain files and folders under spaces-agents/", () => {
+  assert.deepEqual(unsafeEntries(["spaces-agents/", "spaces-agents/main.js"], ["drwxr-xr-x 0 0 0 0 x spaces-agents/", "-rw-r--r-- 0 0 0 1 x spaces-agents/main.js"]), []);
+  assert.match(unsafeEntries(["spaces-agents/l"], ["lrwxrwxrwx 0 0 0 0 x spaces-agents/l -> /etc"])[0], /not a plain file/);
+  assert.match(unsafeEntries(["spaces-agents/h"], ["-rw-r--r-- 0 0 0 0 x spaces-agents/h link to spaces-agents/main.js"])[0], /not a plain file/);
+  assert.match(unsafeEntries(["spaces-agents/../x"], ["-"])[0], /\.\. segment/);
+  assert.match(unsafeEntries(["/etc/x"], ["-"])[0], /absolute/);
+  assert.match(unsafeEntries(["other/x"], ["-"])[0], /outside spaces-agents/);
+  assert.match(unsafeEntries([], [])[0], /empty/);
+  assert.match(unsafeEntries(["a", "b"], ["-"])[0], /does not add up/);
+});
+
+test("applyUpdate refuses crafted tarballs (symlink, hard link, .., absolute, outside, fifo) and writes nothing", async () => {
+  const { home, mods } = appHome("0.1.0");
+  const dir = mkdtempSync(join(tmpdir(), "crafted-"));
+  const cases = {
+    symlink: [["spaces-agents/link", { type: "2", linkname: "/etc" }]],
+    hardlink: [["spaces-agents/hard", { type: "1", linkname: "spaces-agents/main.js" }]],
+    dotdot: [["spaces-agents/../evil.js", { body: "x" }]],
+    absolute: [[`${home}/evil.js`, { body: "x" }]],
+    outside: [["evil.js", { body: "x" }]],
+    fifo: [["spaces-agents/pipe", { type: "6" }]],
+  };
+  try {
+    for (const [label, extra] of Object.entries(cases)) {
+      const tgz = crafted(dir, `${label}.tgz`, extra);
+      await assert.rejects(applyUpdate({ tgzPath: tgz, version: "0.2.0", modsDir: mods }), /refusing it|Command failed/, label);
+      assert.equal(readVersion(join(mods, "spaces-agents")), "0.1.0", `${label}: installed pack kept`);
+      assert.equal(existsSync(join(home, "evil.js")), false, `${label}: nothing written outside`);
+      assert.equal(existsSync(join(stateDirOf(mods), "evil.js")), false, `${label}: nothing written beside`);
+    }
+    const plain = crafted(dir, "plain.tgz", []);
+    assert.equal((await applyUpdate({ tgzPath: plain, version: "0.2.0", modsDir: mods })).version, "0.2.0", "the same pack without them installs");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("applyUpdate refuses a tarball whose VERSION is not the release's, and needs the version", async () => {
+  const { home, mods } = appHome("0.1.0");
+  const t = tarball("0.2.0");
+  try {
+    await assert.rejects(applyUpdate({ tgzPath: t.path, version: "0.3.0", modsDir: mods }), /carries VERSION 0\.2\.0, not 0\.3\.0/);
+    await assert.rejects(applyUpdate({ tgzPath: t.path, modsDir: mods }), /needs the release's version/);
+    assert.equal(readVersion(join(mods, "spaces-agents")), "0.1.0");
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a pack made as release.yml makes it (git archive of the tag's mods/spaces-agents) installs", async () => {
+  const repo = fileURLToPath(new URL("..", import.meta.url));
+  const { home, mods } = appHome("0.0.0");
+  const tgz = join(home, "pack.tgz");
+  try {
+    execFileSync("git", ["archive", "--format=tar.gz", "--prefix=spaces-agents/", "-o", tgz, "HEAD:mods/spaces-agents"], { cwd: repo });
+    const version = execFileSync("git", ["show", "HEAD:mods/spaces-agents/VERSION"], { cwd: repo, encoding: "utf8" }).trim();
+    const done = await applyUpdate({ tgzPath: tgz, version, modsDir: mods });
+    assert.equal(done.version, version);
+    assert.ok(existsSync(join(mods, "spaces-agents", "update.mjs")));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("update.mjs runs from a copy of the pack outside the repository (no package.json), without warnings", () => {
+  const home = mkdtempSync(join(tmpdir(), "installed-"));
+  try {
+    const pack = join(home, "mods", "spaces-agents");
+    cpSync(fileURLToPath(new URL("../mods/spaces-agents", import.meta.url)), pack, { recursive: true });
+    const r = spawnSync(process.execPath, [join(pack, "update.mjs"), "check"], {
+      env: { ...process.env, HERDR_APP_HOME: home, AUTOMAGIK_HERDR_NO_UPDATE: "1", NODE_OPTIONS: "" }, encoding: "utf8",
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, "");
+    assert.equal(JSON.parse(r.stdout).current, readVersion(pack));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

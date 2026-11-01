@@ -13,10 +13,14 @@
 // folder, so running it from a checkout never replaces the checkout. The replaced pack and the
 // extraction folder live in <app home>/automagik-herdr/, outside mods/: a folder left inside
 // mods/ is loaded by Herdr as a second mod (README, Install).
+//
+// Needs Node 22.7 or later (20.19 on Node 20): the installed pack has no package.json, so Node
+// loads release.js (shared with the mod, whose loader takes .js) as ESM by detecting its syntax,
+// as Herdr's own insights mod does with analytics.js.
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,14 +83,57 @@ export async function downloadUpdate(update, { fetch = globalThis.fetch, dir, ti
 }
 
 /**
+ * What is wrong with a tarball's entries: `names` as `tar -tzf` lists them, `lines` as `tar -tvzf`
+ * does (its first character is the entry's type). Every entry must sit under `spaces-agents/`,
+ * be relative, have no `..` segment and be a plain file or folder. Empty when all is well.
+ */
+export function unsafeEntries(names, lines) {
+  if (names.length === 0) return ["the tarball is empty"];
+  if (names.length !== lines.length) return ["the tarball's listing does not add up (a name with a line break?)"];
+  const problems = [];
+  names.forEach((name, i) => {
+    const segments = name.split("/");
+    const type = lines[i][0];
+    if (name.startsWith("/")) problems.push(`${name}: an absolute path`);
+    else if (segments.includes("..")) problems.push(`${name}: a .. segment`);
+    else if (segments[0] !== PACK_NAME) problems.push(`${name}: outside ${PACK_NAME}/`);
+    else if ((type !== "-" && type !== "d") || lines[i].includes(" link to ") || lines[i].includes(" -> ")) {
+      problems.push(`${name}: not a plain file or folder`);
+    }
+  });
+  return problems;
+}
+
+async function listEntries(tgzPath) {
+  const list = async (flags) => (await run("tar", [flags, tgzPath], { maxBuffer: 64 * 1024 * 1024 })).stdout.split("\n").filter((l) => l !== "");
+  return unsafeEntries(await list("-tzf"), await list("-tvzf"));
+}
+
+/** Paths under `dir` (itself included) that are neither a regular file nor a folder. */
+function irregularPaths(dir) {
+  const found = [];
+  const walk = (path) => {
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) for (const entry of readdirSync(path)) walk(join(path, entry));
+    else if (!stat.isFile()) found.push(path);
+  };
+  walk(dir);
+  return found;
+}
+
+/**
  * Installs the pack in `tgzPath` (a verified release tarball holding `spaces-agents/`) as
  * `<modsDir>/<name>`: extracts it beside mods/, refuses it without main.js and mod.json, moves
  * the installed pack to `<app home>/automagik-herdr/<name>.prev` (replacing an older one) and
- * the new one in. Refuses a pack that is a link (a checkout: update it with git).
- * Returns `{ pack, prev, version }` (`prev` null when nothing was installed before).
+ * the new one in. Refuses a pack that is a link (a checkout: update it with git), a tarball with
+ * an entry outside `spaces-agents/`, absolute, with `..` or not a plain file or folder (listed
+ * before extracting, checked again after), and one whose VERSION is not `version`. Returns `{ pack, prev, version }` (`prev` null when nothing was installed before).
  */
-export async function applyUpdate({ tgzPath, modsDir = defaultModsDir(), name = PACK_NAME }) {
+export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir(), name = PACK_NAME }) {
+  if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
   const pack = join(modsDir, name);
+  const unsafe = await listEntries(resolve(tgzPath));
+  if (unsafe.length > 0) throw new Error(`${tgzPath} is not a plain pack (${unsafe.slice(0, 3).join("; ")}): refusing it`);
   if (isLink(pack)) throw new Error(`${pack} is a link (a checkout?): update it with git instead`);
   const state = stateDirOf(modsDir);
   mkdirSync(state, { recursive: true });
@@ -97,6 +144,10 @@ export async function applyUpdate({ tgzPath, modsDir = defaultModsDir(), name = 
     if (isLink(fresh) || !isFile(join(fresh, "main.js")) || !isFile(join(fresh, "mod.json"))) {
       throw new Error(`${tgzPath} holds no ${PACK_NAME}/ with main.js and mod.json: refusing it`);
     }
+    const irregular = irregularPaths(fresh);
+    if (irregular.length > 0) throw new Error(`${tgzPath} unpacked a link or special file (${irregular[0]}): refusing it`);
+    const carried = readVersion(fresh);
+    if (carried !== version) throw new Error(`${tgzPath} carries VERSION ${carried}, not ${version}: refusing it`);
     mkdirSync(modsDir, { recursive: true });
     const prev = prevDirOf(modsDir, name);
     const had = existsSync(pack);
@@ -154,7 +205,7 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
-    return { ...found, installed: await applyUpdate({ tgzPath, modsDir, name }) };
+    return { ...found, installed: await applyUpdate({ tgzPath, version: found.update.version, modsDir, name }) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
