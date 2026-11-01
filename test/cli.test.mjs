@@ -568,3 +568,12 @@ test("attach: a terminal argument that looks like an option is refused; a claude
   assert.match(r.err, /Not attached: this Claude session runs in/);
   assert.deepEqual(labelCalls(s.calls()), []);
 });
+
+test("ls over more bots than the eight-process cap completes, each live pane found", (t) => {
+  const ids = Array.from({ length: 12 }, (_, i) => `b-${"abcdefghijkl"[i].repeat(10)}`);
+  const s = scene(t, { terminals: ids.map((id, i) => term(`t${i + 1}`, { bot: id })) });
+  s.seed({ version: 1, categories: [], bots: ids.map((id, i) => bot(id, i === 0 ? "main" : "member", { name: `B${i}` })) });
+  const r = s.cli(["ls", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().projects[0].bots.map((b) => b.terminal), ids.map((_, i) => `t${i + 1}`));
+});
