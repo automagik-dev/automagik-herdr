@@ -19,7 +19,7 @@ import { BotForm } from "./create.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -736,14 +736,15 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       try {
         for (const address of ask) {
-          let argv = null;
+          let entry;
           try {
             const r = await hc(["get", address, "--json"]);
-            if (r.code === 0) argv = JSON.parse(r.stdout)?.foreground?.argv ?? null;
+            if (r.code !== 0) continue;
+            entry = argvEntry(JSON.parse(r.stdout), createdOf.get(address));
           } catch { continue; }
-          if (!Array.isArray(argv)) continue;
-          if (JSON.stringify(argv) !== JSON.stringify(this.argvOf.get(address)?.argv)) changed = true;
-          this.argvOf.set(address, { argv, created: createdOf.get(address) ?? null });
+          if (!entry.argv) continue;
+          if (JSON.stringify(entry.argv) !== JSON.stringify(this.argvOf.get(address)?.argv)) changed = true;
+          this.argvOf.set(address, entry);
         }
       } finally { this.argvBusy = false; }
       if (changed) cx.notify();

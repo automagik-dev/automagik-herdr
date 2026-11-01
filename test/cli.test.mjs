@@ -4,12 +4,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/spaces-agents/model.js";
-import { writeBotsFile, findBot, CliError } from "../mods/spaces-agents/bin/herdr-bots.mjs";
+import { writeBotsFile, findBot, CliError, listProject } from "../mods/spaces-agents/bin/herdr-bots.mjs";
 
 const CLI = new URL("../mods/spaces-agents/bin/herdr-bots.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -344,6 +344,18 @@ test("twenty CLIs listing projects at once lose none of them", async (t) => {
   const listed = JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8"));
   assert.deepEqual([...listed].sort(), [...keys].sort());
   assert.equal(existsSync(join(app, "spaces-agents-projects.json.lock")), false);
+});
+
+test("a stale project-list lock (a CLI killed mid-write) is taken over, and nothing is left behind", (t) => {
+  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-lock-")));
+  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const lock = join(app, "spaces-agents-projects.json.lock");
+  writeFileSync(lock, "999999 someone-else");
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  assert.equal(listProject("/p/a", app), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8")), ["/p/a"]);
+  assert.deepEqual(readdirSync(app), ["spaces-agents-projects.json"]);
 });
 
 test("with no app home, nothing is listed and the command still succeeds; an unwritable list only warns", (t) => {

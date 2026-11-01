@@ -7,7 +7,8 @@
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
-import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync,
+import { randomUUID } from "node:crypto";
+import { accessSync, constants, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
@@ -154,23 +155,39 @@ export function writeBotsFile(key, raw, expected, io = fsIo) {
   }
 }
 
-// A lock beside the project list: made exclusively (wx), so one CLI at a time edits the list.
-// Waited for up to LOCK_WAIT ms; one older than LOCK_STALE ms (a CLI killed mid-write) is
-// taken over. Without it, two CLIs that read the list at once each write their own copy.
+// A lock beside the project list: made exclusively (wx) holding its holder's pid and a token,
+// so one CLI at a time edits the list, and a holder removes only its own lock. Waited for up
+// to LOCK_WAIT ms; one older than LOCK_STALE ms (a CLI killed mid-write) is taken over.
+// Without it, two CLIs that read the list at once each write their own copy.
 const LOCK_WAIT = 3000;
 const LOCK_STALE = 10_000;
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const stale = (path) => { try { return Date.now() - statSync(path).mtimeMs > LOCK_STALE; } catch { return false; } };
+
+// A stale lock is moved aside first, so of two waiters only one takes it. Aside, it is checked
+// again: a lock made fresh in between goes back (by link, which never replaces a newer one).
+function takeOverStale(lock) {
+  if (!stale(lock)) return;
+  const aside = `${lock}.${process.pid}`;
+  try { renameSync(lock, aside); } catch { return; } // another waiter moved it first
+  if (!stale(aside)) { try { linkSync(aside, lock); } catch { /* a newer lock is there */ } }
+  try { unlinkSync(aside); } catch { /* gone already */ }
+}
+
 function withLock(lock, fn) {
+  const token = `${process.pid} ${randomUUID()}`;
   const until = Date.now() + LOCK_WAIT;
   for (;;) {
-    try { closeSync(openSync(lock, "wx")); break; } catch (e) {
+    try { writeFileSync(lock, token, { flag: "wx" }); break; } catch (e) {
       if (e?.code !== "EEXIST") throw e;
-      try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE) unlinkSync(lock); } catch { /* gone already */ }
+      takeOverStale(lock);
       if (Date.now() > until) throw new Error(`${lock} is held by another herdr-bots`);
       pause(5 + Math.floor(Math.random() * 20));
     }
   }
-  try { return fn(); } finally { try { unlinkSync(lock); } catch { /* gone already */ } }
+  try { return fn(); } finally {
+    try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
+  }
 }
 
 /**

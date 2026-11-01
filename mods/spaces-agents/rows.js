@@ -241,8 +241,9 @@ export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
 /**
  * Which bot panes' command lines to read with `hc get` (A12), from `terminals()` rows:
  * live, labelled with a `known` bot, and not carrying `foreground.argv`. A pane already in
- * `cached` (address -> { argv, created }) with the same `created_ms` is skipped: a bot pane
- * runs the command it was started with. At most `max` per call; the rest wait for the next.
+ * `cached` (address -> argvEntry) with the same `created_ms` and its agent in front is
+ * skipped: a bot pane runs the command it was started with. One read while still in its
+ * `sh -c` wrapper is asked again. At most `max` per call; the rest wait for the next.
  * Returns { ask: addresses, gone: cached addresses no longer wanted }.
  */
 export function argvToAsk(terminals, known, cached = new Map(), max = 3) {
@@ -251,9 +252,19 @@ export function argvToAsk(terminals, known, cached = new Map(), max = 3) {
   const wanted = new Set(rows.map((k) => k.address));
   const ask = rows.filter((k) => {
     const hit = cached.get(k.address);
-    return !hit || hit.created !== (k.created_ms ?? null);
+    return !hit?.settled || hit.created !== (k.created_ms ?? null);
   }).map((k) => k.address).slice(0, max);
   return { ask, gone: [...cached.keys()].filter((a) => !wanted.has(a)) };
+}
+
+/**
+ * What the view keeps of a pane's `hc get` answer: its foreground argv (null: none), the
+ * pane's `created_ms`, and whether that argv is final (an agent in front, not a shell or
+ * the `sh -c` wrapper an agent starts in), so argvToAsk asks again until it is.
+ */
+export function argvEntry(get, created) {
+  const argv = Array.isArray(get?.foreground?.argv) ? get.foreground.argv : null;
+  return { argv, created: created ?? null, settled: Boolean(argv) && agentInForeground(get) };
 }
 
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */

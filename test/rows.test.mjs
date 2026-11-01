@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk,
+  secondLine, argvToAsk, argvEntry,
 } from "../mods/spaces-agents/rows.js";
 import { parseBots } from "../mods/spaces-agents/model.js";
 
@@ -229,7 +229,19 @@ test("argvToAsk: live known-bot panes without a command line, not read for the s
   ];
   assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [] });
   // Read already for the same pane: skipped; a new pane at an old address: asked again.
-  const cached = new Map([["t1", { argv: ["claude"], created: 10 }], ["t2", { argv: ["claude"], created: 19 }], ["t9", { argv: ["x"], created: 1 }]]);
+  const cached = new Map([["t1", { argv: ["claude"], created: 10, settled: true }], ["t2", { argv: ["claude"], created: 19, settled: true }], ["t9", { argv: ["x"], created: 1, settled: true }]]);
   assert.deepEqual(argvToAsk(rows, known, cached), { ask: ["t2", "box/t6", "t7"], gone: ["t9"] });
   assert.deepEqual(argvToAsk(rows, known, cached, 1).ask, ["t2"]);
+});
+
+test("argvEntry + argvToAsk: a pane read in its sh -c wrapper is asked again on the next refresh", () => {
+  const known = new Set(["b-a"]);
+  const rows = [T("t1", { labels: { bot: "b-a" }, created_ms: 10 })];
+  const wrapper = argvEntry({ foreground: { argv: ["sh", "-c", "claude --model opus"] } }, 10);
+  assert.deepEqual(wrapper, { argv: ["sh", "-c", "claude --model opus"], created: 10, settled: false });
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", wrapper]])).ask, ["t1"]);
+  const agent = argvEntry({ foreground: { argv: ["claude", "--model", "opus"] } }, 10);
+  assert.equal(agent.settled, true);
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", agent]])).ask, []);
+  assert.deepEqual(argvEntry({}, undefined), { argv: null, created: null, settled: false });
 });
