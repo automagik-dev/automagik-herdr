@@ -4,17 +4,21 @@
  * package.json and the pack's VERSION file (mods/spaces-agents/VERSION, which the release
  * tarball carries and update.mjs reads) both hold it. Releases are 0.N.P, tagged v0.N.P by
  * release.yml, numbers compared as numbers. Until the first release the repository carries
- * 0.0.0, which is never released (as Automagik carried 3.0.0); the first release is 0.1.0.
+ * 0.0.0, which is never released (as Automagik carried 3.0.0); the first release is 0.2.0 (FIRST:
+ * the owner's call, 2026-11-01: too much changed since 0.1.0 was planned).
  *
  *   node scripts/version.mjs check          every field carries package.json's version; exit 1 when not
  *   node scripts/version.mjs set <version>  write it everywhere
  *   node scripts/version.mjs current        package.json's version
  *   node scripts/version.mjs next           the next release: a patch on the newest v0.N.P when everything
- *                                           shipping since it is a fix, else 0.(N+1).0; 0.1.0 first
+ *                                           shipping since it is a fix, else 0.(N+1).0; 0.2.0 first
  *   node scripts/version.mjs ships          yes when something since the newest release ships, else no
  *   node scripts/version.mjs last           the newest release tag (v0.N.P), or nothing
- *   node scripts/version.mjs plan <yes|no>  what release.yml does, given whether the newest tag's
- *                                           GitHub release exists: `cut`, `resume <version>` or `none`
+ *   node scripts/version.mjs tag-subject <version> <true|false>   the release tag's subject; true: a prerelease
+ *   node scripts/version.mjs prerelease <tag>   true when the tag's subject marks a prerelease, else false
+ *   node scripts/version.mjs plan <yes|no|partial>  what release.yml does, given whether the newest tag's
+ *                                           GitHub release exists (partial: without both assets):
+ *                                           `cut`, `resume <version>`, `repair <version>` or `none`
  *
  * Shipping: every commit but those that ship nothing: `chore` (the release's own
  * `chore(release)` among them), `ci`, `docs`, `test`; Automagik's "anything new" gate plus `chore`.
@@ -29,6 +33,8 @@ import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const MAJOR = 0;
+/** The first release, cut when no release tag exists yet. */
+export const FIRST = `${MAJOR}.2.0`;
 /** A release version: 0.N.P, N and P whole numbers of at most four digits, no leading zeros. */
 export const VERSION = /^0\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
 /** A release tag: `v0.N.P`. */
@@ -91,26 +97,32 @@ export function lastReleaseTag(tags) {
 export const shipping = (subjects) => subjects.filter((s) => s.trim() !== "" && !NOT_SHIPPING.test(s));
 
 /**
- * The release after the newest tag in `tags`, given the commit subjects since it: 0.1.0 when there
+ * The release after the newest tag in `tags`, given the commit subjects since it: FIRST (0.2.0) when there
  * is no release yet; a patch when everything shipping is a fix; else the next minor.
  */
 export function nextVersion(tags, subjects = []) {
   const last = lastReleaseTag(tags);
-  if (!last) return `${MAJOR}.1.0`;
+  if (!last) return FIRST;
   const [minor, patch] = parts(last);
   const ships = shipping(subjects);
   if (ships.length > 0 && ships.every((s) => FIX.test(s))) return `${MAJOR}.${minor}.${patch + 1}`;
   return `${MAJOR}.${minor + 1}.0`;
 }
 
+/** A release tag's subject: the kind travels with the tag, so a run that resumes it publishes the same kind. */
+export const tagSubject = (version, prerelease = false) => `Automagik Herdr ${version}${prerelease ? " (prerelease)" : ""}`;
+export const isPrereleaseSubject = (subject) => / \(prerelease\)$/.test(String(subject ?? "").trim());
+
 /**
  * What a release run does: `{ action: "resume", version }` when the newest tag `last` has no GitHub
- * release (`published` false: its run pushed the tag, then failed to publish), else
+ * release (`published` false: its run pushed the tag, then failed to publish), `{ action: "repair",
+ * version }` when it has one without both assets (`published` "partial": the upload failed), else
  * `{ action: "cut" }` when there is no release yet or something since `last` ships, else
  * `{ action: "none" }`. A resume cuts nothing new: the next push or dispatch does.
  */
 export function planRelease({ last, published, subjects = [] }) {
   if (last && published === false) return { action: "resume", version: last.slice(1) };
+  if (last && published === "partial") return { action: "repair", version: last.slice(1) };
   if (!last || shipping(subjects).length > 0) return { action: "cut" };
   return { action: "none" };
 }
@@ -140,14 +152,21 @@ if (invoked) {
   } else if (command === "ships") {
     const last = lastReleaseTag(tagsOf(ROOT));
     console.log(!last || shipping(subjectsSince(last, ROOT)).length > 0 ? "yes" : "no");
+  } else if (command === "tag-subject" && arg && VERSION.test(arg)) {
+    console.log(tagSubject(arg, process.argv[4] === "true"));
+  } else if (command === "prerelease" && arg) {
+    const subject = git(["for-each-ref", "--format=%(contents:subject)", `refs/tags/${arg}`], ROOT).trim();
+    if (!subject) { console.error(`version: no annotated tag ${arg}`); process.exit(1); }
+    console.log(isPrereleaseSubject(subject) ? "true" : "false");
   } else if (command === "last") {
     console.log(lastReleaseTag(tagsOf(ROOT)) ?? "");
-  } else if (command === "plan" && (arg === "yes" || arg === "no")) {
+  } else if (command === "plan" && ["yes", "no", "partial"].includes(arg)) {
     const last = lastReleaseTag(tagsOf(ROOT));
-    const plan = planRelease({ last, published: arg === "yes", subjects: subjectsSince(last, ROOT) });
-    console.log(plan.action === "resume" ? `resume ${plan.version}` : plan.action);
+    const published = arg === "partial" ? "partial" : arg === "yes";
+    const plan = planRelease({ last, published, subjects: subjectsSince(last, ROOT) });
+    console.log(plan.version ? `${plan.action} ${plan.version}` : plan.action);
   } else {
-    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no>");
+    console.error("usage: node scripts/version.mjs check | set <version> | current | next | ships | last | plan <yes|no|partial> | tag-subject <version> <true|false> | prerelease <tag>");
     process.exit(2);
   }
 }

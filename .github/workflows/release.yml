@@ -9,7 +9,8 @@ name: Release
 #   SHA256SUMS                      its sha256, which `automagik-herdr update` checks
 #
 # and then main moves to the release commit (main holds released commits and nothing else; a
-# prerelease leaves it).
+# prerelease leaves it). The tag's subject records the kind ("Automagik Herdr <v>", or
+# "… (prerelease)"), so a run that resumes a tag publishes it as the kind it was cut as.
 #
 # A push to dev (a merged pull request) cuts one; so does a dispatch:
 #   gh workflow run release.yml --ref dev [--field prerelease=true]
@@ -71,21 +72,29 @@ jobs:
         id: new
         run: |
           set -euo pipefail
-          # The newest v0.N.P has no GitHub release when its run failed after pushing it: publish
-          # it first. Otherwise cut when something since it ships (scripts/version.mjs
-          # NOT_SHIPPING: chore, ci, docs and test do not), or when there is no release yet.
+          # The newest v0.N.P has no GitHub release (404) when its run failed after pushing it, or
+          # one without both assets when the upload failed: publish or repair it first, cutting
+          # nothing new. Any other answer from GitHub fails the run. Otherwise cut when something
+          # since it ships (scripts/version.mjs NOT_SHIPPING: chore, ci, docs and test do not),
+          # or when there is no release yet.
           last=$(node scripts/version.mjs last)
           published=yes
-          if [[ -n "${last}" ]] && ! gh release view "${last}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            published=no
+          if [[ -n "${last}" ]]; then
+            if assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${last}" --jq '.assets[].name' 2> "${RUNNER_TEMP}/gh.err"); then
+              grep -qx "automagik-herdr-${last#v}.tgz" <<< "${assets}" && grep -qx SHA256SUMS <<< "${assets}" || published=partial
+            elif grep -q 'HTTP 404' "${RUNNER_TEMP}/gh.err"; then
+              published=no
+            else
+              cat "${RUNNER_TEMP}/gh.err" >&2
+              exit 1
+            fi
           fi
           plan=$(node scripts/version.mjs plan "${published}")
           case "${plan}" in
             cut) echo "action=cut" >> "$GITHUB_OUTPUT" ;;
-            "resume "*)
-              echo "${last} was tagged but never published: publishing it, cutting nothing new"
-              echo "action=resume" >> "$GITHUB_OUTPUT"
-              echo "version=${plan#resume }" >> "$GITHUB_OUTPUT" ;;
+            "resume "* | "repair "*)
+              echo "${last}: ${plan%% *} its release (published: ${published}), cutting nothing new"
+              { echo "action=${plan%% *}"; echo "version=${plan#* }"; } >> "$GITHUB_OUTPUT" ;;
             none) echo "dev has nothing since ${last}: no release" ;;
             *) echo "::error::unexpected plan: ${plan}"; exit 1 ;;
           esac
@@ -111,7 +120,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(release): v${version}"
-          git tag -a "v${version}" -m "Automagik Herdr ${version}"
+          git tag -a "v${version}" -m "$(node scripts/version.mjs tag-subject "${version}" "${PRERELEASE:-false}")"
           # Atomic: when dev moved meanwhile (a second merge), neither lands, so no tag names a
           # release commit dev never got. The newer merge's own run (queued behind this one)
           # then releases these changes with it, so this run stops here, cleanly: no version,
@@ -128,13 +137,22 @@ jobs:
 
       - name: The release this run publishes
         id: release
-        if: steps.cut.outputs.version != '' || steps.new.outputs.action == 'resume'
+        if: steps.cut.outputs.version != '' || steps.new.outputs.version != ''
         env:
           VERSION: ${{ steps.cut.outputs.version || steps.new.outputs.version }}
+          CUT: ${{ steps.cut.outputs.version }}
         run: |
           set -euo pipefail
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse "v${VERSION}^{commit}")" >> "$GITHUB_OUTPUT"
+          sha=$(git rev-parse "v${VERSION}^{commit}")
+          # A cut is the kind this run asked for; a resumed or repaired tag the kind it was cut
+          # as, from its subject (`… (prerelease)`): a resumed prerelease stays one.
+          if [[ -n "${CUT}" ]]; then
+            prerelease=$([[ "${PRERELEASE}" == "true" ]] && echo true || echo false)
+          else
+            prerelease=$(node scripts/version.mjs prerelease "v${VERSION}")
+          fi
+          { echo "version=${VERSION}"; echo "sha=${sha}"; echo "prerelease=${prerelease}"; } >> "$GITHUB_OUTPUT"
+          echo "v${VERSION} at ${sha}, prerelease: ${prerelease}"
 
       - name: Pack
         if: steps.release.outputs.version != ''
@@ -152,10 +170,16 @@ jobs:
         if: steps.release.outputs.version != ''
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          KIND_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          ACTION: ${{ steps.new.outputs.action }}
         run: |
           set -euo pipefail
+          if [[ "${ACTION}" == "repair" ]]; then
+            gh release upload "v${VERSION}" release/* --clobber --repo "${GITHUB_REPOSITORY}"
+            exit 0
+          fi
           flags=(--latest)
-          [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
+          [[ "${KIND_PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
@@ -163,7 +187,7 @@ jobs:
             --generate-notes
 
       - name: main moves to the release
-        if: steps.release.outputs.version != '' && env.PRERELEASE != 'true'
+        if: steps.release.outputs.version != '' && steps.release.outputs.prerelease != 'true'
         env:
           SHA: ${{ steps.release.outputs.sha }}
         run: |
