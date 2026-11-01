@@ -10,8 +10,8 @@ Nothing of its own: the pack is what it installs. The main mod is **`spaces-agen
 sidebar and the Bots in it (a project's main bot and its team, Automagik's characters, the
 Create/Edit form, Start/Attach, the per-turn briefing, and `bin/automagik-herdr.mjs`); its own
 `RECIPE.md` describes it. Beside it are the pieces that make the sidebar usable — `sidebar-chrome`
-(the footer rail), `auto-tabs` (the tab bar), `new-menu-tui` (the `+` menu), `md-menu` +
-`markdown-browser` (Markdown straight from a terminal), `space-icon` (the icon dialog), `automations` (scheduled agent prompts) — and **`mod-manager`**, the table at
+(the footer rail), `auto-tabs` (the tab bar), `new-menu-tui` (the `+` menu), `md-menu`
+(Markdown straight from a terminal — the menu and the preview in one mod), `space-icon` (the icon dialog), `automations` (scheduled agent prompts) — and **`mod-manager`**, the table at
 `⌘⇧M` that lists every installed mod with on/off switches, `herdr-app check` results, versions,
 sources from our catalog and paths, plus the marketplace (`m`) and the review before any copy.
 

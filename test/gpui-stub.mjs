@@ -66,6 +66,8 @@ export const h_flex = () => element("h_flex");
 export const v_flex = () => element("v_flex");
 export class View {}
 export const Button = { new: (id) => element("button", id) };
+// A rendered Markdown body: its text is a child, so textOf/index find it like any other element.
+export class TextView { static markdown(_id, text) { return element("markdown").child(String(text)); } }
 export const Popover = { new: (id) => element("popover", id) };
 export const Input = { new: (state) => element("input", state) };
 export const Textarea = { new: (state) => element("textarea", state) };

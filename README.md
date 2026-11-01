@@ -295,9 +295,8 @@ with its own `RECIPE.md`:
 | `sidebar-chrome` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Mods, Automations, Settings, Add machine — so tabs never stack up. |
 | `auto-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. |
 | `automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
-| `md-menu` | Herdr's `menu` | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed, one click from a preview pane. |
+| `md-menu` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
 | `new-menu-tui` | Herdr's `new-menu` | The `+` menu: terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
-| `markdown-browser` | `ohneda/herdr-markdown-browser` (MIT) | The Markdown renderer `md-menu` opens files into; its own file list is off. |
 | `space-icon` | — | The icon dialog: a searchable grid of 1,741 emoji (Unicode's tables), PNG/SVG/ICO, and the space's colour including transparent. |
 | `mod-manager` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-02T13:44:00.334Z",
-  "modCount": 10,
+  "generatedAt": "2026-11-02T13:48:55.383Z",
+  "modCount": 9,
   "repositoryCount": 3,
   "source": "automagik-herdr",
   "mods": [
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik-herdr",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-02T10:44:00-03:00",
+      "pushedAt": "2026-11-02T10:47:57-03:00",
       "headCommit": "",
       "path": "",
       "name": "Automagik Herdr",
@@ -20,7 +20,6 @@
       "modNames": [
         "auto-tabs",
         "automations",
-        "markdown-browser",
         "md-menu",
         "mod-manager",
         "new-menu-tui",
@@ -30,7 +29,7 @@
       ],
       "hasKeys": true,
       "hasPreview": false,
-      "recipeBytes": 4916,
+      "recipeBytes": 4935,
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
@@ -45,14 +44,9 @@
           "blurb": "Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were away, start one now, pause them all, or write a new one with its next runs previe"
         },
         {
-          "name": "markdown-browser",
-          "title": "Markdown",
-          "blurb": "Renders a Markdown file in a pane: front matter hidden, `.mdx` import/export lines dropped, live reload on save, a **Default app** button, and a right-click menu with *Preview in new pane* / *Open in Default app*. A fork of `ohneda/herdr-markdown-browser` (MIT): this pack keeps t"
-        },
-        {
           "name": "md-menu",
-          "title": "md-menu",
-          "blurb": "Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text talks about: click one and it opens in a preview pane beside the chat, the way a click in the Markdown panel used to. Derived from Herdr's shipped `menu`."
+          "title": "Markdown",
+          "blurb": "Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text talks about; click one and it renders in a preview pane beside the chat. One mod, two faces."
         },
         {
           "name": "mod-manager",
