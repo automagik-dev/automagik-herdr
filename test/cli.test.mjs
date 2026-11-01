@@ -3,7 +3,7 @@
 // each call and answers from a state file. The real hc is never run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -330,6 +330,20 @@ test("create, edit, category, start and attach list their project for the sideba
   // Reading leaves the list alone; a read-only command adds nothing.
   assert.equal(s.cli(["show", "Genie"]).code, 0);
   assert.deepEqual(listed(), [other]);
+});
+
+test("twenty CLIs listing projects at once lose none of them", async (t) => {
+  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-list-")));
+  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const writer = `import { listProject } from ${JSON.stringify(CLI)};\nprocess.exitCode = listProject(process.argv[1], process.argv[2]) ? 0 : 1;`;
+  const keys = Array.from({ length: 20 }, (_, i) => `/p/${i}`);
+  const codes = await Promise.all(keys.map((key) => new Promise((done) => {
+    execFile(process.execPath, ["--input-type=module", "-e", writer, key, app], (err) => done(err ? err.code ?? 1 : 0));
+  })));
+  assert.deepEqual(codes, keys.map(() => 0));
+  const listed = JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8"));
+  assert.deepEqual([...listed].sort(), [...keys].sort());
+  assert.equal(existsSync(join(app, "spaces-agents-projects.json.lock")), false);
 });
 
 test("with no app home, nothing is listed and the command still succeeds; an unwritable list only warns", (t) => {

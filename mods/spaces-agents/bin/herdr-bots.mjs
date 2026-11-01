@@ -7,7 +7,8 @@
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync,
+  unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -153,26 +154,50 @@ export function writeBotsFile(key, raw, expected, io = fsIo) {
   }
 }
 
+// A lock beside the project list: made exclusively (wx), so one CLI at a time edits the list.
+// Waited for up to LOCK_WAIT ms; one older than LOCK_STALE ms (a CLI killed mid-write) is
+// taken over. Without it, two CLIs that read the list at once each write their own copy.
+const LOCK_WAIT = 3000;
+const LOCK_STALE = 10_000;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function withLock(lock, fn) {
+  const until = Date.now() + LOCK_WAIT;
+  for (;;) {
+    try { closeSync(openSync(lock, "wx")); break; } catch (e) {
+      if (e?.code !== "EEXIST") throw e;
+      try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE) unlinkSync(lock); } catch { /* gone already */ }
+      if (Date.now() > until) throw new Error(`${lock} is held by another herdr-bots`);
+      pause(5 + Math.floor(Math.random() * 20));
+    }
+  }
+  try { return fn(); } finally { try { unlinkSync(lock); } catch { /* gone already */ } }
+}
+
 /**
  * Adds a project to the list the sidebar reads beside its own remembered projects
  * (model.js PROJECTS_FILE, in the app home outside mods/, so the write reloads nothing), so a
- * project managed from here shows in the sidebar with no space open on it. Written whole
- * beside, then renamed. No app home (Herdr isn't set up here): nothing is written. A failure
- * only warns: the command's own work is done.
+ * project managed from here shows in the sidebar with no space open on it. Under a lock:
+ * read, add, write beside, rename, read again; tried three times until the key is there.
+ * No app home (Herdr isn't set up here): nothing is written. A failure only warns: the
+ * command's own work is done.
  */
 export function listProject(key, dir = appHome()) {
   const path = `${dir}/${PROJECTS_FILE}`;
-  try {
-    if (!existsSync(dir)) return false;
-    let text = null;
-    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code !== "ENOENT") throw e; }
-    const next = withListedProject(text, key);
-    if (next !== text) fsIo.replace(path, next);
-    return true;
-  } catch (e) {
-    process.stderr.write(`herdr-bots: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${e?.message ?? e}\n`);
-    return false;
+  const read = () => { try { return readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return null; throw e; } };
+  let why = "it was still missing after three writes";
+  if (!existsSync(dir)) return false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      withLock(`${path}.lock`, () => {
+        const text = read();
+        const next = withListedProject(text, key);
+        if (next !== text) fsIo.replace(path, next);
+      });
+      if (listedProjects(read()).includes(key)) return true;
+    } catch (e) { why = e?.message ?? String(e); }
   }
+  process.stderr.write(`herdr-bots: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${why}\n`);
+  return false;
 }
 
 /** A bot by id, else by its name (exact, then ignoring case), unique in the project. */
