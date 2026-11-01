@@ -241,3 +241,24 @@ test("liveTerminalOf: another machine's labelled terminal doesn't count", async 
   state.terminals = [row("far/t2", { bot: ID.main })];
   assert.equal(await liveTerminalOf(ID.main), null);
 });
+
+test("startBot: a pinned model goes to the agent with its flag (A12); a pin the agent doesn't list is skipped with a note", async (t) => {
+  reset();
+  const pinned = team();
+  pinned.bots.find((b) => b.id === ID.cap).model = "claude-opus-5-5";
+  pinned.bots.find((b) => b.id === ID.dev).model = "Opus 5.5";
+  const { main } = await project(t, pinned);
+  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
+  state.notes = [];
+  await startBot(main, ID.cap);
+  const capRun = state.hcCalls.find((a) => a[0] === "run");
+  assert.deepEqual(capRun.slice(capRun.indexOf("--")), ["--", "claude", "--model", "claude-opus-5-5"]);
+  const pinNotes = () => state.notes.filter((n) => /pinned to/.test(n.body));
+  assert.deepEqual(pinNotes(), []);
+  state.hcCalls = [];
+  await startBot(main, ID.dev);
+  const devRun = state.hcCalls.find((a) => a[0] === "run");
+  assert.deepEqual(devRun.slice(devRun.indexOf("--")), ["--", "claude"]);
+  assert.equal(pinNotes().length, 1);
+  assert.match(pinNotes()[0].body, /pinned to "Opus 5.5", which isn't a Claude Code model this computer lists/);
+});

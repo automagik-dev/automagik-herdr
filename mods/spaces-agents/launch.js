@@ -2,11 +2,12 @@
 // pane is the terminal carrying `bot=<id>` with an agent in front. The argument building
 // and messages live in launchArgs.js. Apache-2.0.
 
-import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTextFile, exec, appHome, notify } from "herdr";
+import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTextFile, exec, appHome, notify, home } from "herdr";
 import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
 import { keyOf, rememberProject } from "./bots.js";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal } from "./launchArgs.js";
-import { briefingPath, hookCommand, mergeHook, withExclude, EXCLUDE_LINE } from "./briefingText.mjs";
+import { installHook } from "./briefingText.mjs";
+import { configPaths, knownModelsFrom, modelArgs } from "./models.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
 
@@ -56,75 +57,29 @@ export async function liveTerminalOf(botId) {
  */
 export async function afterBind(bot, sessionFolder, claude = bot?.agent === "claude") {
   if (!claude || !sessionFolder) return { written: false };
-  try {
-    return await writeBriefingHook(bot, sessionFolder.length > 1 ? sessionFolder.replace(/\/+$/, "") : sessionFolder);
-  } catch (e) {
-    notify({ title: "Bots", body: `${bot.name} gets no briefing: ${e?.message ?? e}`, level: "warning", timeout: 12000 });
-    return { written: false };
-  }
+  const folder = sessionFolder.length > 1 ? sessionFolder.replace(/\/+$/, "") : sessionFolder;
+  const io = {
+    git: async (args, cwd) => { try { return await exec("git", args, { cwd }); } catch { return null; } },
+    read: (path) => readTextFile(path),
+    write: (path, text, before) => writeTextFile(path, text, before),
+    mkdir: async (dir) => {
+      const r = await exec("mkdir", ["-p", dir]);
+      if (r.code !== 0) throw new Error(`couldn't make ${dir}: ${r.stderr.trim()}`);
+    },
+  };
+  // The same flow as the CLI's (briefingText.mjs installHook); warnings become notifications.
+  const { written, warnings } = await installHook(bot.name, folder, appHome(), io);
+  for (const body of warnings) notify({ title: "Bots", body, level: "warning", timeout: 15000 });
+  return { written };
 }
 
-async function writeBriefingHook(bot, folder) {
-  const script = briefingPath(appHome());
-  if ((await readTextFile(script)) === null) {
-    notify({ title: "Bots", level: "warning", timeout: 20000,
-      body: `${bot.name} gets no per-turn briefing: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
-        + "whose name is taken. The README's install step fixes it: move the old spaces-agents clone out of mods/, remove the "
-        + "renamed copy, and copy the pack in again as mods/spaces-agents." });
-    return { written: false };
+// The agents' own config texts (models.js configPaths), for the model pin list.
+async function modelTexts() {
+  const out = {};
+  for (const [name, path] of Object.entries(configPaths(home()))) {
+    try { out[name] = await readTextFile(path); } catch { out[name] = null; }
   }
-  const settingsPath = `${folder}/.claude/settings.local.json`;
-  // The exclude first, so the settings file never shows in git status, even for a moment.
-  await excludeFromGit(folder, settingsPath);
-  const before = await readTextFile(settingsPath);
-  const merged = mergeHook(before, hookCommand(appHome()));
-  if (merged.error) throw new Error(`${settingsPath} was left as it is: ${merged.error}.`);
-  if (!merged.changed) return { written: false };
-  if (before === null) {
-    const r = await exec("mkdir", ["-p", `${folder}/.claude`]);
-    if (r.code !== 0) throw new Error(`couldn't make ${folder}/.claude: ${r.stderr.trim()}`);
-  }
-  await writeTextFile(settingsPath, merged.text, before);
-  return { written: true };
-}
-
-// Adds EXCLUDE_LINE to the exclude file git names for this folder (a worktree's `.git` is a
-// file, so the path is asked of git), when git doesn't ignore the settings file already.
-// Not in git: nothing to do. A file git already tracks can't be excluded: the owner is told
-// the hook will show as a change. A failure only warns.
-async function excludeFromGit(folder, settingsPath) {
-  const git = async (args) => { try { return await exec("git", args, { cwd: folder }); } catch { return null; } };
-  const tracked = await git(["ls-files", "--error-unmatch", "--", ".claude/settings.local.json"]);
-  if (tracked?.code === 0) {
-    notify({ title: "Bots", level: "warning", timeout: 15000,
-      body: `${settingsPath} is tracked by git, so it can't be excluded; the briefing hook will show as a change. `
-        + "Leave that change out of your commits, or stop tracking the file (git rm --cached)." });
-    return;
-  }
-  const ignored = await git(["check-ignore", "-q", ".claude/settings.local.json"]);
-  if (!ignored || ignored.code !== 1) return; // 0: ignored already; 128 or no git: not a repository
-  let excludePath = null;
-  try {
-    const r = await git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
-    excludePath = r?.code === 0 ? r.stdout.trim() : null;
-    if (!excludePath) throw new Error((r?.stderr ?? "git failed").trim());
-    // Twice at most: another writer (a second Start in a worktree) may change it between
-    // the read and the write; if the line is there after that, all is well.
-    for (let attempt = 0; ; attempt++) {
-      const before = await readTextFile(excludePath);
-      const after = withExclude(before);
-      if (after === null) return;
-      if (before === null) {
-        const m = await exec("mkdir", ["-p", excludePath.slice(0, excludePath.lastIndexOf("/"))]);
-        if (m.code !== 0) throw new Error(m.stderr.trim());
-      }
-      try { await writeTextFile(excludePath, after, before); return; } catch (e) { if (attempt >= 1) throw e; }
-    }
-  } catch (e) {
-    notify({ title: "Bots", level: "warning", timeout: 15000,
-      body: `Couldn't add ${EXCLUDE_LINE} to ${excludePath ?? "the git exclude file"} (${e?.message ?? e}). `
-        + `Keep ${settingsPath} out of your commits: it holds a path on this computer.` });
-  }
+  return out;
 }
 
 // Where a started bot opens: the first space of this computer whose folder keys to the
@@ -188,7 +143,15 @@ async function startOnce(projectKey, botId) {
   const parent = parentArgs(file, botId, (id) => (id === lead ? leadLive : null));
   const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
   const { space, tab } = await placeFor(projectKey);
-  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: agent.run });
+  // A12: a pinned model goes to the agent with its own flag, as the CLI passes it; a pin the
+  // agent doesn't list (an old free-text model) is skipped, and the owner told.
+  let pin = [];
+  if (bot.model) {
+    if (knownModelsFrom(agent.key, await modelTexts()).includes(bot.model)) pin = modelArgs(agent.key, bot.model);
+    else notify({ title: "Bots", level: "warning", timeout: 15000,
+      body: `${bot.name} is pinned to "${bot.model}", which isn't a ${agent.name ?? agent.key} model this computer lists; it starts on the agent's default. Edit the bot to pick a listed model, or clear the pin.` });
+  }
+  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin] });
   // The briefing hook goes in before the session starts, so Claude Code reads it at startup.
   await afterBind(bot, projectKey, agent.key === "claude");
   let r;

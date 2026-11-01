@@ -168,3 +168,102 @@ export function withExclude(existing) {
   if (text.split("\n").some((l) => l.trim() === EXCLUDE_LINE)) return null;
   return `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${EXCLUDE_LINE}\n`;
 }
+
+// ---- a member's latest report (Decision 10), shared by briefing.mjs and the CLI ----
+
+/** Lines kept from a screen when a bot published no status text. */
+export const TAIL_LINES = 12;
+
+/** The last `lines` non-empty lines of a terminal's text, escape sequences and controls removed. */
+export function screenTail(text, lines = TAIL_LINES) {
+  // eslint-disable-next-line no-control-regex
+  return String(text ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+    .split("\n").map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-lines).join("\n");
+}
+
+/**
+ * A pane's latest report: its published status text, else its screen tail (`hc read`).
+ * `ask(args)` as launchArgs.js paneOf takes it; an answer that isn't an object reads as none.
+ */
+export async function latestReport(get, ask) {
+  const msg = get?.status?.msg;
+  if (typeof msg === "string" && msg.trim()) return msg.trim();
+  const read = await ask(["read", get.address]);
+  return screenTail(read && typeof read === "object" && typeof read.text === "string" ? read.text : "");
+}
+
+// ---- writing the hook (launch.js afterBind and the CLI), over injected file access ----
+//
+// io: { git(args, cwd) -> Promise<{ code, stdout, stderr } | null> (null: no git),
+//       read(path) -> Promise<string | null> (null: no file),
+//       write(path, text, before) -> Promise (rejects when the file no longer holds `before`),
+//       mkdir(dir) -> Promise (like mkdir -p; rejects on failure) }
+
+/**
+ * Adds EXCLUDE_LINE to the exclude file git names for `folder` (a worktree's `.git` is a
+ * file, so the path is asked of git) when git doesn't ignore the settings file already.
+ * Not in git: nothing. A tracked settings file can't be excluded. Resolves with a warning
+ * for the owner, or null.
+ */
+export async function ensureExcluded(folder, io) {
+  const settings = `${folder}/.claude/settings.local.json`;
+  const git = async (args) => { try { return await io.git(args, folder); } catch { return null; } };
+  const tracked = await git(["ls-files", "--error-unmatch", "--", ".claude/settings.local.json"]);
+  if (tracked?.code === 0) {
+    return `${settings} is tracked by git, so it can't be excluded; the briefing hook will show as a change. `
+      + "Leave that change out of your commits, or stop tracking the file (git rm --cached).";
+  }
+  const ignored = await git(["check-ignore", "-q", ".claude/settings.local.json"]);
+  if (!ignored || ignored.code !== 1) return null; // 0: ignored already; 128 or no git: not a repository
+  let path = null;
+  try {
+    const r = await git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
+    path = r?.code === 0 ? r.stdout.trim() : null;
+    if (!path) throw new Error((r?.stderr ?? "git failed").trim());
+    // Twice at most: another writer (a second Start in a worktree) may change it between
+    // the read and the write; if the line is there after that, all is well.
+    for (let attempt = 0; ; attempt++) {
+      const before = await io.read(path);
+      const after = withExclude(before);
+      if (after === null) return null;
+      if (before === null) await io.mkdir(path.slice(0, path.lastIndexOf("/")));
+      try { await io.write(path, after, before); return null; } catch (e) { if (attempt >= 1) throw e; }
+    }
+  } catch (e) {
+    return `Couldn't add ${EXCLUDE_LINE} to ${path ?? "the git exclude file"} (${e?.message ?? e}). `
+      + `Keep ${settings} out of your commits: it holds a path on this computer.`;
+  }
+}
+
+/**
+ * Merges the per-turn briefing hook, if absent, into `<folder>/.claude/settings.local.json`
+ * (never the shared settings.json) and keeps that file out of git. Writes nothing when the
+ * pack's briefing.mjs isn't under `appHome`. Never rejects: every problem is a warning.
+ * Resolves { written, warnings } (`written`: the hook entry was added or updated).
+ */
+export async function installHook(botName, folder, appHome, io) {
+  const warnings = [];
+  const script = briefingPath(appHome);
+  try {
+    if ((await io.read(script)) === null) {
+      warnings.push(`${botName} gets no per-turn briefing: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
+        + "whose name is taken. The README's install step fixes it: move the old spaces-agents clone out of mods/, remove the "
+        + "renamed copy, and copy the pack in again as mods/spaces-agents.");
+      return { written: false, warnings };
+    }
+    const path = `${folder}/.claude/settings.local.json`;
+    // The exclude first, so the settings file never shows in git status, even for a moment.
+    const excluded = await ensureExcluded(folder, io);
+    if (excluded) warnings.push(excluded);
+    const before = await io.read(path);
+    const merged = mergeHook(before, hookCommand(appHome));
+    if (merged.error) throw new Error(`${path} was left as it is: ${merged.error}.`);
+    if (!merged.changed) return { written: false, warnings };
+    if (before === null) await io.mkdir(`${folder}/.claude`);
+    await io.write(path, merged.text, before);
+    return { written: true, warnings };
+  } catch (e) {
+    warnings.push(`${botName} gets no briefing: ${e?.message ?? e}`);
+    return { written: false, warnings };
+  }
+}
