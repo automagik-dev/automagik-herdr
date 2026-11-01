@@ -56,7 +56,7 @@ function home(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "mods/spaces-agents"), { recursive: true });
   cpSync(THEMES_DIR, join(root, "mods/spaces-agents/themes"), { recursive: true });
-  Object.assign(state, { appHome: root, shared: new Map(), runs: [], themeList: [] });
+  Object.assign(state, { appHome: root, shared: new Map(), runs: [], themeList: [], calls: [], readFault: null, runFault: null, beforeWrite: null });
   return root;
 }
 
@@ -96,6 +96,46 @@ test("ensureTheme: an edited theme file in the app home is kept; a missing pack 
   assert.equal(missing.selected, false);
   assert.match(missing.why, /the pack has no themes\/automagik-light\.json/);
   assert.equal(state.shared.get(THEME_KEY), undefined);
+});
+
+test("ensureTheme: a theme file that can't be read is there, never replaced", async (t) => {
+  const root = home(t);
+  mkdirSync(join(root, "themes"));
+  const dark = join(root, "themes/automagik-dark.json");
+  writeFileSync(dark, "{ \"edited\": true }\n");
+  // Herdr caps reads at 1 MiB; a permission or encoding error throws the same way.
+  state.readFault = (path) => (path === dark ? new Error("file is larger than 1 MiB") : null);
+  state.themeList = THEME_NAMES.map((name) => ({ name }));
+  const r = await ensureTheme();
+  assert.deepEqual(r, { copied: ["automagik-light"], selected: true, why: null });
+  assert.equal(readFileSync(dark, "utf8"), "{ \"edited\": true }\n");
+  assert.ok(!state.calls.some((c) => c.kind === "write" && c.path === dark), "no write was tried");
+  // Every write that was tried creates only (expected null: no file there).
+  assert.ok(state.calls.filter((c) => c.kind === "write").every((c) => c.expected === null));
+});
+
+test("ensureTheme: a file that appears between the read and the write is kept, counted as there", async (t) => {
+  const root = home(t);
+  const light = join(root, "themes/automagik-light.json");
+  state.beforeWrite = async (path) => {
+    if (path === light) { mkdirSync(join(root, "themes"), { recursive: true }); writeFileSync(light, "{ \"raced\": true }\n"); }
+  };
+  const r = await ensureTheme();
+  assert.deepEqual(r, { copied: ["automagik-dark"], selected: false, why: null });
+  assert.equal(readFileSync(light, "utf8"), "{ \"raced\": true }\n");
+});
+
+test("ensureTheme: recorded before selecting, so a selection that throws is never tried again", async (t) => {
+  home(t);
+  state.themeList = THEME_NAMES.map((name) => ({ name }));
+  state.runFault = (name, args) => (args?.name === "automagik-dark" ? new Error("no such theme") : null);
+  const r = await ensureTheme();
+  assert.deepEqual(r, { copied: [...THEME_NAMES], selected: false, why: "no such theme" });
+  assert.equal(state.shared.get(THEME_KEY), true);
+  state.runs = [];
+  state.runFault = null;
+  assert.deepEqual(await ensureTheme(), { copied: [], selected: false, why: null });
+  assert.deepEqual(state.runs, []);
 });
 
 test("an update carries themes/ (the release packs the whole folder; nothing is export-ignored)", async (t) => {

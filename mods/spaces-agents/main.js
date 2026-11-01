@@ -387,12 +387,19 @@ export default class Spaces extends View {
   }
 
   // Copies the Automagik themes into the app home when absent, and selects them the first
-  // time only (theme.js). Never an error to the person: it is tried again on the timer.
+  // time only (theme.js). Never an error to the person: it is tried again on the timer, and
+  // each distinct failure goes to the mod's log once (not every 15 s tick, never a notice).
   applyTheme(cx) {
     if (this.themeBusy) return;
     this.themeBusy = true;
+    this.themeWhys ??= new Set();
     cx.spawn(async () => {
-      try { await ensureTheme(); } catch {}
+      let why = null;
+      try { ({ why } = await ensureTheme()); } catch (e) { why = String(e?.message ?? e); }
+      if (why && !this.themeWhys.has(why)) {
+        this.themeWhys.add(why);
+        try { console.log(`Automagik theme: ${why}`); } catch {}
+      }
       this.themeBusy = false;
     });
   }
