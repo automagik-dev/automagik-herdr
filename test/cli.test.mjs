@@ -304,6 +304,45 @@ test("ls: a shell in front is not live; two live panes: the newest counts, flagg
   assert.deepEqual(all.map((p) => p.project), [s.project, other]);
 });
 
+test("create, edit, category, start and attach list their project for the sidebar; ls --all reads the list", (t) => {
+  const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
+  const list = join(s.app, "spaces-agents-projects.json");
+  const listed = () => JSON.parse(readFileSync(list, "utf8"));
+  writeFileSync(list, JSON.stringify(["/elsewhere"]));
+  assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
+  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  // Once each, the newest last.
+  writeFileSync(list, JSON.stringify([s.project, "/elsewhere"]));
+  assert.equal(s.cli(["edit", "Genie", "--role", "lead"]).code, 0);
+  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  writeFileSync(list, "[]");
+  assert.equal(s.cli(["category", "add", "--title", "Eng"]).code, 0);
+  assert.deepEqual(listed(), [s.project]);
+  writeFileSync(list, "[]");
+  assert.equal(s.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(listed(), [s.project]);
+  // ls --all adds a listed project the sidebar never remembered.
+  const other = join(s.root, "other");
+  mkdirSync(join(other, ".herdr"), { recursive: true });
+  writeFileSync(join(other, ".herdr/bots.json"), JSON.stringify({ version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] }));
+  writeFileSync(list, JSON.stringify([other]));
+  assert.deepEqual(s.cli(["ls", "--all", "--json"]).json().projects.map((p) => p.project), [s.project, other]);
+  // Reading leaves the list alone; a read-only command adds nothing.
+  assert.equal(s.cli(["show", "Genie"]).code, 0);
+  assert.deepEqual(listed(), [other]);
+});
+
+test("with no app home, nothing is listed and the command still succeeds; an unwritable list only warns", (t) => {
+  const s = scene(t);
+  rmSync(s.app, { recursive: true, force: true });
+  assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
+  assert.equal(existsSync(s.app), false);
+  mkdirSync(join(s.app, "spaces-agents-projects.json"), { recursive: true }); // a folder where the file goes
+  const r = s.cli(["edit", "Genie", "--role", "lead"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /couldn't list .* so the sidebar shows it only once a space is open on it/);
+});
+
 // ---- start ----
 
 test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the pinned model; never --no-notify; the hook written and excluded", (t) => {

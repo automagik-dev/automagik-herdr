@@ -165,7 +165,7 @@ herdr-bots brief <bot>
 
 - Every command takes `--json` (the result as JSON on stdout) and `--project <folder>`.
   Without `--project`, the project is the one the current folder belongs to (its git main
-  checkout). `ls --all` adds the projects the sidebar remembers.
+  checkout). `ls --all` adds the projects the sidebar remembers and the ones listed below.
 - A bot is named by its id or by its name, which is unique in its project.
 - Errors go to stderr. A refusal exits 1, a usage mistake exits 2, and nothing is written.
   When `hc` fails, `start`, `attach` and `detach` refuse; `ls` and `show` still list the bots,
@@ -198,8 +198,14 @@ herdr-bots brief <bot>
   `b-…` id. `brief` prints the bot's briefing as it would
   be now.
 
-The CLI cannot add a project to the sidebar's remembered list. A bot created from the CLI
-shows in the sidebar once a space is open on its project.
+`create`, `edit`, `category`, `start` and `attach` add their project to
+`spaces-agents-projects.json` in the app home (`$HERDR_APP_HOME`, else
+`~/.config/herdr-app`): a JSON list of project folders, newest last, at most 200. It sits
+outside `mods/`, so writing it reloads nothing. The sidebar reads it every 15 seconds beside
+its own remembered projects, so a bot created from the CLI shows even when no space is open
+on its project (at the end of the list, under the project's name). The sidebar never writes
+this file: a listed project whose `.herdr/bots.json` is gone is just not shown. With no app
+home, nothing is written; a failed write only warns. `ls --all` reads the list too.
 
 ## The per-turn briefing (Claude bots)
 

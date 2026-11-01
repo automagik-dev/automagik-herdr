@@ -7,14 +7,15 @@
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
-import { accessSync, constants, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
-  defaultLook, descendantsOf, effectiveLead, mainBotOf, newBotId, newCategoryId, parseBots, plannedOf, projectKeyOf } from "../model.js";
+  PROJECTS_FILE, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId, parseBots,
+  plannedOf, projectKeyOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, hcName, isClaude, labelMoves, paneOf, parentArgs, placementFrom, rowsOf, startArgs,
   startRefusal, youngPane } from "../launchArgs.js";
 import { installHook } from "../briefingText.mjs";
@@ -149,6 +150,28 @@ export function writeBotsFile(key, raw, expected, io = fsIo) {
   } catch (e) {
     if (e?.code === "EEXIST") throw new CliError(`Not saved: ${path} appeared since it was read. Run the command again.`);
     throw new CliError(`Not saved: ${e?.message ?? e}`);
+  }
+}
+
+/**
+ * Adds a project to the list the sidebar reads beside its own remembered projects
+ * (model.js PROJECTS_FILE, in the app home outside mods/, so the write reloads nothing), so a
+ * project managed from here shows in the sidebar with no space open on it. Written whole
+ * beside, then renamed. No app home (Herdr isn't set up here): nothing is written. A failure
+ * only warns: the command's own work is done.
+ */
+export function listProject(key, dir = appHome()) {
+  const path = `${dir}/${PROJECTS_FILE}`;
+  try {
+    if (!existsSync(dir)) return false;
+    let text = null;
+    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+    const next = withListedProject(text, key);
+    if (next !== text) fsIo.replace(path, next);
+    return true;
+  } catch (e) {
+    process.stderr.write(`herdr-bots: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${e?.message ?? e}\n`);
+    return false;
   }
 }
 
@@ -373,11 +396,16 @@ export function entryFrom(opts, base, project, { creating }) {
 
 async function projectFor(opts) { return loadProject(await keyOf(opts.project ?? process.cwd())); }
 
+// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
 function rememberedKeys() {
+  let keys = [];
   try {
     const list = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}")?.["spaces-agents.projects"];
-    return Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
-  } catch { return []; }
+    keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
+  } catch { /* unreadable: none */ }
+  let listed = [];
+  try { listed = listedProjects(readText(`${appHome()}/${PROJECTS_FILE}`)); } catch { /* unreadable: none */ }
+  return [...new Set([...keys, ...listed])];
 }
 
 async function cmdLs(opts) {
@@ -432,6 +460,7 @@ async function cmdCreate(opts) {
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   writeBotsFile(project.key, applyBotEdit(project.raw, entry), project.text);
+  listProject(project.key);
   return opts.json ? { id, project: project.key, bot: entry } : id;
 }
 
@@ -441,6 +470,7 @@ async function cmdEdit(opts, [ref]) {
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
   writeBotsFile(project.key, applyBotEdit(project.raw, entry), project.text);
+  listProject(project.key);
   return opts.json ? { id: bot.id, project: project.key, bot: entry } : `${entry.name} (${bot.id}) saved.`;
 }
 
@@ -479,6 +509,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   const save = () => {
     if (project.text === null) throw new CliError("This project has no bots yet; create its main bot first.");
     writeBotsFile(project.key, raw, project.text);
+    listProject(project.key);
   };
   const find = (ref) => {
     const hit = findCategory(project.file, ref);
@@ -585,6 +616,7 @@ async function cmdStart(opts, [ref]) {
   let terminal = null;
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
+  listProject(key);
   if (!place) {
     hook.warnings.push(`No open Herdr space shows ${key}, so Herdr gives ${terminal} no pane: it runs, unseen. `
       + `Watch it with hc attach ${terminal}. To give the next start a pane, open a space on ${key} first, or pass --space <id> (herdr-app ls lists the ids).`);
@@ -633,6 +665,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const hook = claude ? await writeBriefingHook(bot, sessionFolder) : { written: false, warnings: [] };
   if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, open /hooks once in that session to load it.`);
   report(hook.warnings);
+  listProject(key);
   const movedFrom = holders.filter((h) => h !== address);
   return opts.json ? { id: bot.id, terminal: address, movedFrom, hookWritten: hook.written, warnings: hook.warnings }
     : `${bot.name} is now ${address}${movedFrom.length ? ` (label moved from ${movedFrom.join(", ")})` : ""}.`;

@@ -298,3 +298,26 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   if (i >= 0) out.bots[i] = merged; else out.bots.push(merged);
   return out;
 }
+
+/**
+ * The projects the command line touched (it creates, edits, starts or attaches bots in them),
+ * so the sidebar shows them with no open space: a JSON array of project keys on this
+ * computer, `PROJECTS_FILE` in the app home (outside mods/, so writing it reloads nothing).
+ * Only the CLI writes it; the sidebar reads it beside its own remembered list.
+ */
+export const PROJECTS_FILE = "spaces-agents-projects.json";
+export const MAX_LISTED_PROJECTS = 200;
+
+/** The keys in a PROJECTS_FILE text (null, unparsable or the wrong shape: none). */
+export function listedProjects(text) {
+  let list;
+  try { list = typeof text === "string" && text ? JSON.parse(text) : []; } catch { return []; }
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.filter((k) => typeof k === "string" && k.startsWith("/")))];
+}
+
+/** A PROJECTS_FILE text with `key` last (the most recent), once, keeping the newest `max`. */
+export function withListedProject(text, key, max = MAX_LISTED_PROJECTS) {
+  const keys = [...listedProjects(text).filter((k) => k !== key), key].slice(-max);
+  return `${JSON.stringify(keys, null, 2)}\n`;
+}
