@@ -64,17 +64,39 @@ Trailing zeros stay (`90.0k`, `$2.60`): both clients print the same characters.
 
 ## 5. Colours
 
-From Herdr's theme, by token name (desktop: `theme()`; Pocket: the same roles in its Stage palette).
-Hex values are the Automagik themes, dark / light, for reference. No rings, no progress bars.
+From Herdr's theme, by token name. Desktop reads `theme()`; Pocket has no `theme()` and uses the
+hex below, so both clients print the same colours. The values are what Herdr's `themes()` reports
+for the Automagik themes (read with `herdr-app check` in a scratch app home), dark and light. No rings,
+no progress bars.
 
-| Role | Token | Automagik dark | Automagik light |
-|---|---|---|---|
-| good (arrow, fastest) | `ansi2` | `#009957` | `#007d47` |
-| bad (arrow, slowest) | `ansi1` | `#e64d5d` | `#c7303f` |
-| text | `foreground` | `#f3e9dd` | theme's |
-| secondary text, legend labels | `muted` | theme's | theme's |
-| "–", empty slices, "other" | `dim` | theme's | theme's |
-| card surface | `popover` (desktop) | theme's | theme's |
+| Role | Token |
+|---|---|
+| good (arrow, fastest) | `ansi2` |
+| bad (arrow, slowest) | `ansi1` |
+| text, line 2 values | `foreground` |
+| secondary text, legend labels, `was …` | `muted` |
+| "–", empty slices, "other", footer | `dim` |
+| card surface | `popover` |
+
+| Token | Automagik dark | Automagik light |
+|---|---|---|
+| `ansi1` | `#e64d5d` | `#c7303f` |
+| `ansi2` | `#009957` | `#007d47` |
+| `ansi3` | `#ff9800` | `#8f621f` |
+| `ansi4` | `#2b85e4` | `#1f6cbc` |
+| `ansi5` | `#e44496` | `#b3427c` |
+| `ansi6` | `#00a592` | `#11796d` |
+| `ansi8` | `#959595` | `#898989` |
+| `ansi9` | `#ff5a7a` | `#cb285c` |
+| `ansi10` | `#00c972` | `#007d47` |
+| `ansi11` | `#ff8a2e` | `#b34a00` |
+| `ansi12` | `#5c78ff` | `#082dff` |
+| `ansi13` | `#976ee6` | `#7a5bb7` |
+| `ansi14` | `#2ee6e0` | `#077696` |
+| `foreground` | `#eeeeef` | `#1b1b1e` |
+| `muted` | `#9b999d` | `#656361` |
+| `dim` | `#6d6a71` | `#918d88` |
+| `popover` | `#2c2730` | `#f6eee2` |
 
 Chip icon tints: forge `dim` (GitLab: `ansi3`); merges `ansi2`; time `dim`; first pass `ansi2`;
 spent `ansi3`; tokens `ansi5`. Values on line 2 are `foreground`; "–" is `dim`.
@@ -175,4 +197,7 @@ bot means every field is null.
 
 Requests from Pocket that don't contradict the mock are taken and recorded here, each with its date.
 
-- (none yet)
+- 2026-11-02, taken: a hex table for every token the rules use (section 5), Automagik dark and
+  light, because the phone has no `theme()`.
+- 2026-11-02, noted (no rule change): Pocket gets bot and category names from Pocket Link, since the
+  phone can't read `.herdr/bots.json`. The labels in section 8 are the same either way.
