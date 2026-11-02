@@ -157,13 +157,15 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   the command names no agent Herdr knows, the hook is skipped with a warning.
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled
   `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, then
-  `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the bot's
-  pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs on)
-  start. A template runs in hc's template form, `<template> <task text>` after the options, labelled
-  `worker.template=<name>` and without the PATH: the template sets its own command. The task
-  text is always one argument, never part of a shell string. The worker has no `bot` label,
-  so the sidebar folds it under its bot as a helper row showing its template, or its model
-  and effort.
+  `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
+  bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
+  on) start. A template runs in hc's template form, `<template> <task text>` after the
+  options, labelled `worker.template=<name>` and without the PATH: the template sets its own
+  command. The task text is always one argument, never part of a shell string. The worker has
+  no `bot` label, so the sidebar folds it under its bot as a helper row showing its template,
+  or its model and effort. Clicking that row focuses the worker's pane; without one, the
+  worker opens as a tab right after its bot's tab, named after its task branch. A bot with no
+  pane, or a worker on another machine, is peeked instead.
 - **Output:** the worker's terminal, then its worktree, branch, and agent, model and effort,
   or its template (`--json`: the same as data, with `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
@@ -340,7 +342,8 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
-`launchArgs.js`, `models.js`, `workers.js`, `formModel.js`, `release.js`, `updateCheck.js`), so the tests
+`launchArgs.js`, `models.js`, `workers.js`, `formModel.js`, `release.js`, `updateCheck.js`,
+`workerTab.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are

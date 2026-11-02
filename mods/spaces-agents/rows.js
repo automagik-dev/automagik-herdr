@@ -7,6 +7,7 @@
 import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
 import { shownModel, defaultModelFrom } from "./models.js";
+import { TASK_LABEL } from "./workers.js";
 
 /** Idle this long is asleep (Automagik's own threshold). */
 export const ASLEEP_MS = 10 * 60 * 1000;
@@ -88,7 +89,7 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
     const row = { terminal, name: t.name || t.template || t.program?.name || terminal, agent: t.program?.key ?? null,
       program: t.program ?? null, status: t.status ?? null, depth,
       model: t.labels?.["worker.model"] || null, effort: t.labels?.["worker.effort"] || null,
-      template: t.labels?.["worker.template"] || null };
+      template: t.labels?.["worker.template"] || null, task: t.labels?.[TASK_LABEL] || null };
     return [row, ...helpersOf(terminals, terminal, known, depth + 1, seen)];
   });
 }
@@ -183,7 +184,8 @@ export function visibleRows(tree, open = new Map()) {
   const rows = [];
   const isOpen = (id, dflt) => (open.has(id) ? open.get(id) : dflt);
   const helperRows = (owner, helpers, guides) => helpers.map((h) => ({
-    kind: "helper", id: `h:${h.terminal}`, owner: owner.bot.id, helper: h, foldable: false, open: false,
+    kind: "helper", id: `h:${h.terminal}`, owner: owner.bot.id, ownerTerminal: owner.live?.terminal ?? null, helper: h,
+    foldable: false, open: false,
     guides: [...guides, ...Array(h.depth + 1).fill("helper")],
   }));
   const botRows = (n, guides) => {
@@ -347,7 +349,8 @@ export function spaceRowOrder({ tree = null, agents = [], shells = [], open = ne
  * What a click on a terminal's row runs. A pane shows it: agent.focus. None does (a parked
  * seat: running, no pane): terminal.peek, which peeks over the tab with keep-as-tab and close,
  * so the person sees it and chooses to keep it; never terminal.keep on their behalf. The same
- * on any machine (`box/t4`). `panes`: panes() rows, read at click time.
+ * on any machine (`box/t4`). A bot's helper row goes through workerTab.js instead: it opens as
+ * a tab after its bot's tab (the owner's ruling, 2026-11-02). `panes`: panes() rows, read at click time.
  */
 export function clickActionOf(terminal, panes) {
   const shown = (panes ?? []).some((p) => p?.terminal === terminal);
