@@ -4,10 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { besideDirs, envInterpreter, interpreterPath } from "../mods/spaces-agents/agentPath.mjs";
+import { besideDirs, envInterpreter, interpreterPath, safe } from "../mods/spaces-agents/agentPath.mjs";
 import { workerArgs } from "../mods/spaces-agents/workers.js";
 
 const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -148,6 +148,53 @@ test("an unsafe folder or interpreter (world-writable) is neither run nor put on
   chmodSync(open, 0o755);
   assert.equal(interpreterPath("codex", links, s.env).path, `${open}:${links}`);
   assert.equal(existsSync(join(open, "node.ran")), true);
+});
+
+test("safe() checks the real file and every folder above it: links out and open parents are refused", (t) => {
+  const s = scratch(t);
+  // A safe bin/node that links to a 0755 node inside a 0777 folder: neither run nor put first.
+  const pkg = join(s.root, "pkg");
+  exe(join(pkg, "codex.js"), NODE_SCRIPT);
+  const bin = join(s.root, "bin");
+  mkdirSync(bin);
+  symlinkSync(join(pkg, "codex.js"), join(bin, "codex"));
+  const ww = join(s.root, "ww");
+  tattler(join(ww, "node"), "v24.1.0");
+  chmodSync(ww, 0o777);
+  symlinkSync(join(ww, "node"), join(bin, "node"));
+  const pane = join(s.root, "pane");
+  mkdirSync(pane);
+  symlinkSync(join(bin, "codex"), join(pane, "codex"));
+  assert.equal(safe(bin), true);
+  assert.equal(safe(join(bin, "node")), false, "the link's real file sits in a 0777 folder");
+  assert.equal(interpreterPath("codex", pane, s.env).path, pane);
+  assert.equal(existsSync(join(ww, "node.ran")), false);
+  // A 0755 bin inside a 0777 parent that isn't sticky, and inside a sticky 01777 parent this
+  // user (not root) owns: both refused.
+  for (const [name, mode] of [["open-parent", 0o777], ["user-sticky", 0o1777]]) {
+    const parent = join(s.root, name);
+    tattler(join(parent, "bin/node"), "v24.1.0");
+    chmodSync(parent, mode);
+    const got = interpreterPath("codex", pane, { ...s.env, AUTOMAGIK_HERDR_RUNTIME_DIRS: join(parent, "bin") });
+    assert.equal(got.path, pane, name);
+    assert.equal(existsSync(join(parent, "bin/node.ran")), false, `${name}: its node was run`);
+  }
+});
+
+test("a root-owned sticky folder like /tmp passes: a safe node under it is run and put first", (t) => {
+  const st = statSync(realpathSync("/tmp"));
+  if (st.uid !== 0 || !(st.mode & 0o1000)) return t.skip("/tmp here isn't a root-owned sticky folder");
+  const s = scratch(t);
+  assert.equal(safe("/tmp"), true);
+  const under = mkdtempSync("/tmp/hb-agentpath-");
+  t.after(() => rmSync(under, { recursive: true, force: true }));
+  chmodSync(under, 0o755);
+  tattler(join(under, "bin/node"), "v24.1.0");
+  const agents = join(s.root, "agents");
+  exe(join(agents, "codex"), NODE_SCRIPT);
+  const got = interpreterPath("codex", agents, { ...s.env, AUTOMAGIK_HERDR_RUNTIME_DIRS: join(under, "bin") });
+  assert.equal(got.path, `${join(under, "bin")}:${agents}`);
+  assert.equal(existsSync(join(under, "bin/node.ran")), true);
 });
 
 test("relative folders are never run or put on PATH: PATH entries, NVM_DIR, AUTOMAGIK_HERDR_RUNTIME_DIRS", (t) => {

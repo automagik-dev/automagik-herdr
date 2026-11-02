@@ -6,9 +6,9 @@
 // starts it into `env: node: No such file or directory`. interpreterPath reads the agent's
 // shebang and, when its `env` interpreter (node or bun) isn't on the PATH the worker gets,
 // puts the folder of one it finds first. It never removes anything from PATH and never
-// changes it when the interpreter is already there. Only absolute folders that are safe (not
-// world-writable, owned by this user or root), holding a safe interpreter file, are run or
-// put on PATH. Not loaded by Herdr (node: imports); the CLI and the tests share it. Apache-2.0.
+// changes it when the interpreter is already there. Only absolute folders that are safe,
+// holding a safe interpreter file, are run or put on PATH: real paths whose every folder up
+// to / is owned by this user or root and not world-writable (a root sticky /tmp passes). Not loaded by Herdr (node: imports); the CLI and the tests share it. Apache-2.0.
 import { execFileSync } from "node:child_process";
 import { accessSync, closeSync, constants, lstatSync, openSync, readdirSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -18,12 +18,25 @@ const executable = (p) => { try { accessSync(p, constants.X_OK); return true; } 
 const dirsOf = (path) => String(path ?? "").split(":").filter((d) => d && isAbsolute(d));
 const UID = typeof process.getuid === "function" ? process.getuid() : null;
 
-/** Whether `p` exists, isn't world-writable, and is owned by this user or root. */
+/**
+ * Whether `p` resolves (through every link) to a file or folder that no one but this user or
+ * root can swap: it and every folder above it, up to `/`, are owned by this user or root and
+ * aren't world-writable, except a root-owned sticky folder (/tmp, /private/tmp), whose
+ * entries only their owners can rename or remove.
+ */
 export function safe(p) {
-  try {
-    const st = statSync(p);
-    return (st.mode & 0o002) === 0 && (UID === null || st.uid === UID || st.uid === 0);
-  } catch { return false; }
+  let at;
+  try { at = realpathSync(p); } catch { return false; }
+  for (;;) {
+    let st;
+    try { st = statSync(at); } catch { return false; }
+    const owner = UID === null || st.uid === UID || st.uid === 0;
+    const rootSticky = st.isDirectory() && st.uid === 0 && (st.mode & 0o1000) !== 0;
+    if (!owner || ((st.mode & 0o002) !== 0 && !rootSticky)) return false;
+    const up = dirname(at);
+    if (up === at) return true;
+    at = up;
+  }
 }
 
 /** The file `program` names: itself when it has a slash, else the first executable on `path`. */
