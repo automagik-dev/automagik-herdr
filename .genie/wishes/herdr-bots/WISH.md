@@ -658,6 +658,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 ---
 
+### Group 5 — themes, RECIPE, docs — 2026-11-02 (merged into wish/am-pack)
+
+- Range 3397601..f5855d0 on `wish/herdr-bots-g5`, merged with origin/dev at c90c954.
+- Criteria review: SHIP. Quality pass round 1: FIX (MEDIUM): theme.js could overwrite an edited theme file when a read threw or raced. Fixed in 847f54b (create-only `writeTextFile(path, text, null)`; selection recorded before `app.theme`; failures logged). Re-check: PASS, one LOW left open: `mods/spaces-agents/theme.js:40` drops an unreadable `themes/` folder's read error silently (fails safe, no overwrite).
+- Gate on c90c954: `node --test 'test/*.test.mjs'` 292/292; every `node --check`; `version.mjs check` (0.2.0 everywhere); `sh -n install.sh`; `themes.mjs check` → exit 0.
+- **Ruling: Group 5 merges into `wish/am-pack`, not `dev`.** Why: cd758db is a `feat`, so `version.mjs next` on c90c954 says 0.3.0, the number the approved am-pack plan reserves (D9, D11, Group 8). Shipping now would renumber am-pack to v0.4.0 and redo t187's six PR bodies. No live user loses a fix, because v0.2.0 has no themes. Cost if wrong: themes reach users with v0.3.0 instead of today; the owner can say "release themes now" to cut v0.3.0 from dev and renumber am-pack.
+- Delivery: `wish/am-pack` was created at c90c954 (dev + G5). This wish reaches SHIPPED when am-pack's v0.3.0 releases with Group 5 inside it.
+
 ## Files to Create/Modify
 
 ```
