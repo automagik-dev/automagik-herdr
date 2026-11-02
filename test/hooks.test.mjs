@@ -190,7 +190,7 @@ test("revertHooks edits only commands still holding the forward value, keeps wha
   const r = revertHooks([kept, changed, fresh], { appHome: s.app });
   assert.deepEqual(r.restored.sort(), [settings(fresh), settings(kept)].sort());
   assert.deepEqual(r.skipped.map((x) => x.file), [settings(changed)]);
-  assert.match(r.skipped[0].reason, /^no longer command -v node .*: left as it is$/);
+  assert.match(r.skipped[0].reason, /^no longer r="[^"]*\/mods\/am-sidebar\/bin\/run\.sh"; .*: left as it is$/);
   assert.deepEqual(commands(settings(kept)), ["brain recall", legacyHookCommand(s.app)]);
   assert.deepEqual(readJson(settings(kept)).permissions.allow, ["Bash(git status)", "Bash(npm test)"]);
   assert.deepEqual(commands(settings(fresh)), [legacyHookCommand(s.app)]);
@@ -350,7 +350,8 @@ test("relink: the CLI link follows the sidebar folder; --version works through i
   symlinkSync(join(s.mods, "spaces-agents", "bin", "automagik-herdr.mjs"), link);
   const owned = new Set(["am-sidebar"]);
   assert.match(relink({ binDir: bin, modsDir: s.mods, owned }), /^linked /);
-  assert.equal(readlinkSync(link), join(s.mods, "am-sidebar", "bin", "automagik-herdr.mjs"));
+  // The folder ships the bin/automagik-herdr wrapper (it runs the .mjs through bin/run.sh): the link names it.
+  assert.equal(readlinkSync(link), join(s.mods, "am-sidebar", "bin", "automagik-herdr"));
   const v = spawnSync(link, ["--version"], { encoding: "utf8", env: { PATH: `${NODE_DIR}:/usr/bin:/bin`, HOME: join(s.root, "home"), HERDR_APP_HOME: s.app } });
   assert.equal(v.status, 0, v.stderr);
   assert.equal(v.stdout, `automagik-herdr ${read(join(PACK, "VERSION")).trim()}\n`);
@@ -407,15 +408,16 @@ test("update.mjs: install across the rename moves the hooks; rollback to v0.3 pu
   const viaEntry = s.hook(hookCommand(s.app));
   assert.match(viaEntry.stdout, /You are Genie/, `the hook runs am-sidebar's briefing (${viaEntry.ms} ms, stderr: ${viaEntry.stderr})`);
 
-  // install.sh would link the CLI to am-sidebar; the rollback points it back.
-  symlinkSync(join(s.mods, "am-sidebar", "bin", "automagik-herdr.mjs"), link);
+  // install.sh would link the CLI to am-sidebar's wrapper; the rollback points it back.
+  symlinkSync(join(s.mods, "am-sidebar", "bin", "automagik-herdr"), link);
   const back = cli("rollback");
   assert.equal(back.status, 0, back.stderr);
   assert.ok(existsSync(join(s.mods, "spaces-agents", "briefing.mjs")) && !existsSync(join(s.mods, "am-sidebar")));
   assert.deepEqual(commands(settings(s.proj)), ["brain recall", legacyHookCommand(s.app)]);
   assert.deepEqual(commands(settings(s.worker)), [legacyHookCommand(s.app)]);
   assert.deepEqual(readJson(settings(s.proj)).permissions, v020(s.app).permissions);
-  assert.equal(readlinkSync(link), join(s.mods, "spaces-agents", "bin", "automagik-herdr.mjs"));
+  // The kept spaces-agents (this checkout's) ships the wrapper too: the link names it.
+  assert.equal(readlinkSync(link), join(s.mods, "spaces-agents", "bin", "automagik-herdr"));
   const v = spawnSync(link, ["--version"], { encoding: "utf8", env: { PATH: `${NODE_DIR}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: s.app } });
   assert.equal(v.status, 0, v.stderr);
   assert.match(v.stdout, /^automagik-herdr \d+\.\d+\.\d+\n$/);

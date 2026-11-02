@@ -209,7 +209,7 @@ offer_switch() {
 layout_notes() {
   [ -f "$REF" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
-    [ -f "$f" ] && [ "$f" != "$LAYOUT" ] || continue
+    if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
     grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$f" || continue
     lacks=
     for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
@@ -488,12 +488,14 @@ install() {
   # Only the installer's files come out here, to run them; update.mjs then lists every entry,
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
   # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders, and
-  # migrateHooks.mjs (with briefingText.mjs and model.js) the briefing hooks onto a fixed path.
+  # migrateHooks.mjs (with briefingText.mjs, model.js and its models.js) the briefing hooks onto a
+  # fixed path.
   mkdir "$TMP/x"
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js spaces-agents/migrate.js \
     spaces-agents/migrateHome.mjs spaces-agents/migrateHooks.mjs spaces-agents/briefingText.mjs spaces-agents/model.js \
+    spaces-agents/models.js \
     </dev/null 2>/dev/null || fail "$TGZ lacks spaces-agents' updater files: nothing was installed."
-  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js; do
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js; do
     { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
   done
   rc=0

@@ -4,15 +4,16 @@
 // sidebar (model.js, launchArgs.js, briefingText.mjs, models.js, briefing.mjs' gathering),
 // with herdr-core reached through `hc` directly. Plain node (≥ 24): no `herdr` or `gpui`
 // import, no Herdr window.
-// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
+// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr ~/.local/bin/automagik-herdr
+// (that wrapper runs this file through bin/run.sh, which finds node 22.7+ or bun without node on PATH).
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { accessSync, closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync,
-  statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { accessSync, closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
+  renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -21,12 +22,14 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
   paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
+import { interpreterPath } from "../agentPath.mjs";
 import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
-  ledgerPath, optionLike, parseWorktrees, startRow, workerArgs, workerPlan, worktreeFolder } from "../workers.js";
-import { binDirOf, checkForUpdate, installUpdate, liveHome, rollback as rollbackPack } from "../update.mjs";
+import { EFFORT_SHAPE, LEDGER_FILE, ROLES, TASK_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE, baseCandidates,
+  branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan,
+  workerRole, worktreeFolder, writesWorktree } from "../workers.js";
+import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState } from "./state.mjs";
@@ -46,6 +49,8 @@ export function readText(path) {
   }
 }
 const exists = async (path) => { try { accessSync(path); return true; } catch { return false; } };
+/** Where a link points (its text, as readlink gives it), or null when `path` is not a link. */
+const readLink = (path) => { try { return readlinkSync(path); } catch { return null; } };
 const under = (key, rest) => `${key === "/" ? "" : key}/${rest}`;
 
 // At most this many programs at once: `ls --all` over many bots stays a handful of processes.
@@ -349,6 +354,7 @@ const OPTIONS = {
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
   check: { type: "boolean" }, rollback: { type: "boolean" },
   "worker-agent": { type: "string" }, "worker-model": { type: "string" }, "worker-effort": { type: "string" },
+  "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
 };
 
@@ -364,8 +370,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
          [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
+         [--worker-template T]          (an hc template: owns the command, so it wins)
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
-             [--worker-agent=] [--worker-model=] [--worker-effort=]  (empty: cleared)
+             [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
+                                (empty: cleared)
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -375,9 +383,15 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's per-turn briefing as it would be now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
-  worker "<task>" (--branch B [--base REF] | --worktree DIR) [--agent A] [--model M]
-         [--effort E] [--name N]  from a bot's pane: start one worker for the task, an hc
-                                child of the bot in the task's worktree (prints its terminal)
+  worker "<task>" (--branch B [--base REF] | --worktree DIR)
+         [[--agent A] [--model M] [--effort E] | --template T] [--name N]
+         [--role dev|test|review|fix]
+                                from a bot's pane: start one worker for the task, an hc
+                                child of the bot in the task's worktree (prints its terminal);
+                                --template runs an hc template, alone; --role defaults from
+                                the bot's rank (tester: test, reviewer: review, fixer: fix,
+                                else dev). One writer (dev, test, fix) per worktree, any bot;
+                                reviewers run alongside
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back
 
@@ -500,13 +514,14 @@ export function entryFrom(opts, base, project, { creating }) {
 }
 
 /**
- * The bot's worker defaults (`worker: { agent?, model?, effort? }`) from --worker-agent,
- * --worker-model and --worker-effort; an empty value clears that one. The agent is canonical
+ * The bot's worker defaults (`worker: { agent?, model?, effort?, template? }`) from
+ * --worker-agent, --worker-model, --worker-effort and --worker-template; an empty value clears
+ * that one. A template is an hc template name; it isn't looked up here (edit runs anywhere). The agent is canonical
  * (`claude-code` is stored as `claude`); a model must be on the worker agent's list when it
  * has one (an agent with no list takes any model: workers' models are swap-test data).
  */
 function workerDefaults(opts, entry) {
-  const given = ["agent", "model", "effort"].filter((k) => opts[`worker-${k}`] !== undefined);
+  const given = ["agent", "model", "effort", "template"].filter((k) => opts[`worker-${k}`] !== undefined);
   if (!given.length) return;
   const w = entry.worker && typeof entry.worker === "object" && !Array.isArray(entry.worker) ? { ...entry.worker } : {};
   const agentText = opts["worker-agent"];
@@ -522,6 +537,12 @@ function workerDefaults(opts, entry) {
   else if (effort !== undefined) {
     if (!EFFORT_SHAPE.test(effort)) throw new CliError(`--worker-effort: "${effort}" isn't an effort level (low, medium, high, …).`, 2);
     w.effort = effort;
+  }
+  const template = opts["worker-template"];
+  if (template === "") delete w.template;
+  else if (template !== undefined) {
+    if (!TEMPLATE_SHAPE.test(template)) throw new CliError(`--worker-template: "${template}" isn't an hc template name (letters, digits, ".", "_" and "-", no dash first).`, 2);
+    w.template = template;
   }
   const model = opts["worker-model"];
   if (model === "") delete w.model;
@@ -981,7 +1002,8 @@ async function givenWorktree(path, key, bot) {
  * --branch: the worktree already on that branch, or a new one in
  * `<main checkout>/.claude/worktrees/<slug>`. A new branch starts from --base, else
  * origin's own branch of that name, else origin/HEAD's branch, else dev, else main, after a
- * fetch. Only `git worktree add` runs: the main checkout's HEAD is never touched.
+ * fetch. Only `git worktree add` runs: the main checkout's HEAD is never touched. The new
+ * branch tracks nothing unless it continues origin's branch of the same name.
  */
 async function branchWorktree(branch, base, key, warnings) {
   const ok = !branch.startsWith("-") && (await runProgram("git", ["check-ref-format", "--branch", branch], { cwd: key })).code === 0;
@@ -1018,7 +1040,11 @@ async function branchWorktree(branch, base, key, warnings) {
     const candidates = base ? [base] : [`origin/${branch}`, ...baseCandidates(null, originHead)];
     for (const ref of candidates) if (await has(ref)) { from = ref; break; }
     if (!from) throw new CliError(base ? `--base: ${base} isn't a commit in ${key}.` : `${key} has no origin/HEAD, dev or main to start ${branch} from; pass --base.`);
-    args = ["worktree", "add", "-b", branch, path, from];
+    // Only origin's own branch of that name becomes the upstream. Any other start (origin/dev)
+    // would, by git's branch.autoSetupMerge, make a plain `git pull` merge it and a plain
+    // `git push` (push.default=upstream) push to it; the worker's first push sets its own.
+    const track = from === `origin/${branch}` ? "--track" : "--no-track";
+    args = ["worktree", "add", track, "-b", branch, path, from];
   }
   const r = await runProgram("git", args, { cwd: key, timeout: 60_000 });
   if (r.code !== 0) throw new CliError(`git ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);
@@ -1045,10 +1071,53 @@ async function excludeWorktrees(key) {
   }
 }
 
-/** The live terminals carrying this bot's worker label for `branch` (any machine hc reaches). */
-async function liveWorkers(botId, branch) {
-  const rows = rowsOf(await hcJson(["ls", "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`]));
-  return rows.filter((r) => r?.address && (r.state === undefined || r.state === "live")).map((r) => r.address);
+/**
+ * The lock a worker's check and start run under: one per worktree, named by a hash of the
+ * worktree's real path, in `lockDir`. Local: it orders the CLIs on this computer only.
+ */
+export function worktreeLock(lockDir, worktree) {
+  const real = realDir(worktree) ?? resolvePath(worktree);
+  return `${lockDir}/worktree-${createHash("sha256").update(real).digest("hex").slice(0, 16)}.lock`;
+}
+
+/**
+ * The live workers in `worktree` (a real path), of any bot: from `ls` (`hc ls`), the live
+ * terminals on this computer whose cwd is that folder as a real path and that carry a
+ * worker.of label, as { address, labels }. Labels come from the row, else from `hc get`.
+ * Workers on other machines aren't seen (their cwd isn't a folder here).
+ */
+async function workersIn(worktree, ls) {
+  const out = [];
+  for (const r of rowsOf(ls)) {
+    if (!local(r?.address) || (r.state !== undefined && r.state !== "live") || typeof r.cwd !== "string") continue;
+    const cwd = r.cwd.startsWith("~/") ? `${home()}${r.cwd.slice(1)}` : r.cwd;
+    if ((realDir(cwd) ?? cwd) !== worktree) continue;
+    const labels = r.labels && typeof r.labels === "object" ? r.labels : (await hcGet(r.address))?.labels;
+    if (labels?.[WORKER_OF_LABEL]) out.push({ address: r.address, labels });
+  }
+  return out;
+}
+
+/**
+ * The agent an hc template runs, from its command in `hc templates`: an agent key, or
+ * undefined when no known agent is in the command. A template hc doesn't list, or no list at
+ * all, is refused here, before any worktree is made: `hc run` runs an unlisted name as a
+ * program (`--template rm` would run rm).
+ */
+async function templateRuns(template, agents) {
+  const r = await hc(["templates", "--json"]);
+  let list = null;
+  try { list = r.code === 0 ? JSON.parse(r.stdout).templates : null; } catch { list = null; }
+  if (!Array.isArray(list)) {
+    throw new CliError(`hc templates gave no list (${(r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}`}), `
+      + `so ${template} can't be checked as a template; hc run would start an unlisted name as a program. Not started.`);
+  }
+  const hit = list.find((x) => x?.name === template);
+  if (!hit) {
+    const names = list.map((x) => x?.name).filter(Boolean);
+    throw new CliError(`hc has no template ${template}${names.length ? `. Its templates: ${names.join(", ")}` : ""}.`);
+  }
+  return templateAgent(hit.command, agents) ?? undefined;
 }
 
 async function cmdWorker(opts, rest) {
@@ -1057,36 +1126,66 @@ async function cmdWorker(opts, rest) {
   if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
   if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
+  if (opts.template === "") throw new CliError("--template needs a name: --template <name> (hc templates lists them).", 2);
+  if (opts.role !== undefined && !ROLES.includes(opts.role)) throw new CliError(`--role is one of ${ROLES.join(", ")}, not "${opts.role}".`, 2);
+  const pick = { template: opts.template, agent: opts.agent, model: opts.model, effort: opts.effort };
+  const alongside = ["agent", "model", "effort"].filter((k) => pick[k] !== undefined);
+  if (pick.template !== undefined && alongside.length) {
+    throw new CliError(`A template owns its command: --template goes alone, without --${alongside.join(", --")}.`, 2);
+  }
   const { me, bot, project } = await callingBot(opts);
+  const { role, error: roleError } = workerRole(bot, opts.role);
+  if (roleError) throw new CliError(roleError, 2);
   const agents = agentTable();
-  const plan = workerPlan(bot, { agent: opts.agent, model: opts.model, effort: opts.effort }, agents);
+  const plan = workerPlan(bot, pick, agents);
   if (plan.error) throw new CliError(plan.error, 2);
-  if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
   const warnings = [...plan.warnings];
-  const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
-  if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
+  // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
+  let runs = plan.agent;
+  if (plan.template) runs = await templateRuns(plan.template, agents);
+  else {
+    if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
+    const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
+    if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
+  }
+  // An npm agent (#!/usr/bin/env node) gets its interpreter's folder on PATH when the pane lacks it.
+  const runPath = plan.template ? null : interpreterPath(plan.argv[0], process.env.PATH);
+  if (runPath?.note) warnings.push(runPath.note);
   const place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
     : await branchWorktree(opts.branch, opts.base, project.key, warnings);
   // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
   // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
-  if (plan.agent === "claude") {
+  if (runs === undefined) {
+    warnings.push(`Can't tell which agent template ${plan.template} runs, so no session hook was written in ${place.worktree}; `
+      + `if it runs Claude, the ${place.branch} worker's session won't be linked to usage.`);
+  } else if (runs === "claude") {
     const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
     warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
   }
-  // One live worker per task per bot (other bots' workers may share the task), checked and
-  // started under a lock per bot, so two calls at once can't both pass the check.
+  // One writer (dev, test, fix) per worktree, whatever its bot; reviewers run alongside, but
+  // one bot runs one reviewer per branch. A worker with no role label counts as a writer.
+  // Checked and started under one lock per worktree, so two calls at once can't both pass.
   const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
   try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
-  const terminal = await withLockAsync(`${lockDir}/worker-${bot.id}.lock`, async () => {
-    const live = await liveWorkers(bot.id, place.branch);
-    if (live.length) {
-      throw new CliError(`${bot.name} already has a live worker on ${place.branch}: ${live.join(", ")}. `
-        + `Check it (hc read ${live[0]}) or end it (hc kill ${live[0]}) before starting another.`);
+  const worktree = realDir(place.worktree) ?? place.worktree;
+  const terminal = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
+    const ls = await hcJson(["ls"]);
+    const live = await workersIn(worktree, ls);
+    const nameOf = (id) => project.file.bots.find((b) => b.id === id)?.name ?? id;
+    const writing = role !== "review" && live.find((w) => writesWorktree(w.labels));
+    const reviewing = role === "review" && live.find((w) => w.labels[WORKER_OF_LABEL] === bot.id
+      && w.labels[TASK_LABEL] === place.branch && w.labels[WORKER_ROLE_LABEL] === "review");
+    const hit = writing || reviewing;
+    if (hit) {
+      const what = writing ? `${place.worktree} already has a live writer: ${hit.address} (${nameOf(hit.labels[WORKER_OF_LABEL])}'s `
+        + `${hit.labels[WORKER_ROLE_LABEL] ?? "worker, no role label"}). One writer per worktree.`
+        : `${bot.name} already has a live review worker on ${place.branch}: ${hit.address}.`;
+      throw new CliError(`${what} Check it (hc read ${hit.address}) or end it (hc kill ${hit.address}) before starting another.`);
     }
-    const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
+    const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-    const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
-      model: plan.model, effort: plan.effort, argv: plan.argv, task });
+    const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address,
+      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, path: runPath?.path ?? process.env.PATH });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -1096,15 +1195,17 @@ async function cmdWorker(opts, rest) {
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: place.branch, worktree: place.worktree,
-    agent: plan.agent, model: plan.model, effort: plan.effort }));
+    agent: plan.agent, model: plan.model, effort: plan.effort, template: plan.template, role }));
   if (unlogged) warnings.push(unlogged);
   report(warnings);
-  const out = { terminal, bot: bot.id, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
-    base: place.base, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
+  const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
+    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
   if (opts.json) return out;
   const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
-  return [terminal, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, `  agent     ${plan.agent}`,
-    `  model     ${plan.model ?? "(the agent's default)"}`, `  effort    ${plan.effort ?? "(the agent's default)"}`,
+  const what = plan.template ? [`  template  ${plan.template}${runs ? ` (runs ${runs})` : ""}`]
+    : [`  agent     ${plan.agent}`, `  model     ${plan.model ?? "(the agent's default)"}`,
+      `  effort    ${plan.effort ?? "(the agent's default)"}`];
+  return [terminal, `  role      ${role}`, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
     `End it once the task merges: hc kill ${terminal}`].join("\n");
 }
 
@@ -1122,23 +1223,47 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     : { binDir: io.binDir ?? binDirOf(io.env ?? process.env), window: liveHome(`${appHome(io.env ?? process.env)}/mods`) };
   const where = { ...(io.env ? { env: io.env } : {}), ...(io.fetch ? { fetch: io.fetch } : {}), ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host };
   const failed = (what, e) => new CliError(`${what}: ${String(e?.message ?? e).split("\n")[0]}`);
+  // The pack just swapped (or one an older CLI installed) may name its CLI otherwise
+  // (bin/automagik-herdr, or only the .mjs before it): the ~/.local/bin link follows, so a
+  // rollback never leaves it dangling. Idempotent, never fatal; `--check` changes nothing.
+  // `from`: where the link pointed before a rollback, whose own relink (update.mjs moveHooks) may
+  // already have moved it: either way the move is reported. The link is host.binDir's: with an
+  // injected io.modsDir only io.binDir, never this computer's ~/.local/bin.
+  const relink = (from = null) => {
+    const { binDir } = host;
+    try {
+      let r = relinkCli({ modsDir: io.modsDir ?? defaultModsDir(io.env ?? process.env), binDir });
+      if (!r && from && binDir) {
+        const link = join(binDir, "automagik-herdr");
+        const to = readLink(link);
+        if (to && to !== from) r = { link, from, to };
+      }
+      return { relinked: r, note: r ? ` ${r.link} now points at ${r.to}.` : "" };
+    } catch (e) {
+      return { relinked: null, note: ` The automagik-herdr link was not repointed (${String(e?.message ?? e).split("\n")[0]}): run install.sh again.` };
+    }
+  };
   if (opts.rollback) {
+    const before = host.binDir ? readLink(join(host.binDir, "automagik-herdr")) : null;
     let r;
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
-    return opts.json ? { rolledBack: r } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : ""}`;
+    const { relinked, note } = relink(before);
+    const warned = r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : "";
+    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${warned}${note}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
     throw failed(opts.check ? "Couldn't check for updates" : "Not updated", e);
   }
-  if (opts.json) return r;
+  const { relinked, note } = opts.check ? { relinked: null, note: "" } : relink();
+  if (opts.json) return opts.check ? r : { ...r, relinked };
   const current = r.current ?? "not installed";
-  if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).`;
+  if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
-  return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.`;
+  return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
 }
 
 // ---- tidy (sidebar-rules Group 2) ----
@@ -1204,4 +1329,9 @@ export async function main(argv = process.argv.slice(2)) {
 
 // Run as a program (also through the ~/.local/bin symlink, hence the realpath), not on import.
 const invoked = (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href; } catch { return null; } })();
-if (import.meta.url === invoked) process.exitCode = await main();
+if (import.meta.url === invoked) {
+  // An update made by an older CLI (0.3.4 and before) left the link on the .mjs, which needs node
+  // on PATH: the first start that has a runtime moves it to the wrapper. Silent, never fatal.
+  try { relinkCli(); } catch { /* the link stays; `automagik-herdr update` reports why */ }
+  process.exitCode = await main();
+}

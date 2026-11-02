@@ -3,6 +3,8 @@
 // default look. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`, so `node --test` runs it.
 // Apache-2.0.
 
+import { LEGACY_AGENTS } from "./models.js";
+
 /** The hc label key that ties a terminal to a bot; its value is the bot id (A9). */
 export const BOT_LABEL = "bot";
 /** The longest `instructions` a bot may carry. */
@@ -15,7 +17,7 @@ export const KINDS = ["main", "member"];
  * free-text `role` stays for the briefing. Optional. `main` is not a rank: role=main is the
  * main bot's alone, derived from its kind.
  */
-export const RANKS = ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"];
+export const RANKS = ["captain", "dev", "tester", "reviewer", "fixer", "integrator", "pm", "owner"];
 /** A category id: a lowercase slug, as it goes into a pane's `category=` label (A16). */
 export const CATEGORY_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -66,12 +68,16 @@ const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x)
 const isText = (x) => typeof x === "string" && x.trim() !== "";
 const isWave = (x) => Number.isInteger(x) && x > 0;
 
-/** The worker fields a bot may set (`worker: { agent?, model?, effort? }`), each optional text. */
-export const WORKER_FIELDS = ["agent", "model", "effort"];
+/** An hc template name (a file in herdr-core's templates folder): no dash first, no spaces. */
+export const TEMPLATE_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** The worker fields a bot may set (`worker: { agent?, model?, effort?, template? }`), each optional text. */
+export const WORKER_FIELDS = ["agent", "model", "effort", "template"];
 
 /**
  * Why a bot's `worker` (its workers' defaults) can't be used, or null when it is absent or
- * fine: an object whose agent, model and effort, where given, are non-empty text. Other keys
+ * fine: an object whose agent, model, effort and template, where given, are non-empty text,
+ * none starting with a dash, and whose template is an hc template name (TEMPLATE_SHAPE). Other keys
  * in it are kept as they are.
  */
 export function workerProblem(worker) {
@@ -80,7 +86,9 @@ export function workerProblem(worker) {
   const bad = WORKER_FIELDS.filter((k) => worker[k] !== undefined && !isText(worker[k]));
   if (bad.length) return `worker ${bad.join(", ")} not text`;
   const dashed = WORKER_FIELDS.filter((k) => typeof worker[k] === "string" && worker[k].trimStart().startsWith("-"));
-  return dashed.length ? `worker ${dashed.join(", ")} starts with a dash (an agent would read it as an option)` : null;
+  if (dashed.length) return `worker ${dashed.join(", ")} starts with a dash (an agent would read it as an option)`;
+  return worker.template !== undefined && !TEMPLATE_SHAPE.test(worker.template)
+    ? `worker template "${worker.template}" isn't an hc template name (letters, digits, ".", "_" and "-")` : null;
 }
 
 /**
@@ -88,7 +96,10 @@ export function workerProblem(worker) {
  * at all (not JSON, no `bots` array, another version). Inside it, an entry with no usable
  * id or name, a repeated id or an unknown kind is left out; anything else is kept and
  * named in `warnings` (a long instructions text, a missing agent, an unknown look name,
- * a second main bot: the first one counts). `raw` is the file exactly as read, a separate
+ * a second main bot: the first one counts). A retired agent (models.js LEGACY_AGENTS, as
+ * `gemini`) is read as its replacement, with a warning; a model pin made for it (the bot's
+ * `model`, or `worker.model` when its workers ran it) is dropped, since the replacement
+ * doesn't take it. `raw` is the file exactly as read, a separate
  * copy: edit that one to write the file back (bots.js writeBots), so entries left out of
  * `file` survive.
  */
@@ -135,6 +146,25 @@ export function parseBots(text) {
     if (bot.model !== undefined && typeof bot.model !== "string") delete bot.model;
     const workerWhy = workerProblem(bot.worker);
     if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
+    const retired = (k) => (typeof k === "string" && Object.hasOwn(LEGACY_AGENTS, k) ? k : null);
+    const seatOld = retired(bot.agent);
+    const workerOld = isObject(bot.worker) ? retired(bot.worker.agent) ?? (bot.worker.agent ? null : seatOld) : null;
+    const old = seatOld ?? workerOld;
+    if (old) {
+      const dropped = [];
+      if (seatOld) {
+        bot.agent = LEGACY_AGENTS[seatOld];
+        if (bot.model) { dropped.push(`model pin ${bot.model}`); delete bot.model; }
+      }
+      if (workerOld) {
+        const w = { ...bot.worker };
+        if (w.agent) w.agent = LEGACY_AGENTS[w.agent];
+        if (w.model) { dropped.push(`worker model ${w.model}`); delete w.model; }
+        bot.worker = w;
+      }
+      const tail = dropped.length ? ` (${dropped.join(" and ")} dropped)` : "";
+      warnings.push(`${where}: agent ${old} is retired; it runs on ${LEGACY_AGENTS[old]}${tail}`);
+    }
     if (bot.rank !== undefined && !RANKS.includes(bot.rank)) {
       warnings.push(`${where}: unknown rank ${JSON.stringify(bot.rank)}; ignored (one of ${RANKS.join(", ")})`);
       delete bot.rank;
