@@ -4,11 +4,14 @@
 // Apache-2.0.
 //
 // State is Group 1's shape (test/fixtures/sidebar/), plus `folders`: what readState found
-// about each folder on this computer, { [folder]: { exists, key, top } } (`key`: model.js
-// projectOf's key; `top`: git's top level, null outside git). A folder with no entry (a
-// fixture recorded without it, or another machine's) is taken as present and its own top
-// level, or its main checkout's worktree for the `<main>.worktrees/<name>` layout; folder
-// drift (gone, a subfolder) is planned only from what was found.
+// about each folder on this computer, { [folder]: { exists, key, top, real? } } (`key`:
+// model.js projectOf's key; `top`: git's top level, null outside git; `real`: its real path
+// when it is reached through a symlink). A folder with no entry (one the disk couldn't answer
+// for, a fixture recorded without it, or another machine's) is taken as present and its own
+// top level, or its main checkout's worktree for the `<main>.worktrees/<name>` layout; folder
+// drift (gone, a subfolder) is planned only from what was found, and never recreated on
+// another machine (reported instead). Each rule (registryRule, labelRule, spaceRule,
+// terminalRule) reads one contextOf(state) and returns its actions; plan() groups them.
 //
 // Action: { kind, visual, why, ... }. Non-visual (start, attach and create apply them):
 //   prune-registry { key }; relabel { terminal, set } (role= and category=; "" removes).
@@ -39,9 +42,9 @@ const inside = (path, folder) => path === folder || (typeof path === "string" &&
 /** What is known about a folder (see the header): recorded, else the guess. */
 export function folderFacts(state, folder, machine = null) {
   const found = machine == null ? state.folders?.[folder] : null;
-  if (found) return { exists: Boolean(found.exists), key: found.key ?? folder, top: found.top ?? null, recorded: true };
+  if (found) return { exists: Boolean(found.exists), key: found.key ?? folder, top: found.top ?? null, real: found.real ?? null, recorded: true };
   const w = /^(.*)\.worktrees\/[^/]+$/.exec(folder);
-  return { exists: true, key: w ? w[1] : folder, top: folder, recorded: false };
+  return { exists: true, key: w ? w[1] : folder, top: folder, real: null, recorded: false };
 }
 
 /** A project's display name (D7): bots.json's optional `name`, else its folder's name. */
@@ -50,14 +53,16 @@ export function displayName(project) {
   return typeof name === "string" && name.trim() ? name.trim() : baseOf(project.key);
 }
 
-/** The plan for a State: Action[] in a fixed order (non-visual, visual, reports). */
-export function plan(state, { now = Date.now(), home = "~" } = {}) {
+/**
+ * What every rule reads: the State indexed once. A bot pane's project is the one that defines
+ * its bot on the pane's machine; when two do (a copied bots.json), the one the pane's folder
+ * keys to, else none (reported, never relabelled).
+ */
+export function contextOf(state, { now = Date.now(), home = "~" } = {}) {
   const isHome = (f) => !f || f === "~" || f === home;
   const facts = (folder, machine) => folderFacts(state, folder, machine);
-
-  // Projects with a bots file, by machine and key; each bot to its project.
   const projects = new Map();
-  const botProject = new Map(); // at(machine, botId) -> project
+  const botProjects = new Map(); // at(machine, botId) -> [project]
   const botMachines = new Map(); // botId -> machines whose projects define it
   for (const p of state.projects ?? []) {
     let file;
@@ -65,16 +70,30 @@ export function plan(state, { now = Date.now(), home = "~" } = {}) {
     const project = { key: p.key, machine: p.machine ?? null, raw: p.file, file };
     projects.set(at(project.machine, p.key), project);
     for (const b of file.bots) {
-      botProject.set(at(project.machine, b.id), project);
-      botMachines.set(b.id, [...(botMachines.get(b.id) ?? []), project.machine]);
+      botProjects.set(at(project.machine, b.id), [...(botProjects.get(at(project.machine, b.id)) ?? []), project]);
+      botMachines.set(b.id, [...new Set([...(botMachines.get(b.id) ?? []), project.machine])]);
     }
   }
   const projectAt = (machine, key) => projects.get(at(machine, key)) ?? null;
-
   const terms = (state.terminals ?? []).filter((t) => t?.address);
   const byAddress = new Map(terms.map((t) => [t.address, t]));
   const live = (t) => t?.state === "live";
-  const botOf = (t) => (live(t) && t.labels?.[BOT_LABEL] ? botProject.get(at(machineOf(t.address), t.labels[BOT_LABEL])) ?? null : null);
+  const folderKey = (t) => {
+    if (isHome(t.cwd)) return null;
+    const f = facts(t.cwd, machineOf(t.address));
+    return f.exists ? f.key : null;
+  };
+  const owners = new Map(); // address -> project
+  const ambiguous = []; // { terminal, id, keys }
+  for (const t of terms) {
+    const id = t.labels?.[BOT_LABEL];
+    if (!live(t) || !id) continue;
+    const list = botProjects.get(at(machineOf(t.address), id)) ?? [];
+    const mine = list.length > 1 ? list.filter((p) => p.key === folderKey(t)) : list;
+    if (mine.length === 1) owners.set(t.address, mine[0]);
+    else if (list.length > 1) ambiguous.push({ terminal: t.address, id, keys: list.map((p) => p.key) });
+  }
+  const botOf = (t) => owners.get(t?.address) ?? null;
   // The live bot pane a terminal is tied to: itself, or the first bot up its hc parents.
   const tiedTo = (t) => {
     for (const seen = new Set(); t && !seen.has(t.address); t = byAddress.get(t.parent)) {
@@ -96,62 +115,69 @@ export function plan(state, { now = Date.now(), home = "~" } = {}) {
     return null;
   };
   // A terminal's project key: its bot's, the bot it was started from, else its folder's.
-  const keyOfTerminal = (t) => {
-    const tie = tiedTo(t);
-    if (tie) return botOf(tie).key;
-    if (isHome(t.cwd)) return null;
-    const f = facts(t.cwd, machineOf(t.address));
-    return f.exists ? f.key : null;
-  };
+  const keyOfTerminal = (t) => { const tie = tiedTo(t); return tie ? botOf(tie).key : folderKey(t); };
+  const machinesWithProjects = new Set([...projects.values()].map((p) => p.machine));
+  return { state, now, home, isHome, facts, projects, projectAt, botMachines, terms, byAddress, live, botOf, ambiguous, tiedTo,
+    goneParentOf, keyOfTerminal, machinesWithProjects };
+}
 
-  const actions = { nonVisual: [], visual: [], reports: [] };
-  const push = (group, a) => actions[group].push(a);
-  const report = (report, fields, note) => push("reports", { kind: "report", visual: false, report, ...fields, note, why: note });
+const report = (kind, fields, note) => ({ kind: "report", visual: false, report: kind, ...fields, note, why: note });
 
-  // ---- registry entries whose folder is gone (issue #11) ----
-  for (const key of state.registry ?? []) {
-    const f = facts(key, null);
-    if (f.recorded && !f.exists) push("nonVisual", { kind: "prune-registry", visual: false, key, why: "its folder is gone, so the sidebar should not list it" });
-  }
+/** Registry entries whose folder was found gone (issue #11); never one only guessed. */
+export function registryRule(ctx) {
+  return (ctx.state.registry ?? []).filter((key) => { const f = ctx.facts(key, null); return f.recorded && !f.exists; })
+    .map((key) => ({ kind: "prune-registry", visual: false, key, why: "its folder is gone, so the sidebar should not list it" }));
+}
 
-  // ---- role= and category= on this computer's bot panes (A16) ----
-  for (const t of terms) {
-    const project = machineOf(t.address) == null ? botOf(t) : null;
+/** role= and category= on this computer's bot panes (A16); a bot two projects define is reported. */
+export function labelRule(ctx) {
+  const out = [];
+  for (const t of ctx.terms) {
+    const project = machineOf(t.address) == null ? ctx.botOf(t) : null;
     if (!project) continue;
     const id = t.labels[BOT_LABEL];
     const want = { [ROLE_LABEL]: roleOf(project.file, id) ?? "", [CATEGORY_LABEL]: effectiveCategory(project.file, id) ?? "" };
     const set = Object.fromEntries(Object.entries(want).filter(([k, v]) => (t.labels[k] ?? "") !== v));
     if (Object.keys(set).length) {
       const words = Object.entries(set).map(([k, v]) => `${k}=${v}`).join(" ");
-      push("nonVisual", { kind: "relabel", visual: false, terminal: t.address, set, why: `${project.key}/.herdr/bots.json says ${words}` });
+      out.push({ kind: "relabel", visual: false, terminal: t.address, set, why: `${project.key}/.herdr/bots.json says ${words}` });
     }
   }
+  for (const a of ctx.ambiguous) {
+    out.push(report("foreign", { terminal: a.terminal }, `${a.terminal} plays ${a.id}, which ${a.keys.join(" and ")} both define, and its folder doesn't say which; its labels are left alone`));
+  }
+  return out;
+}
 
-  // ---- spaces: each one's project, its folder, and its panes ----
-  const spaces = (state.spaces ?? []).map((s, order) => {
+/** Each space's project, folder (D14) and panes: create, recreate, move, rename, close. */
+export function spaceRule(ctx) {
+  const { facts, isHome, live, botOf, projectAt, terms } = ctx;
+  const reports = [];
+  const spaces = (ctx.state.spaces ?? []).map((s, order) => {
     const machine = s.machine ?? null;
-    const panes = (s.tabs ?? []).flatMap((tab) => (tab.panes ?? []).map((p) => ({ tab: tab.id, terminal: p.terminal, t: byAddress.get(p.terminal) })));
+    const panes = (s.tabs ?? []).flatMap((tab) => (tab.panes ?? []).map((p) => ({ tab: tab.id, terminal: p.terminal, t: ctx.byAddress.get(p.terminal) })));
     const bots = new Set(panes.map((p) => botOf(p.t)).filter(Boolean).map((p) => p.key));
     const f = isHome(s.folder) ? null : facts(s.folder, machine);
+    const at_ = (x) => s.folder === x || (f?.real != null && f.real === x); // the folder, or its real path
     let owner = null; // the project key the space is for
     if (bots.size === 1) owner = [...bots][0];
     else if (bots.size > 1) {
       if (f?.exists && bots.has(f.key)) owner = f.key;
-      else report("foreign", { space: s.id }, `"${s.name}" holds bots of ${[...bots].join(" and ")}, so tidy can't tell which project it is for`);
-    } else if (f?.exists && (f.top || f.key === s.folder)) owner = f.key;
-    else if (f && !f.exists) report("foreign", { space: s.id }, `"${s.name}" is on ${s.folder}, which is gone, and holds no bot to say which project it is for`);
+      else reports.push(report("foreign", { space: s.id }, `"${s.name}" holds bots of ${[...bots].join(" and ")}, so tidy can't tell which project it is for`));
+    } else if (f?.exists && (f.top || at_(f.key))) owner = f.key;
+    else if (f && !f.exists) reports.push(report("foreign", { space: s.id }, `"${s.name}" is on ${s.folder}, which is gone, and holds no bot to say which project it is for`));
     const project = owner ? projectAt(machine, owner) : null;
     // Where it stands (D14): the project's top level, one of its worktrees, or elsewhere.
     let place = "plain";
     if (project) {
-      if (f?.exists && s.folder === owner) place = "top";
-      else if (f?.exists && f.key === owner && f.top === s.folder) place = "worktree";
+      if (f?.exists && at_(owner)) place = "top";
+      else if (f?.exists && f.key === owner && at_(f.top)) place = "worktree";
       else place = "wrong";
     }
-    return { s, order, machine, panes, owner, project, place, folder: f, empty: panes.length === 0 };
+    return { s, order, machine, panes, owner, project, place, folder: f, empty: panes.length === 0, at: at_ };
   });
 
-  // ---- the canonical space of each project, per machine ----
+  // The canonical space of each project, per machine: on the top level, then holding the main bot.
   const mainPaneOf = (project) => terms.find((t) => botOf(t) === project && t.labels[BOT_LABEL] === mainBotOf(project.file)?.id);
   const holdsMain = (sp) => sp.panes.some((p) => p.t && p.t === mainPaneOf(sp.project));
   const canonical = new Map(); // at(machine, key) -> space entry
@@ -194,33 +220,34 @@ export function plan(state, { now = Date.now(), home = "~" } = {}) {
     }
     const isCanonical = sp.project && canonical.get(at(machine, sp.owner)) === sp;
     if (isCanonical && sp.place === "wrong") {
-      const why = !sp.folder?.exists ? `its folder ${s.folder} is gone`
-        : sp.folder.key === sp.owner ? `${s.folder} is inside ${sp.owner}, not its top level`
-          : `its bots are ${sp.owner}'s, but it is on ${s.folder}${sp.folder.key === s.folder ? "" : ` (${sp.folder.key}'s)`}`;
-      recreate.push({ kind: "recreate-space", visual: true, space: s.id, machine, from: s.folder, to: sp.owner, name: displayName(sp.project),
-        why: `"${s.name}": ${why}` });
+      const why = isHome(s.folder) ? "it is on the home folder, not on a project"
+        : !sp.folder.exists ? `its folder ${s.folder} is gone`
+          : sp.folder.key === sp.owner ? `${s.folder} is inside ${sp.owner}, not its top level`
+            : `its bots are ${sp.owner}'s, but it is on ${s.folder}${sp.at(sp.folder.key) ? "" : ` (${sp.folder.key}'s)`}`;
+      // Another machine's folders are only guessed at from here: reported, never recreated.
+      if (machine != null) reports.push(report("foreign", { space: s.id }, `"${s.name}" on ${machine}: ${why}; tidy doesn't recreate another machine's spaces`));
+      else recreate.push({ kind: "recreate-space", visual: true, space: s.id, machine, from: s.folder, to: sp.owner, name: displayName(sp.project), why: `"${s.name}": ${why}` });
     } else if (isCanonical && s.name !== displayName(sp.project)) {
       renames.push({ kind: "rename-space", visual: true, space: s.id, from: s.name, to: displayName(sp.project), why: `${sp.owner}'s space is named after the project` });
     }
-    if (sp.place === "worktree" && !terms.some((t) => live(t) && inside(t.cwd, s.folder))) {
-      report("stale-worktree-space", { space: s.id }, `"${s.name}" is on the worktree ${s.folder}, and no terminal runs in it`);
+    if (sp.place === "worktree" && !terms.some((t) => live(t) && (inside(t.cwd, s.folder) || (sp.folder.real && inside(t.cwd, sp.folder.real))))) {
+      reports.push(report("stale-worktree-space", { space: s.id }, `"${s.name}" is on the worktree ${s.folder}, and no terminal runs in it`));
     }
     for (const p of sp.panes) {
       const from = { machine, space: s.id, tab: p.tab };
       if (p.t && machineOf(p.terminal) !== machine) {
-        report("cross-machine", { terminal: p.terminal, space: s.id }, `${p.terminal} runs on ${machineOf(p.terminal) ?? "this computer"}, but "${s.name}" is on ${machine ?? "this computer"}`);
+        reports.push(report("cross-machine", { terminal: p.terminal, space: s.id }, `${p.terminal} runs on ${machineOf(p.terminal) ?? "this computer"}, but "${s.name}" is on ${machine ?? "this computer"}`));
         continue;
       }
       if (!live(p.t)) continue;
-      const key = keyOfTerminal(p.t);
+      const key = ctx.keyOfTerminal(p.t);
       const project = key ? projectAt(machine, key) : null;
       // A space with no project (a plain folder) keeps its panes, unless one is a bot's.
-      if (key && project && key !== sp.owner && (sp.owner || tiedTo(p.t))) {
+      if (key && project && key !== sp.owner && (sp.owner || ctx.tiedTo(p.t))) {
         moves.push({ kind: "move-pane", visual: true, terminal: p.terminal, from, to: targetOf(machine, project), reason: "stray",
           why: `${p.terminal} belongs to ${key}, not to "${s.name}"` });
       } else if (sp.project && !isCanonical && sp.place !== "worktree" && key === sp.owner) {
-        const to = targetOf(machine, sp.project);
-        moves.push({ kind: "move-pane", visual: true, terminal: p.terminal, from, to, reason: "duplicate",
+        moves.push({ kind: "move-pane", visual: true, terminal: p.terminal, from, to: targetOf(machine, sp.project), reason: "duplicate",
           why: `"${s.name}" is a second space for ${sp.owner}` });
       } else if (isCanonical && sp.place !== "wrong" && botOf(p.t) && p.t.labels[SPACE_LABEL] !== s.id && machineOf(p.terminal) == null) {
         spaceLabels.push({ kind: "relabel", visual: true, terminal: p.terminal, set: { [SPACE_LABEL]: s.id },
@@ -228,28 +255,44 @@ export function plan(state, { now = Date.now(), home = "~" } = {}) {
       }
     }
   }
-  actions.visual.push(...creating.values(), ...recreate, ...moves, ...renames, ...closes, ...spaceLabels);
+  return [...creating.values(), ...recreate, ...moves, ...renames, ...closes, ...spaceLabels, ...reports];
+}
 
-  // ---- terminals: bots on the wrong machine, orphans, unseen ones, old owner decisions ----
-  const shown = new Set(spaces.flatMap((sp) => sp.panes.map((p) => p.terminal)));
-  for (const t of terms.filter(live)) {
+/** Terminals: bots of another machine's project, orphan helpers, unseen ones, old owner decisions. */
+export function terminalRule(ctx) {
+  const { live, botOf, tiedTo, now } = ctx;
+  const out = [];
+  const shown = new Set((ctx.state.spaces ?? []).flatMap((s) => (s.tabs ?? []).flatMap((t) => (t.panes ?? []).map((p) => p.terminal))));
+  for (const t of ctx.terms.filter(live)) {
     const id = t.labels?.[BOT_LABEL];
     const machine = machineOf(t.address);
-    if (id && !botOf(t) && botMachines.has(id)) {
-      report("cross-machine", { terminal: t.address }, `${t.address} plays ${id}, a bot of a project on ${botMachines.get(id).map((m) => m ?? "this computer").join(", ")}`);
+    // Only where this State holds that machine's projects: elsewhere the bot's project is unknown.
+    const defined = ctx.botMachines.get(id);
+    if (id && defined && !defined.includes(machine) && ctx.machinesWithProjects.has(machine)) {
+      out.push(report("cross-machine", { terminal: t.address }, `${t.address} plays ${id}, a bot of a project on ${defined.map((m) => m ?? "this computer").join(", ")}`));
     }
-    const gone = goneParentOf(t);
+    const gone = ctx.goneParentOf(t);
     if (!botOf(t) && gone && !tiedTo(t)) {
-      report("orphan-helper", { terminal: t.address }, `${t.address} was started from ${gone}, which is gone, so no bot shows it as a helper`);
+      out.push(report("orphan-helper", { terminal: t.address }, `${t.address} was started from ${gone}, which is gone, so no bot shows it as a helper`));
     } else if (!botOf(t) && !tiedTo(t) && !shown.has(t.address) && t.labels?.[SPACE_LABEL] && machine == null) {
-      report("foreign", { terminal: t.address }, `${t.address} is parked and tied to no bot, so no row shows it`);
+      out.push(report("foreign", { terminal: t.address }, `${t.address} is parked and tied to no bot, so no row shows it`));
     }
     const since = t.status_ms ?? t.created_ms;
     if (t.labels?.[NEEDS_OWNER_LABEL] && Number.isFinite(since) && now - since > STALE_NEEDS_OWNER_MS) {
-      report("stale-needs-owner", { terminal: t.address }, `${t.address} has waited on the owner for over a day: "${t.labels[NEEDS_OWNER_LABEL]}"`);
+      out.push(report("stale-needs-owner", { terminal: t.address }, `${t.address} has waited on the owner for over a day: "${t.labels[NEEDS_OWNER_LABEL]}"`));
     }
   }
-  return [...actions.nonVisual, ...actions.visual, ...actions.reports];
+  return out;
+}
+
+/** The rules, in the order their actions are listed within each group. */
+export const RULES = [registryRule, labelRule, spaceRule, terminalRule];
+
+/** The plan for a State: every rule's actions, grouped non-visual, visual, then reports. */
+export function plan(state, opts = {}) {
+  const ctx = contextOf(state, opts);
+  const all = RULES.flatMap((rule) => rule(ctx));
+  return [...all.filter((a) => !a.visual && a.kind !== "report"), ...all.filter((a) => a.visual), ...all.filter((a) => a.kind === "report")];
 }
 
 /** A State with the plan's non-visual actions done (what start, attach and create do). */

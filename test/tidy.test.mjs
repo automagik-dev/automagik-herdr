@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -214,10 +214,56 @@ test("relabel: role and category follow bots.json; a stale one comes off; other 
   assert.deepEqual(planOf(s).filter((a) => a.kind === "relabel").map(brief), ["relabel t1 category=", "relabel t2 role= category=eng"]);
 });
 
-test("cross-machine: a pane in another machine's space, or a bot pane from another machine's project, is reported", () => {
-  const s = base({ terminals: [...base().terminals, T("machine-1/t4", "/r/z", { bot: MAIN_A })], spaces: [{ ...space("sa", A, ["t1"]), name: "a" }, space("machine-2/s1", "/r/z", ["machine-1/t4"], "machine-2")] });
+test("cross-machine: a pane in another machine's space, or a local pane playing only another machine's bot, is reported", () => {
+  const remote = { key: "/r/z", machine: "machine-1", file: bots(["b-zzzzzzzzzz", "main"]) };
+  const s = base({ terminals: [...base().terminals, T("machine-1/t4", "/r/z", { bot: MAIN_A }), T("t5", A, { bot: "b-zzzzzzzzzz" })],
+    spaces: [{ ...space("sa", A, ["t1"]), name: "a" }, space("machine-2/s1", "/r/z", ["machine-1/t4"], "machine-2")],
+    projects: [...base().projects, remote] });
   const reports = planOf(s).filter((a) => a.report === "cross-machine").map((a) => a.terminal);
-  assert.deepEqual(reports, ["machine-1/t4", "machine-1/t4"]);
+  // machine-1/t4 twice: shown in machine-2's space, and playing a bot of this computer's project.
+  assert.deepEqual(reports, ["machine-1/t4", "machine-1/t4", "t5"]);
+});
+
+test("a remote bot pane whose machine's projects this State doesn't hold is not called cross-machine", () => {
+  const s = base({ terminals: [...base().terminals, T("machine-1/t4", A, { bot: MAIN_A })] });
+  s.spaces[0].name = "a";
+  assert.deepEqual(planOf(s).filter((a) => a.report === "cross-machine"), []);
+});
+
+test("a bot id two projects define: the pane's folder picks the project; still unsure, reported and never relabelled", () => {
+  const X = "b-xxxxxxxxxx";
+  const both = (cwdB) => base({
+    terminals: [T("t1", A, { bot: X, role: "main" }), T("t2", cwdB, { bot: X, role: "dev" })],
+    spaces: [],
+    projects: [{ key: A, machine: null, file: bots([X, "main"]) }, { key: B, machine: null, file: bots([MAIN_B, "main"], [X, "member", { rank: "dev" }]) }],
+    folders: { ...base().folders, "/r/elsewhere": { exists: true, key: "/r/elsewhere", top: "/r/elsewhere" } },
+  });
+  assert.deepEqual(planOf(both(B)).filter((a) => a.kind === "relabel" || a.kind === "report").map(brief), [], "each pane keeps its own project's role");
+  const unsure = planOf(both("/r/elsewhere"));
+  assert.deepEqual(unsure.filter((a) => a.kind === "relabel").map(brief), []);
+  assert.ok(unsure.some((a) => a.report === "foreign" && a.terminal === "t2" && /both define/.test(a.note)));
+});
+
+test("another machine's space on the wrong folder is reported, never recreated", () => {
+  const remote = { key: "/r/z", machine: "machine-1", file: bots(["b-zzzzzzzzzz", "main"]) };
+  const s = base({ terminals: [...base().terminals, T("machine-1/t4", "/r/z/sub", { bot: "b-zzzzzzzzzz" })],
+    spaces: [{ ...space("sa", A, ["t1"]), name: "a" }, space("machine-1/s1", "/r/z/sub", ["machine-1/t4"], "machine-1")], projects: [...base().projects, remote] });
+  const acts = planOf(s);
+  assert.ok(!acts.some((a) => a.kind === "recreate-space"));
+  assert.ok(acts.some((a) => a.report === "foreign" && a.space === "machine-1/s1" && /another machine's spaces/.test(a.note)));
+});
+
+test("a space on the home folder holding a bot: recreated, and never called gone", () => {
+  const s = base({ spaces: [space("sh", "~", ["t1"])] });
+  const [a] = planOf(s);
+  assert.deepEqual([a.kind, a.to], ["recreate-space", A]);
+  assert.match(a.why, /on the home folder, not on a project/);
+  assert.doesNotMatch(a.why, /gone/);
+});
+
+test("a symlinked space folder (readState's `real`) is its project's top level, not recreated", () => {
+  const s = base({ spaces: [{ ...space("sa", "/link/a", ["t1"]), name: "a" }], folders: { ...base().folders, "/link/a": { exists: true, key: A, top: A, real: A } } });
+  assert.deepEqual(planOf(s), []);
 });
 
 test("needs-owner: reported once its terminal has been waiting over a day, not before", () => {
@@ -228,7 +274,7 @@ test("needs-owner: reported once its terminal has been waiting over a day, not b
 });
 
 test("folderFacts guesses only for folders it was told nothing about; displayName falls back to the folder", () => {
-  assert.deepEqual(folderFacts({}, "/r/a.worktrees/x"), { exists: true, key: "/r/a", top: "/r/a.worktrees/x", recorded: false });
+  assert.deepEqual(folderFacts({}, "/r/a.worktrees/x"), { exists: true, key: "/r/a", top: "/r/a.worktrees/x", real: null, recorded: false });
   assert.equal(folderFacts({ folders: { "/g": { exists: false, key: null, top: null } } }, "/g").exists, false);
   assert.equal(folderFacts({ folders: { "/g": { exists: false } } }, "/g", "machine-1").exists, true, "another machine's: unknown");
   assert.equal(displayName({ key: "/r/alpha", raw: { name: "  " } }), "alpha");
@@ -349,9 +395,27 @@ test("tidy needs the window: herdr-app failing, a clear error and nothing change
   assert.deepEqual(s.snapshot(), before);
 });
 
-test("readState names a program that isn't there", async () => {
+test("readState names a program that isn't there; with no hc the window-free read goes on with no terminals", async () => {
   const run = async () => ({ code: 127, stdout: "", stderr: "spawn hc ENOENT" });
   await assert.rejects(readState({ run, home: "/h", appHome: "/nowhere" }), /hc is not on PATH/);
+  const state = await readState({ run, home: "/h", appHome: "/nowhere" }, { window: false });
+  assert.deepEqual([state.terminals, state.spaces], [[], []]);
+});
+
+test("readState: only a folder found missing under a parent that is there counts as gone", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-gone-")));
+  const locked = join(root, "locked");
+  mkdirSync(join(locked, "proj"), { recursive: true });
+  chmodSync(locked, 0o000);
+  t.after(() => { chmodSync(locked, 0o755); rmSync(root, { recursive: true, force: true }); });
+  const app = join(root, "app");
+  mkdirSync(app);
+  const gone = join(root, "gone"), unmounted = join(root, "volume", "proj"), unreadable = join(locked, "proj");
+  writeFileSync(join(app, "spaces-agents-projects.json"), JSON.stringify([gone, unmounted, unreadable]));
+  const run = async (cmd, args) => (cmd === "hc" ? { code: 0, stdout: JSON.stringify({ terminals: [] }), stderr: "" } : runProgram(cmd, args));
+  const state = await readState({ run, home: "/h", appHome: app }, { window: false });
+  assert.deepEqual(Object.keys(state.folders), [gone], "the unreadable and the unmounted ones are left out");
+  assert.deepEqual(planOf(state).map(brief), [`prune-registry ${gone}`]);
 });
 
 test("create runs the non-visual fixes only: the registry pruned, a role set; never the window; twice changes nothing more", (t) => {
@@ -403,4 +467,19 @@ test("readState: one hc ls, an hc get per local terminal, and what git says of e
   assert.deepEqual(state.projects.map((p) => p.key), [s.alpha, s.beta]);
   assert.deepEqual(state.terminals.find((x) => x.address === "t3").labels, { bot: ID.cap, role: "dev", "herdr.space": "s2" });
   assert.equal(state.terminals.find((x) => x.address === "t4").parent, "t9");
+});
+
+test("create with no hc on PATH warns once, about its own panes, and nothing from tidy", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-nohc-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bin = join(root, "bin"), project = join(root, "p"), app = join(root, "app");
+  for (const d of [bin, project, app]) mkdirSync(d);
+  git(project, "init", "-q");
+  symlinkSync(process.execPath, join(bin, "node"));
+  symlinkSync(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+  const r = spawnSync(process.execPath, [CLI, "create", "--name", "Solo", "--agent", "claude"],
+    { cwd: project, env: { HOME: root, PATH: bin, HERDR_APP_HOME: app }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /tidy/);
+  assert.equal(r.stderr.trim().split("\n").length, 1);
 });
