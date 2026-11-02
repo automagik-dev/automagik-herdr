@@ -223,7 +223,8 @@ test("checkForUpdate and installUpdate against a fake release", async () => {
 test("node update.mjs: one JSON line, no network with AUTOMAGIK_HERDR_NO_UPDATE=1, rollback by CLI", () => {
   const { home, mods } = appHome("0.1.0");
   try {
-    const env = { ...process.env, HERDR_APP_HOME: home, AUTOMAGIK_HERDR_NO_UPDATE: "1" };
+    // HOME too: a rollback looks at $HOME/.local/bin, which must be a scratch one.
+    const env = { ...process.env, HOME: home, HERDR_APP_HOME: home, AUTOMAGIK_HERDR_NO_UPDATE: "1" };
     const out = execFileSync(process.execPath, [UPDATE, "check"], { env, encoding: "utf8" });
     assert.deepEqual(JSON.parse(out), { current: "0.1.0", latest: null, update: null, disabled: true });
     let failed;
