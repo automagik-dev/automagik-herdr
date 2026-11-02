@@ -95,7 +95,9 @@ This wish turns that branch into the product:
 **depends-on:** herdr-bots
 **blocks:** none
 
-Group 8 (release v0.4.0) also waits for sidebar-rules Groups 2–5, which land in `wish/am-pack` after Group 7 and ship with v0.4.0 (owner, 2026-11-02).
+Version note (2026-11-02): dev's release workflow cuts the next minor for any feat merge, so v0.4.0 went to worker roles (PR #47). The am pack ships as the next minor cut after it merges to dev, expected v0.5.0. Feature PRs into dev wait until it merges, so the number holds. Read "v0.4.0" below as that release.
+
+Group 8 (release v0.4.0) waits for Group 6c (usagemeter), Group 7 (rename), the install fixes for #43 and #44, and the must-fix that keeps the hook scan out of `$HOME` (a project rooted at `$HOME` walked ~/Desktop, ~/Documents, ~/Downloads and ~/Library, which can raise macOS privacy prompts). Sidebar-rules Group 2 is already merged; Groups 3a, 3b, 4 and 5 move to v0.4.1. Owner, 2026-11-02: new installs got only the sidebar, so ship the full pack sooner. (It replaces the earlier ruling that v0.4.0 waits for sidebar-rules Groups 2–5.)
 
 ## Success Criteria
 

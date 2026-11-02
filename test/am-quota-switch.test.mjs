@@ -103,7 +103,7 @@ test("an existing item too large for the one-line add is refused in plain words,
     return true;
   });
   assert.equal(w.kc.item(TARGETS.claude.keychain), huge, "the item is untouched");
-  assert.equal(w.kc.calls().filter((c) => c.add).length, 0, "no add ran — so there is nothing to put back");
+  assert.equal(w.kc.calls().filter((c) => c.cmd === "add-generic-password").length, 0, "no add ran — so there is nothing to put back");
   assert.equal(w.kc.calls().filter((c) => c.cmd === "delete-generic-password").length, 0);
   assert.deepEqual(readdirSync(payloadDir(w.appHome)), [], "the payload and the backup were cleaned up");
 });
@@ -118,7 +118,7 @@ test("a failure after the item was written puts the old item back", async () => 
 
   await assert.rejects(w.run(), /put back/);
   assert.equal(w.kc.item(service), oldItem, "Claude is back on the account it was on, error and all");
-  assert.ok(w.kc.calls().some((c) => c.add), "the add did run before the later step failed");
+  assert.ok(w.kc.calls().some((c) => c.cmd === "add-generic-password"), "the add did run before the later step failed");
   assert.deepEqual(readdirSync(payloadDir(w.appHome)), [], "no token-bearing file is left behind");
 });
 

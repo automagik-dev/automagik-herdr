@@ -21,6 +21,32 @@ anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. I
 you already use stays yours), points the mod manager at this repository's catalog, and runs
 `herdr-app check` on each mod.
 
+**What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
+holds eight mod folders and one layout, and nothing else:
+
+| Folder | What you get |
+|---|---|
+| `spaces-agents` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
+| `sidebar-chrome` | the footer rail (Mods, Automations, Quota, Settings, Add machine) |
+| `auto-tabs` | the tab bar |
+| `new-menu-tui` | the `+` menu (a space row's `+`) |
+| `md-menu` | the terminal's right-click menu with its Markdown files |
+| `mod-manager` | the mod manager (`⌘⇧M`) |
+| `automations` | the automations panel |
+| `am-quota` | the quota panel |
+| `layouts/automagik.json` | the layout that shows all of the above |
+
+Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar (`spaces-agents`)
+alone, with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
+checksum and a version number don't tell the two apart; the folder list does. After installing,
+the installer prints `Installed the pack <v> in <mods>: <folders>`; that list must name all
+eight. To check an install later:
+
+```bash
+sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh
+# am-quota,auto-tabs,automations,md-menu,mod-manager,new-menu-tui,sidebar-chrome,spaces-agents
+```
+
 It never touches anything it did not install:
 
 - its record (`~/.config/herdr-app/automagik-herdr/installed-by-install.sh`) lists every folder
@@ -30,19 +56,38 @@ It never touches anything it did not install:
   `automagik-herdr/backup/<mod>-<date>/`, where it stays until `--uninstall` puts it back;
 - the folders an install or update replaces are kept together in `automagik-herdr/.prev/`;
 - each mod's `.state/`, other dot paths and `node_modules` move into its new copy (a linked
-  `.state` stays a link), and Pocket Link (`mods/pocket-link`) is never read, written or moved.
+  `.state` stays a link), and Pocket Link (`mods/pocket-link`) is never read, written or moved
+  (`--uninstall` only checks that it is there, to leave the usagemeter it shares).
 
-It adds the `automagik` layout (Herdr's main layout with the Automagik sidebar) when you have
-none, and replaces it only while it is v0.2's unchanged copy. The sidebar shows only in that
-layout, so while Herdr shows another one the installer asks before switching (or prints the
-`herdr-app do layout.switch` command when it can't ask). Running it again is safe. Add options
-after `bash -s --`: `--yes` answers every question, `--version 0.3.0` installs that release
-(v0.3.0 or later), `--adopt` takes over same-named mods, `--uninstall` moves the pack out of
-`mods/`, puts back what it adopted and removes the layout if the installer added it and you
-haven't changed it.
+It adds the `automagik` layout (Herdr's main layout with the whole pack in place) when you have
+none, and replaces it only while it is the unchanged copy v0.2 to v0.4 shipped. The pack shows
+only in a layout that names it, so while Herdr shows another one the installer asks before
+switching (or prints the `herdr-app do layout.switch` command when it can't ask). A layout of
+your own that names `spaces-agents` is never edited: the installer lists the pack pieces it
+lacks and points at the pack's copy to take their blocks from (see
+[Wiring](#wiring-your-layout)); or switch to the `automagik` layout. Running it again is safe.
+Add options after `bash -s --`: `--yes` answers every question, `--version 0.5.0` installs that
+release (v0.5.0 or later: earlier ones have no pack), `--adopt` takes over same-named mods,
+`--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
+the installer added it and you haven't changed it.
 
-**From v0.2:** rerun the one-liner above. v0.2's own `automagik-herdr update` finds nothing
-newer, because later releases ship the whole pack under a new name.
+It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.2.0, the token
+meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
+`SHA256SUMS`, written atomically. It skips the download when that version is already there and
+never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
+sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
+time; there is no LaunchAgent and no daemon. A dev build counts by its version number, so
+`0.3.0-dev` stays, and a file there that reports no version is left with a warning.
+`--no-usagemeter` leaves the binary alone, on install and on `--uninstall`; a failed install is
+only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
+that version and Pocket Link is not installed; usagemeter's data is kept.
+
+**From v0.2 to v0.4.x:** rerun the one-liner above. Their own `automagik-herdr update` finds
+nothing newer, because the pack ships under a new name. The installer replaces the sidebar-only
+`spaces-agents` (kept in `automagik-herdr/.prev/`, its `.state` carried over), adds the other
+seven mods, and replaces the `automagik` layout while it is the unchanged one those releases
+shipped. If you adapted a layout of your own to show the sidebar, it stays as it is; the
+installer prints what it lacks.
 
 ### Paste this to your agent
 
@@ -53,15 +98,16 @@ Install Automagik Herdr on this Mac and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
    If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
-   with: ... | bash -s -- --yes
-   If it stops for anything else (not a Mac), tell me what it printed and stop.
-   If the output has a layout.switch command, ask me whether to switch, and run that exact
-   command only if I say yes.
-2. Check the install. Both must succeed:
-   automagik-herdr --version
-   herdr-app check ~/.config/herdr-app/mods/spaces-agents
-   If automagik-herdr is not found, use ~/.local/bin/automagik-herdr and tell me to add
-   ~/.local/bin to my PATH.
+   with: ... | bash -s -- --yes. If it stops for anything else, tell me what it printed and stop.
+   If the output has a layout.switch command, ask me before running that exact command. If
+   it names a layout of mine that lacks pack pieces, tell me which; edit it only if I ask.
+2. Verify, don't assume: a version and a checksum don't say what was installed. All must hold:
+   automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
+   sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
+   am-quota,auto-tabs,automations,md-menu,mod-manager,new-menu-tui,sidebar-chrome,spaces-agents;
+   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those eight mods.
+   If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
+   found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
    (claude, codex, gemini…). Characters: whale, octopus, star, moon, wave, squircle, zed,
    hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
@@ -70,7 +116,7 @@ Install Automagik Herdr on this Mac and set up my first bot.
 4. In that folder, create and start it:
    automagik-herdr create --kind=main --name=<name> --agent=<agent> --character=<character>
    automagik-herdr start <name>
-5. Report back: the installed version, the output of automagik-herdr ls, and anything that failed.
+5. Report back: the installed version and mods, the output of automagik-herdr ls, and what failed.
 Do not edit files under ~/.config/herdr-app by hand.
 ```
 
@@ -314,7 +360,9 @@ already running may need `/hooks` once to load the hook.
 
 ### Manual install
 
-Without the installer, from a checkout (the bot mod alone):
+Without the installer, from a checkout: the bot mod alone, which is the sidebar without the rest
+of the pack (for the rest, copy each folder of the table above the same way, and see
+[Wiring](#wiring-your-layout)):
 
 ```bash
 cp -R mods/spaces-agents ~/.config/herdr-app/mods/
@@ -375,12 +423,13 @@ with its own `RECIPE.md`:
 
 | Mod | Derived from | What it does |
 |---|---|---|
-| `sidebar-chrome` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Mods, Automations, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
+| `sidebar-chrome` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Mods, Automations, Quota, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
 | `auto-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. |
 | `automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
 | `md-menu` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
 | `new-menu-tui` | Herdr's `new-menu` | The `+` menu: terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
 | `mod-manager` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
+| `am-quota` | clean-room | A sidebar panel listing every Claude Code and Codex account the CLIProxyAPI knows, with its window, and switching the local credentials to the one you pick; the rail's Quota tab toggles it. |
 
 **Not in this pack, on purpose:** Pocket Link belongs to
 [automagik-pocket](https://github.com/automagik-dev/automagik-pocket) (`desktop/pocket-link/`), which
@@ -415,7 +464,8 @@ when a `mod.json`, a mod folder or an SVG under `mods/` changes; it writes nothi
 
 ## Wiring (your layout)
 
-The bot mod's own install steps are above. For the rest, in the layout you use:
+The installer does this for the `automagik` layout. To give a layout of your own the whole pack,
+copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's copy) into it:
 
 1. root: `"terminal_menu": "md-menu"`;
 2. the tab bar block: `"mod": "auto-tabs"`, `"size": { "px": 42 }`;
@@ -424,7 +474,11 @@ The bot mod's own install steps are above. For the rest, in the layout you use:
    `"size": { "px": 42 }`;
 5. a block `{ "id": "automations-panel", "content": { "mod": "automations" }, "size":
    { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
-   it, and `automations` comes from the marketplace, not from this pack.
+   it;
+6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles.
+
+`new-menu-tui` (opened by the sidebar's `+`) and `mod-manager` (`⌘⇧M`, the rail's Mods tab) need
+no block.
 
 ## One installer
 
