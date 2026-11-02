@@ -16,6 +16,10 @@
 //       merges free keys, writes the mod manager's catalog.json, places the layout (D8) and runs
 //       `herdr-app check` on every installed mod (exit 3 when one fails). Exit 4: installed, but a
 //       step after the swap (the record, the kept set) did not finish; its warning says where things are.
+//   node update.mjs repair --from <tgz> --version <v> [--mods <dir>]
+//       install.sh's same-version rerun: checks every installed pack file against that tarball,
+//       reinstalls a missing or damaged folder (its damaged copy kept in backup/), puts back a
+//       missing automagik layout and runs `herdr-app check` on every mod (exit 3 / 4 as above).
 //
 // <dir> defaults to $HERDR_APP_HOME/mods (~/.config/herdr-app/mods), never this file's own
 // folder, so running it from a checkout never replaces the checkout. Everything else lives in
@@ -290,40 +294,106 @@ function carryV1(modsDir, record, log) {
  * backup/ and replaced. A link is never replaced. Returns `{ version, mods, installed, replaced,
  * left, adopted, retired, prev }` and rewrites the record.
  */
-export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir(), adopt = false, log = () => {}, rename = renameSync }) {
-  if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
+/**
+ * Unpacks a release tarball into `staging` (an empty folder) and checks it is a plain pack: only
+ * folders and plain files, its folders exactly the PACK_MODS of the release.js it carries, each with
+ * main.js and mod.json, and VERSION `version`. Returns its mod folders, sorted.
+ */
+async function stagePack(tgzPath, version, staging) {
   const unsafe = await listEntries(resolve(tgzPath));
   if (unsafe.length > 0) throw new Error(`${tgzPath} is not a plain pack (${unsafe.slice(0, 3).join("; ")}): refusing it`);
+  await run("tar", ["-xzf", resolve(tgzPath), "-C", staging]);
+  const irregular = irregularPaths(staging);
+  if (irregular.length > 0) throw new Error(`${tgzPath} unpacked a link or special file (${irregular[0]}): refusing it`);
+  const folders = readdirSync(staging).filter((n) => n !== "layouts").sort();
+  const carrier = folders.filter((n) => isFile(join(staging, n, "update.mjs")) && isFile(join(staging, n, "release.js")));
+  if (carrier.length !== 1) throw new Error(`${tgzPath} holds no one folder with update.mjs and release.js: refusing it`);
+  const { PACK_MODS: listed } = await import(pathToFileURL(join(staging, carrier[0], "release.js")).href);
+  if (!Array.isArray(listed) || [...listed].sort().join(",") !== folders.join(",") || !listed.every(packFolder)) {
+    throw new Error(`${tgzPath}'s folders (${folders.join(", ")}) are not its PACK_MODS (${listed}): refusing it`);
+  }
+  for (const m of folders) {
+    if (!isFile(join(staging, m, "main.js")) || !isFile(join(staging, m, "mod.json"))) throw new Error(`${tgzPath}: ${m}/ has no main.js and mod.json: refusing it`);
+  }
+  const carried = readVersion(join(staging, carrier[0]));
+  if (carried !== version) throw new Error(`${tgzPath} carries VERSION ${carried}, not ${version}: refusing it`);
+  return folders;
+}
+
+/** The files under `dir` (relative paths), a mod's private paths (privateName) left out. */
+function shippedFiles(dir, rel = "") {
+  const found = [];
+  for (const name of readdirSync(join(dir, rel)).sort()) {
+    if (rel === "" && privateName(name)) continue;
+    const path = rel ? `${rel}/${name}` : name;
+    if (lstatSync(join(dir, path)).isDirectory()) found.push(...shippedFiles(dir, path));
+    else found.push(path);
+  }
+  return found;
+}
+
+/**
+ * Checks an installed pack against the release tarball it came from (`tgzPath`, already checked
+ * against SHA256SUMS), changing nothing. Every pack folder the ownership record lists must hold
+ * each of the release's files byte for byte (a mod's private paths and files it added are not
+ * judged), and a shipped executable must still be executable. A folder the record lists that is
+ * not in mods/ is missing, unless the mod manager switched it off (moved it to <app
+ * home>/mods-disabled/): that stays off. A folder the record does not list (the person's own,
+ * present or not) and a link are left out. Returns `{ version, missing, damaged: [{ mod,
+ * files }], repair, layout }`: `repair` lists the folders to reinstall, `layout` is "missing"
+ * when <app home>/layouts/automagik.json is gone, else "present".
+ */
+export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir() }) {
+  const staging = mkdtempSync(join(tmpdir(), "automagik-herdr-verify-"));
+  try {
+    const folders = await stagePack(tgzPath, version, staging);
+    const owned = new Set(readMarker(modsDir)?.mods ?? []);
+    const disabled = join(dirname(resolve(modsDir)), "mods-disabled");
+    const missing = [], damaged = [];
+    for (const m of folders) {
+      if (m.toLowerCase() === POCKET_LINK) continue;
+      const live = join(modsDir, m);
+      if (isLink(live)) continue;
+      if (!owned.has(m)) continue;
+      if (!exists(live)) {
+        if (!exists(join(disabled, m))) missing.push(m);
+        continue;
+      }
+      const files = shippedFiles(join(staging, m)).filter((f) => {
+        const at = join(live, f);
+        const want = join(staging, m, f);
+        if (!isFile(at) || isLink(at) || !readFileSync(at).equals(readFileSync(want))) return true;
+        // A shipped executable that lost its exec bit (gaining one is harmless: install.sh chmods the command).
+        return (statSync(want).mode & 0o111) !== 0 && (statSync(at).mode & 0o111) === 0;
+      });
+      if (files.length) damaged.push({ mod: m, files });
+    }
+    const layout = isFile(join(dirname(resolve(modsDir)), PACK_LAYOUT)) ? "present" : "missing";
+    return { version, missing, damaged, repair: [...missing, ...damaged.map((d) => d.mod)].sort(), layout };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
+  if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
   const state = stateDirOf(modsDir);
   mkdirSync(state, { recursive: true });
   const staging = mkdtempSync(join(state, "staging-"));
   const next = freshPath(state, ".prev-next-");
   let swapped = false;
   try {
-    await run("tar", ["-xzf", resolve(tgzPath), "-C", staging]);
-    const irregular = irregularPaths(staging);
-    if (irregular.length > 0) throw new Error(`${tgzPath} unpacked a link or special file (${irregular[0]}): refusing it`);
-    const folders = readdirSync(staging).filter((n) => n !== "layouts").sort();
-    const carrier = folders.filter((n) => isFile(join(staging, n, "update.mjs")) && isFile(join(staging, n, "release.js")));
-    if (carrier.length !== 1) throw new Error(`${tgzPath} holds no one folder with update.mjs and release.js: refusing it`);
-    const { PACK_MODS: listed } = await import(pathToFileURL(join(staging, carrier[0], "release.js")).href);
-    if (!Array.isArray(listed) || [...listed].sort().join(",") !== folders.join(",") || !listed.every(packFolder)) {
-      throw new Error(`${tgzPath}'s folders (${folders.join(", ")}) are not its PACK_MODS (${listed}): refusing it`);
-    }
-    for (const m of folders) {
-      if (!isFile(join(staging, m, "main.js")) || !isFile(join(staging, m, "mod.json"))) throw new Error(`${tgzPath}: ${m}/ has no main.js and mod.json: refusing it`);
-    }
-    const carried = readVersion(join(staging, carrier[0]));
-    if (carried !== version) throw new Error(`${tgzPath} carries VERSION ${carried}, not ${version}: refusing it`);
+    const folders = await stagePack(tgzPath, version, staging);
 
     const before = readMarker(modsDir);
+    if (repair && before?.version !== version) throw new Error(`the installed pack is ${before?.version ?? "not this installer's"}, not ${version}: nothing to repair`);
     const record = {
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
       migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [] };
     const moves = [];
     // A folder the person owns moves to backup/ (never replaced) and is recorded, so --uninstall puts it back.
     const adoptFolder = (m) => {
@@ -334,6 +404,9 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     };
     for (const m of folders) {
       const live = join(modsDir, m), fresh = join(staging, m);
+      // A repair reinstalls only the folders it names; every other one the record lists stays as it
+      // is, and one it doesn't list (the person's own, or one they removed) is never installed.
+      if (repair && !repair.includes(m)) { if (owned.has(m)) record.mods.push(m); continue; }
       if (isLink(live)) {
         if (owned.has(m)) throw new Error(`${live} is a link (a checkout?): update it with git instead`);
         plan.left.push(m);
@@ -350,6 +423,13 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
         } else if (kept?.mods.includes(m)) carryPrivate(join(prevSetOf(modsDir), m), fresh);
         // (A folder a rollback or --uninstall moved into the kept set comes back with its state.)
         plan.installed.push(m);
+      } else if (owned.has(m) && repair) {
+        // A damaged copy of the installed release goes to backup/, never into the kept set: that
+        // stays the release before, for a rollback. Not recorded as adopted: --uninstall leaves it.
+        carryPrivate(live, fresh);
+        const backup = join(backupOf(modsDir), backupName(modsDir, m));
+        moves.push([live, backup]);
+        plan.repaired.push({ mod: m, backup });
       } else if (owned.has(m)) {
         carryPrivate(live, fresh);
         moves.push([live, join(next, m)]);
@@ -373,7 +453,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
       else plan.left.push(m);
     }
     // A folder the record lists that this release no longer ships leaves mods/ with the set.
-    for (const m of owned) {
+    for (const m of repair ? [] : owned) {
       if (folders.includes(m) || !packFolder(m) || !exists(join(modsDir, m)) || isLink(join(modsDir, m))) continue;
       moves.push([join(modsDir, m), join(next, m)]);
       plan.retired.push(m);
@@ -399,6 +479,8 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
       log(`left alone: mods/${m} (not installed by automagik-herdr; ${why})`);
     }
     for (const a of plan.adopted) log(`adopted mods/${a.mod}: the original is kept in ${a.backup}`);
+    for (const r of plan.repaired) log(`repaired mods/${r.mod}: reinstalled ${version}; the damaged copy is kept in ${r.backup}`);
+    for (const m of repair ? plan.installed : []) log(`repaired mods/${m}: it was missing; installed ${version}`);
     for (const w of warnings) log(`warning: ${w}`);
     return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, warnings };
   } finally {
@@ -622,30 +704,52 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
     writeFileSync(catalogs[1], JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
   }
 
+  placeLayout({ modsDir, tgzDir, record, log });
+  return checkMods({ modsDir, mods: record.mods, log, herdrApp }).failed;
+}
+
+/**
+ * The pack's layout (D8): added when absent; replaced only when byte-identical to v0.2.x's or to
+ * the last pack's; otherwise kept with a note. Records it and keeps the pack's copy as the
+ * reference. Returns "added", "replaced", "kept", "same" or null (the tarball has none).
+ */
+export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
+  const appHome = dirname(resolve(modsDir));
   const shipped = join(tgzDir, PACK_LAYOUT);
   const ref = join(stateDirOf(modsDir), "automagik.json");
   const live = join(appHome, PACK_LAYOUT);
+  let placed = null;
   if (isFile(shipped)) {
     const body = readFileSync(shipped);
     const had = isFile(live) ? readFileSync(live) : null;
     const lastPack = isFile(ref) ? readFileSync(ref) : null;
     if (!had || sha256(had) === V020_LAYOUT_SHA256 || (lastPack && had.equals(lastPack))) {
+      placed = "same";
       if (!had || !had.equals(body)) {
         mkdirSync(dirname(live), { recursive: true });
         writeFileSync(live, body);
         log(had ? `replaced the automagik layout (${live}): it was the one an older release shipped` : `added the automagik layout (${live})`);
+        placed = had ? "replaced" : "added";
       }
     } else {
       log(`kept your automagik layout (${live}): it differs from the one v0.2 shipped; the pack's is in ${ref}`);
+      placed = "kept";
     }
     record.layout = !had || record.layout === "added" ? "added" : "kept";
     writeFileSync(ref, body);
     writeMarker(modsDir, record);
   }
+  return placed;
+}
 
+/**
+ * `herdr-app check` on each of `mods`, its whole output shown on a failure. Returns `{ failed,
+ * checked }`: the mods whose check failed, and false when herdr-app is not on PATH (said once).
+ */
+export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app" }) {
   const failed = [];
   let haveHerdr = true;
-  for (const m of record.mods) {
+  for (const m of mods) {
     if (!haveHerdr) break;
     try {
       execFileSync(herdrApp, ["check", join(modsDir, m)], { stdio: "pipe" });
@@ -653,10 +757,12 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
     } catch (error) {
       if (error.code === "ENOENT") { haveHerdr = false; log("herdr-app is not on PATH: no mod was checked"); break; }
       failed.push(m);
-      log(`check FAILED: ${m}: ${String(error.stderr || error.stdout || error.message).trim().split("\n")[0]}`);
+      const [first, ...rest] = String(error.stderr || error.stdout || error.message).trim().split("\n");
+      log(`check FAILED: ${m}: ${first}`);
+      for (const line of rest) log(`    ${line}`);
     }
   }
-  return failed;
+  return { failed, checked: haveHerdr && mods.length > 0 };
 }
 
 /** `{ current, latest, update, disabled }`: latest is the newest release's version or null; update from pickUpdate. */
@@ -684,9 +790,41 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply | rollback | install --from <tgz> --version <v> [--adopt] [--setup]  (each takes [--mods <dir>])";
+/**
+ * install.sh's same-version rerun: checks the installed pack against the release tarball
+ * (verifyInstall), reinstalls each missing or damaged folder (applyUpdate's repair: the damaged
+ * copy to backup/, the kept set untouched), puts back a missing automagik layout (placeLayout), then
+ * runs `herdr-app check` on every pack mod. `{ version, repaired, layout, checkFailed, checked, changed }`
+ * (`checked` false: herdr-app is not on PATH, so no mod was checked);
+ * `changed` is false only when every file matched the release and no folder or layout was put
+ * back (the layout's reference copy and the record are rewritten as on every install).
+ */
+export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir(), log = () => {}, herdrApp = "herdr-app" }) {
+  const found = await verifyInstall({ tgzPath, version, modsDir });
+  for (const m of found.missing) log(`missing: mods/${m}`);
+  for (const d of found.damaged) {
+    log(`differs from the release: mods/${d.mod} (${d.files.slice(0, 5).join(", ")}${d.files.length > 5 ? `, and ${d.files.length - 5} more` : ""})`);
+  }
+  if (found.layout === "missing") log(`missing: the automagik layout (${join(dirname(resolve(modsDir)), PACK_LAYOUT)})`);
+  const repaired = found.repair.length ? await applyUpdate({ tgzPath, version, modsDir, repair: found.repair, log }) : null;
+  const tgzDir = mkdtempSync(join(tmpdir(), "automagik-herdr-layout-"));
+  try {
+    await run("tar", ["-xzf", resolve(tgzPath), "-C", tgzDir, PACK_LAYOUT]).catch(() => {});
+    const record = readMarker(modsDir);
+    const layout = placeLayout({ modsDir, tgzDir, record, log });
+    // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
+    const { failed: checkFailed, checked } = checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp });
+    const changed = Boolean(repaired) || layout === "added" || layout === "replaced";
+    return { version, repaired: found.repair, layout, checkFailed, checked, changed, warnings: repaired?.warnings ?? [] };
+  } finally {
+    rmSync(tgzDir, { recursive: true, force: true });
+  }
+}
+
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply | rollback | install --from <tgz> --version <v> [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
 const FLAGS = {
   check: [], apply: [], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--adopt", "--setup"],
+  repair: ["--from", "--version"],
 };
 const VALUED = new Set(["--mods", "--from", "--version"]);
 
@@ -705,7 +843,7 @@ export function parseArgs(argv) {
       opts[flag.slice(2)] = value;
     } else opts[flag.slice(2)] = true;
   }
-  if (command === "install" && !(opts.from && opts.version)) throw usage();
+  if ((command === "install" || command === "repair") && !(opts.from && opts.version)) throw usage();
   return { command, opts };
 }
 
@@ -724,6 +862,13 @@ async function main(argv) {
   if (command === "rollback") {
     const r = rollback({ modsDir, log, ...host });
     if (r.warnings.length) process.exitCode = 4;
+    return r;
+  }
+  if (command === "repair") {
+    // Exit 3: a mod's herdr-app check failed; exit 4: a step after a swap did not finish.
+    const r = await repairInstall({ tgzPath: opts.from, version: opts.version, modsDir, log });
+    if (r.warnings.length) process.exitCode = 4;
+    else if (r.checkFailed.length) process.exitCode = 3;
     return r;
   }
   // install.sh: the tarball it downloaded and checked with shasum, through applyUpdate's checks.
