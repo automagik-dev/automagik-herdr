@@ -283,3 +283,15 @@ export function effortArgs(agentKey, effort) {
   if (!effort || !EFFORT[agentKey]) return [];
   return EFFORT[agentKey](effort);
 }
+
+// How each agent takes a first prompt that starts an interactive session. Most read a bare
+// trailing argument; agy 1.4.12 only through `-i` / `--prompt-interactive` (a stray
+// trailing argument is an error).
+const PROMPT = {
+  antigravity: (task) => ["-i", task],
+};
+
+/** The arguments that hand `agentKey` its first prompt `task`: the bare task unless PROMPT says otherwise. */
+export function promptArgs(agentKey, task) {
+  return PROMPT[agentKey] ? PROMPT[agentKey](task) : [task];
+}

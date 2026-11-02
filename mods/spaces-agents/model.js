@@ -97,7 +97,9 @@ export function workerProblem(worker) {
  * id or name, a repeated id or an unknown kind is left out; anything else is kept and
  * named in `warnings` (a long instructions text, a missing agent, an unknown look name,
  * a second main bot: the first one counts). A retired agent (models.js LEGACY_AGENTS, as
- * `gemini`) is read as its replacement, with a warning. `raw` is the file exactly as read, a separate
+ * `gemini`) is read as its replacement, with a warning; a model pin made for it (the bot's
+ * `model`, or `worker.model` when its workers ran it) is dropped, since the replacement
+ * doesn't take it. `raw` is the file exactly as read, a separate
  * copy: edit that one to write the file back (bots.js writeBots), so entries left out of
  * `file` survive.
  */
@@ -145,11 +147,23 @@ export function parseBots(text) {
     const workerWhy = workerProblem(bot.worker);
     if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
     const retired = (k) => (typeof k === "string" && Object.hasOwn(LEGACY_AGENTS, k) ? k : null);
-    const old = retired(bot.agent) ?? retired(bot.worker?.agent);
+    const seatOld = retired(bot.agent);
+    const workerOld = isObject(bot.worker) ? retired(bot.worker.agent) ?? (bot.worker.agent ? null : seatOld) : null;
+    const old = seatOld ?? workerOld;
     if (old) {
-      warnings.push(`${where}: agent ${old} is retired; it runs on ${LEGACY_AGENTS[old]}`);
-      if (retired(bot.agent)) bot.agent = LEGACY_AGENTS[bot.agent];
-      if (retired(bot.worker?.agent)) bot.worker = { ...bot.worker, agent: LEGACY_AGENTS[bot.worker.agent] };
+      const dropped = [];
+      if (seatOld) {
+        bot.agent = LEGACY_AGENTS[seatOld];
+        if (bot.model) { dropped.push(`model pin ${bot.model}`); delete bot.model; }
+      }
+      if (workerOld) {
+        const w = { ...bot.worker };
+        if (w.agent) w.agent = LEGACY_AGENTS[w.agent];
+        if (w.model) { dropped.push(`worker model ${w.model}`); delete w.model; }
+        bot.worker = w;
+      }
+      const tail = dropped.length ? ` (${dropped.join(" and ")} dropped)` : "";
+      warnings.push(`${where}: agent ${old} is retired; it runs on ${LEGACY_AGENTS[old]}${tail}`);
     }
     if (bot.rank !== undefined && !RANKS.includes(bot.rank)) {
       warnings.push(`${where}: unknown rank ${JSON.stringify(bot.rank)}; ignored (one of ${RANKS.join(", ")})`);

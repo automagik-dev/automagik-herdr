@@ -47,7 +47,7 @@ const currentAgent = (key) => (Object.hasOwn(LEGACY_AGENTS, key) ? LEGACY_AGENTS
  * it has none yet, else a member reporting to the main bot. Edit: every field from the
  * stored entry (`bot`, as parseBots' raw copy holds it), so a field left alone is written
  * back as it was (a pin the list no longer has, a lead that fell back, planned's other keys).
- * A retired agent (LEGACY_AGENTS) opens as its replacement, as parseBots reads it.
+ * A retired agent (LEGACY_AGENTS) opens as its replacement with no pin, as parseBots reads it.
  */
 export function formFrom({ mode = "create", bot = null, file = null, id = null, agent = "" } = {}) {
   if (mode === "edit" && bot) {
@@ -58,7 +58,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
     return {
       mode, id: bot.id, name: str(bot.name), kind: bot.kind === "main" ? "main" : "member",
       character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
-      role: str(bot.role), instructions: str(bot.instructions), agent: currentAgent(str(bot.agent)), pin: str(bot.model),
+      role: str(bot.role), instructions: str(bot.instructions), agent: currentAgent(str(bot.agent)), pin: currentAgent(str(bot.agent)) === str(bot.agent) ? str(bot.model) : "",
       lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
       rank: str(bot.rank), planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
       storedPlanned: planned,

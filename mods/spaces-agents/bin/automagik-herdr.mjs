@@ -1117,7 +1117,7 @@ async function cmdWorker(opts, rest) {
     const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
     const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
-      model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, path: process.env.PATH });
+      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, path: process.env.PATH });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
