@@ -336,9 +336,10 @@ function shippedFiles(dir, rel = "") {
  * Checks an installed pack against the release tarball it came from (`tgzPath`, already checked
  * against SHA256SUMS), changing nothing. Every pack folder the ownership record lists must hold
  * each of the release's files byte for byte (a mod's private paths and files it added are not
- * judged); a pack folder that is not in mods/ at all is missing, unless the mod manager switched
- * it off (moved it to <app home>/mods-disabled/): that stays off. A folder of the person's own
- * (not in the record) and a link are left out. Returns `{ version, missing, damaged: [{ mod,
+ * judged), and a shipped executable must still be executable. A folder the record lists that is
+ * not in mods/ is missing, unless the mod manager switched it off (moved it to <app
+ * home>/mods-disabled/): that stays off. A folder the record does not list (the person's own,
+ * present or not) and a link are left out. Returns `{ version, missing, damaged: [{ mod,
  * files }], repair, layout }`: `repair` lists the folders to reinstall, `layout` is "missing"
  * when <app home>/layouts/automagik.json is gone, else "present".
  */
@@ -353,14 +354,17 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
       if (m.toLowerCase() === POCKET_LINK) continue;
       const live = join(modsDir, m);
       if (isLink(live)) continue;
+      if (!owned.has(m)) continue;
       if (!exists(live)) {
         if (!exists(join(disabled, m))) missing.push(m);
         continue;
       }
-      if (!owned.has(m)) continue;
       const files = shippedFiles(join(staging, m)).filter((f) => {
         const at = join(live, f);
-        return !isFile(at) || isLink(at) || !readFileSync(at).equals(readFileSync(join(staging, m, f)));
+        const want = join(staging, m, f);
+        if (!isFile(at) || isLink(at) || !readFileSync(at).equals(readFileSync(want))) return true;
+        // A shipped executable that lost its exec bit (gaining one is harmless: install.sh chmods the command).
+        return (statSync(want).mode & 0o111) !== 0 && (statSync(at).mode & 0o111) === 0;
       });
       if (files.length) damaged.push({ mod: m, files });
     }
@@ -400,8 +404,9 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     };
     for (const m of folders) {
       const live = join(modsDir, m), fresh = join(staging, m);
-      // A repair reinstalls only the folders it names; every other one the record lists stays as it is.
-      if (repair && !repair.includes(m) && owned.has(m)) { record.mods.push(m); continue; }
+      // A repair reinstalls only the folders it names; every other one the record lists stays as it
+      // is, and one it doesn't list (the person's own, or one they removed) is never installed.
+      if (repair && !repair.includes(m)) { if (owned.has(m)) record.mods.push(m); continue; }
       if (isLink(live)) {
         if (owned.has(m)) throw new Error(`${live} is a link (a checkout?): update it with git instead`);
         plan.left.push(m);
@@ -700,7 +705,7 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
   }
 
   placeLayout({ modsDir, tgzDir, record, log });
-  return checkMods({ modsDir, mods: record.mods, log, herdrApp });
+  return checkMods({ modsDir, mods: record.mods, log, herdrApp }).failed;
 }
 
 /**
@@ -738,8 +743,8 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
 }
 
 /**
- * `herdr-app check` on each of `mods`, its whole output shown on a failure. Returns the mods whose
- * check failed; none when herdr-app is not on PATH (said once).
+ * `herdr-app check` on each of `mods`, its whole output shown on a failure. Returns `{ failed,
+ * checked }`: the mods whose check failed, and false when herdr-app is not on PATH (said once).
  */
 export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app" }) {
   const failed = [];
@@ -757,7 +762,7 @@ export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app
       for (const line of rest) log(`    ${line}`);
     }
   }
-  return failed;
+  return { failed, checked: haveHerdr && mods.length > 0 };
 }
 
 /** `{ current, latest, update, disabled }`: latest is the newest release's version or null; update from pickUpdate. */
@@ -789,7 +794,8 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
  * install.sh's same-version rerun: checks the installed pack against the release tarball
  * (verifyInstall), reinstalls each missing or damaged folder (applyUpdate's repair: the damaged
  * copy to backup/, the kept set untouched), puts back a missing automagik layout (placeLayout), then
- * runs `herdr-app check` on every pack mod. `{ version, repaired, layout, checkFailed, changed }`;
+ * runs `herdr-app check` on every pack mod. `{ version, repaired, layout, checkFailed, checked, changed }`
+ * (`checked` false: herdr-app is not on PATH, so no mod was checked);
  * `changed` is false only when every file matched the release and no folder or layout was put
  * back (the layout's reference copy and the record are rewritten as on every install).
  */
@@ -807,9 +813,9 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     const record = readMarker(modsDir);
     const layout = placeLayout({ modsDir, tgzDir, record, log });
     // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
-    const checkFailed = checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp });
+    const { failed: checkFailed, checked } = checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp });
     const changed = Boolean(repaired) || layout === "added" || layout === "replaced";
-    return { version, repaired: found.repair, layout, checkFailed, changed, warnings: repaired?.warnings ?? [] };
+    return { version, repaired: found.repair, layout, checkFailed, checked, changed, warnings: repaired?.warnings ?? [] };
   } finally {
     rmSync(tgzDir, { recursive: true, force: true });
   }

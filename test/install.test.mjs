@@ -18,6 +18,8 @@ const { PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import(
 const CASK = "penso/tap/herdr-gpui";
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+/** The command install.sh links (its cli_target): the sidebar's bin/automagik-herdr wrapper when the pack ships one, else the .mjs. */
+const cliTarget = (s) => join(s.pack, "bin", existsSync(join(s.pack, "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs");
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 /** One digest over every file and link under `dir` (names, link targets, bytes). */
 const treeSum = (dir) => {
@@ -142,7 +144,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
-  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  assert.equal(readlinkSync(s.link), cliTarget(s));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:mod-manager" } });
   assert.match(readFileSync(join(s.appHome, "data", "mod-manager", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
@@ -153,7 +155,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const before = lstatSync(s.pack).ino;
   const again = s.run();
   assert.equal(again.code, 0, again.err);
-  assert.match(again.out, /Automagik Herdr 9\.9\.0 is already up to date/);
+  assert.match(again.out, /Automagik Herdr 9\.9\.0 is already up to date .*: every file matches the release; herdr-app not found, so no mod was checked\./);
   assert.doesNotMatch(again.out, /Downloading|Linked/);
   assert.equal(lstatSync(s.pack).ino, before);
   assert.equal(existsSync(join(s.state, ".prev")), false);
@@ -291,7 +293,7 @@ test("a command link the person pointed elsewhere is never replaced or removed; 
   rmSync(s.link);
   symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
   assert.equal(s.run("--yes").code, 0);
-  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  assert.equal(readlinkSync(s.link), cliTarget(s));
   assert.equal(s.run("--uninstall").code, 0);
   assert.equal(readdirSync(dirname(s.link)).includes("automagik-herdr"), false);
 });
@@ -588,6 +590,34 @@ test("a same-version rerun repairs a corrupted main.js, a deleted layout and a m
   assert.equal(s.checks().some((c) => /sheepdog|pocket-link/i.test(c)), false);
 });
 
+test("a same-version rerun never installs a pack-named folder the record doesn't list, and restores a lost exec bit", (t) => {
+  const s = scratch(t);
+  // The person's own md-menu, there before the install: left alone, so not in the record.
+  mkdirSync(join(s.mods, "md-menu"), { recursive: true });
+  writeFileSync(join(s.mods, "md-menu", "main.js"), "// mine\n");
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  assert.doesNotMatch(s.mark(), /md-menu/);
+  // Switched off (mods-disabled/), or removed: neither brings the pack's md-menu in.
+  const off = join(s.appHome, "mods-disabled", "md-menu");
+  mkdirSync(dirname(off), { recursive: true });
+  execFileSync("mv", [join(s.mods, "md-menu"), off]);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /already up to date/);
+  assert.equal(existsSync(join(s.mods, "md-menu")), false);
+  rmSync(off, { recursive: true });
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(existsSync(join(s.mods, "md-menu")), false);
+  // A shipped executable that lost its exec bit differs from the release.
+  const cmd = join(s.pack, "bin", "automagik-herdr.mjs");
+  chmodSync(cmd, 0o644);
+  const bit = s.run("--yes");
+  assert.equal(bit.code, 0, bit.err);
+  assert.match(bit.out, /differs from the release: mods\/spaces-agents \(bin\/automagik-herdr\.mjs\)/);
+  assert.notEqual(lstatSync(cmd).mode & 0o111, 0);
+});
+
 test("a same-version rerun whose herdr-app check fails exits 1 with the check's output, never up to date", (t) => {
   const s = scratch(t);
   s.addHerdrApp();
@@ -606,24 +636,34 @@ test("a clean same-version rerun checks every file and every mod, swaps nothing 
   s.addHerdrApp();
   s.show("automagik");
   s.publish("9.9.0");
+  s.publishMeter();
   assert.equal(s.run("--yes").code, 0);
-  const ino = lstatSync(s.pack).ino, mark = s.mark(), checksBefore = s.checks().length;
+  const ino = lstatSync(s.pack).ino, mark = s.mark(), checksBefore = s.checks().length, meterBefore = s.meterCalls().length;
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Checksum: ok\.\n(  check passed: .*\n)+(.*\n)*Automagik Herdr 9\.9\.0 is already up to date/);
+  assert.match(r.out, /Checksum: ok\.\n(  check passed: .*\n)+(.*\n)*Automagik Herdr 9\.9\.0 is already up to date .*: every file matches the release and every mod passed herdr-app check\./);
   assert.equal(s.checks().length - checksBefore, PACK_MODS.length);
+  assert.match(r.out, /usagemeter 0\.2\.0: already installed/);
+  assert.equal(s.meterCalls().length, meterBefore, "usagemeter current: nothing downloaded");
   assert.doesNotMatch(r.out, /Downloading|Linked|repaired|missing|differs|Done/);
   assert.equal(lstatSync(s.pack).ino, ino);
   assert.equal(s.mark(), mark);
   assert.equal(existsSync(join(s.state, "backup")), false);
   assert.equal(existsSync(join(s.state, ".prev")), false);
+  // usagemeter is optional: its download failing is a warning, and the verified pack is still up to date.
+  rmSync(join(s.home, ".local", "bin", "usagemeter"));
+  rmSync(join(s.root, "release", "usagemeter"), { recursive: true });
+  const noMeter = s.run("--yes");
+  assert.equal(noMeter.code, 0, noMeter.err);
+  assert.match(noMeter.out, /Warning: usagemeter was not installed/);
+  assert.match(noMeter.out, /Automagik Herdr 9\.9\.0 is already up to date/);
   // The command's link gone, the pack intact: linked again, and that is not "up to date".
   rmSync(s.link);
   const relinked = s.run("--yes");
   assert.equal(relinked.code, 0, relinked.err);
   assert.match(relinked.out, /Linked .*automagik-herdr\.\n(.*\n)*Done: Automagik Herdr 9\.9\.0\./);
   assert.doesNotMatch(relinked.out, /up to date/);
-  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  assert.equal(readlinkSync(s.link), cliTarget(s));
   assert.equal(lstatSync(s.pack).ino, ino);
 });
 

@@ -21,9 +21,10 @@
 # token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
 # over a newer one; a failure there is only a warning. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
-# missing or damaged folder (the damaged copy kept in backup/), puts back a
-# missing automagik layout and runs `herdr-app check` again; it says "up to date" only when all of
-# that passed. It never touches a project's .herdr/bots.json or Herdr's settings. Apache-2.0.
+# missing or damaged folder the record lists (the damaged copy kept in backup/), puts back a
+# missing automagik layout and runs `herdr-app check` again. It says "up to date" only when every
+# file matches, and says whether the mods were checked too (not without herdr-app). It never
+# touches a project's .herdr/bots.json or Herdr's settings. Apache-2.0.
 #
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
@@ -569,7 +570,11 @@ install() {
   fi
   if [ "$rc" = 3 ]; then switch_hint; fail "herdr-app check failed for a mod (above); the pack is installed, and 'automagik-herdr update --rollback' swaps the kept set back."; fi
   if [ "$same" = yes ] && [ "$changed" = no ]; then
-    say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK): every file matches the release."
+    case $out in
+      *'"checked":true'*) verified="every file matches the release and every mod passed herdr-app check" ;;
+      *) verified="every file matches the release; herdr-app not found, so no mod was checked" ;;
+    esac
+    say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK): $verified."
     switch_hint
     return 0
   fi
