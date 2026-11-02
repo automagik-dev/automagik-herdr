@@ -150,7 +150,8 @@ Nothing else on the line: no labels, no deltas, no bars.
 
 Desktop opens a chip's card under the chip when the pointer rests on it for 260 ms; it stays open
 while the pointer is on the chip or the card, and closes 350 ms after it leaves both. Pocket opens
-the same card as a bottom sheet on tap. Every card: a header row (icon, title, the big number on
+the same card as a bottom sheet on tap. Every non-empty card (an empty one is its header only,
+section 2): a header row (icon, title, the big number on
 the right in monospace, and under it `was {prior}` in `muted` when the prior field is non-null),
 the body, then a footer in `dim`: `as of HH:MM`, plus `· lists trimmed to fit` when
 `space.truncated` is `true`.
@@ -221,3 +222,5 @@ Requests from Pocket that don't contradict the mock are taken and recorded here,
 - 2026-11-02: minutes branch on `round(x)` (section 3); models sort by UTF-16 code unit (section 5);
   the project key is the real path of the parent of git's common dir, no trailing slash, and nested
   worktree rows get no line 2 (section 1).
+- 2026-11-02: section 7 says the header-body-footer layout is for every non-empty card (an empty
+  card has its header only, section 2).
