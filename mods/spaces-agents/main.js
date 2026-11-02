@@ -9,7 +9,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, appHome, knownAgents, notify, props } from "herdr";
+import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, appHome, home, knownAgents, notify, props } from "herdr";
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
@@ -20,6 +20,7 @@ import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
+import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -172,6 +173,10 @@ export default class Spaces extends View {
     // The Automagik theme, selected once (theme.js): now, then on the 15-second timer until done.
     this.applyTheme(cx);
     cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
+    // usagemeter (Group 6c): `usagemeter sync` METER_FIRST_MS after load, then every
+    // METER_EVERY_MS while Herdr is open, one run at a time (meter.js). No LaunchAgent, no daemon.
+    this.meter = { busy: false };
+    cx.timer.after(METER_FIRST_MS, (cx) => this.meterTick(cx));
     // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
     // Otherwise as before: Cmd+V pastes text, or gives a local agent its Ctrl+V for an
@@ -442,6 +447,17 @@ export default class Spaces extends View {
       try { announce(check, shared, setShared, notify); } catch {}
       const wait = nextCheckIn(check.kind);
       if (wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
+    });
+  }
+
+  // One due `usagemeter sync` through Herdr's exec, then the next look when meter.js says.
+  meterTick(cx) {
+    cx.spawn(async (cx) => {
+      let wait = METER_EVERY_MS;
+      try {
+        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter }));
+      } catch {}
+      cx.timer.after(wait, (cx) => this.meterTick(cx));
     });
   }
 
