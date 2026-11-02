@@ -6,7 +6,7 @@
 // Files go through readTextFile/writeTextFile, folders through exec.
 
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
-import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
+import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, parseBots, checkBots, listedProjects } from "./model.js";
 import { relabel, relabelPlan } from "./launchArgs.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
@@ -14,7 +14,7 @@ const REMEMBERED = "spaces-agents.projects";
 // A folder's project changes rarely (a repo made or removed): looked up again after a minute.
 const KEY_TTL = 60_000;
 
-const keys = new Map(); // JSON [machine, folder] -> { key, at }
+const keys = new Map(); // JSON [machine, folder] -> { key, own, at } (model.js projectOf)
 const lastGood = new Map(); // JSON [machine, key] -> { file, warnings }
 
 const id = (machine, key) => JSON.stringify([machine ?? null, key]);
@@ -41,22 +41,38 @@ function existsOn(on) {
 }
 
 /**
- * The project key of a folder on a machine (null: this one), cached for a minute. When the
- * machine can't be reached, the last key found for the folder; with none, it rejects.
+ * The project of a folder on a machine (null: this one), as model.js projectOf's
+ * `{ key, own }`, cached for a minute. When the machine can't be reached, the last answer
+ * found for the folder; with none, it rejects.
  */
-export async function keyOf(folder, machine = null) {
+export async function projectOfFolder(folder, machine = null) {
   const k = id(machine, folder);
   const hit = keys.get(k);
-  if (hit && Date.now() - hit.at < KEY_TTL) return hit.key;
-  let key;
+  if (hit && Date.now() - hit.at < KEY_TTL) return { key: hit.key, own: hit.own };
+  let found;
   try {
-    key = await projectKeyOf(folder, gitOn(machine), existsOn(machine));
+    found = await projectOf(folder, gitOn(machine), existsOn(machine));
   } catch (e) {
-    if (hit) return hit.key;
+    if (hit) return { key: hit.key, own: hit.own };
     throw e;
   }
-  keys.set(k, { key, at: Date.now() });
-  return key;
+  keys.set(k, { ...found, at: Date.now() });
+  return found;
+}
+
+/** The project key of a folder seen in passing (a pane's, a space's): the walk-up rule. */
+export async function keyOf(folder, machine = null) {
+  return (await projectOfFolder(folder, machine)).key;
+}
+
+/** The project of a folder someone picked as the project: its git main checkout, else itself. */
+export async function ownKeyOf(folder, machine = null) {
+  return (await projectOfFolder(folder, machine)).own;
+}
+
+/** Whether a folder is there now; false also when its machine can't be asked. */
+export async function folderExists(folder, machine = null) {
+  try { return (await exec("test", ["-d", folder], { on: machine })).code === 0; } catch { return false; }
 }
 
 // The projects the command line created, edited, started or attached bots in (model.js
