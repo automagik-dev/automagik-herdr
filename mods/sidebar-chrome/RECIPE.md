@@ -24,6 +24,15 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 - **Automations**: `layout.toggle {id: "automations-panel"}` — the panel lives in the left sidebar
   column; the tab shows `selected` while it is not hidden.
 - **Settings** / **Add machine**: `app.settings`, `mod.open:machine-add`.
+- **Other mods' buttons** (`contributions.js`): a mod's `mod.json` can declare
+  `automagik.footer` entries (`id`, `label`, `command`, optional `args`, `icon`, `badge`; README,
+  "Add a sidebar button from your mod"). The footer lists `<app home>/mods` with `find` (as
+  mod-manager does), reads each `mod.json`, keeps at most 4 valid entries in mod-name order and draws
+  them after Quota and Pocket Link, before the rule, in their own group that shrinks and clips
+  first (`min_w(0)`, `overflow_hidden`): same tab, same hover name, `run(command, args)`
+  on press, and a count while `shared(badge)` is a number above 0. A missing or invalid icon draws
+  `circle.svg`. Rescanned on the 30 s look and on a `watchFolder` batch that touches a `mod.json`, a
+  mod folder or an SVG; Pocket Link's folder is never read by this scan.
 - **Rail**: follows the sidebar's width (`layout()`'s `sidebar.size.px < 160`), not a flag; labels
   are tooltips, so a fifth tab costs no height.
 
@@ -32,7 +41,8 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 `mods/sidebar-chrome/main.js`, `mod.json` (`place: none`, `cloned_from` recorded), `puzzle.svg`
 (Lucide's puzzle, `stroke-width 2`, `currentColor`), Herdr's other icons reused from
 `mods/workspace-chrome/`. Herdr API: `theme`, `run`, `props`, `window`, `layout`, `panes`,
-`updates`, `shared`, `setShared`, `readTextFile`, `appHome`, `openOverlay`, `closeOverlay`.
+`updates`, `shared`, `setShared`, `readTextFile`, `appHome`, `exec`, `watchFolder`, `openOverlay`,
+`closeOverlay`. `circle.svg` is Lucide's circle, the contributed buttons' fallback glyph.
 `bot.svg` is Lucide's bot, as Herdr ships it in `frame/welcome/`. Layout: the `sidebar-footer` block's `content.mod` is
 `sidebar-chrome` with `props: {footer: true}`, and its `size.px` is 42.
 
@@ -41,7 +51,8 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 - **Clone, not extension**: Herdr's updates to `workspace-chrome` don't reach it; only the footer
   copy is replaced by this mod — the brand block still uses Herdr's own.
 - The footer's height is part of the layout (`size.px: 42`); a fifth tab still fits, a bigger row
-  would not.
+  would not. Width too: every built-in tab plus 4 contributed ones (about 340 px) is wider than the
+  268 px sidebar; the contributed group clips, the built-in tabs keep their place.
 - `Automations` needs the `automations` mod and a block with id `automations-panel` in the layout;
   without them the toggle does nothing visible.
 

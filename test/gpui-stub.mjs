@@ -5,7 +5,7 @@
 export const nodes = new Map(); // id -> node, of the tree index() last walked
 
 function element(kind, arg) {
-  const node = { kind, arg, kids: [], props: {} };
+  const node = { kind, arg, kids: [], props: {}, calls: [] }; // calls: every other builder call
   const api = {
     child: (c) => { node.kids.push(c); return proxy; },
     children: (cs) => { node.kids.push(...cs); return proxy; },
@@ -23,7 +23,7 @@ function element(kind, arg) {
     get(_t, prop) {
       if (prop === "__node") return node;
       if (prop === "then" || typeof prop === "symbol") return undefined;
-      return api[prop] ?? (() => proxy);
+      return api[prop] ?? ((...args) => { node.calls.push([prop, ...args]); return proxy; });
     },
   });
   if (kind === "button" || kind === "popover") api.id(arg);
