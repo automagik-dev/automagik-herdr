@@ -1,7 +1,8 @@
 // A stand-in for herdr-core's `hc`, for the CLI tests: every call is appended to
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
-// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run.
+// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run,
+// templates (state.templates: [{ name, command }]).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -57,21 +58,29 @@ switch (words[0]) {
     const labels = {};
     let name = null, cwd = null, parent = null;
     let i = 1;
-    for (; i < words.length && words[i] !== "--"; i += 1) {
+    // Options, then argv: after `--`, or from the first word that isn't an option (a template).
+    for (; i < words.length && words[i] !== "--" && words[i].startsWith("--"); i += 1) {
       if (words[i] === "--label") { const kv = words[++i]; labels[kv.slice(0, kv.indexOf("="))] = kv.slice(kv.indexOf("=") + 1); }
       else if (words[i] === "--name") name = words[++i];
       else if (words[i] === "--cwd") cwd = words[++i];
       else if (words[i] === "--parent") parent = words[++i];
     }
-    const argv = words.slice(i + 1);
+    const argv = words.slice(words[i] === "--" ? i + 1 : i);
+    // `env K=V … program …`: the program is the first word after the assignments.
+    const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
     const address = `t${state.next ?? 100}`;
     state.next = (state.next ?? 100) + 1;
     state.terminals.push({ address, name, cwd, labels, parent, state: "live", created_ms: Date.now(),
-      pid: 9000 + Number(address.slice(1)), foreground: { argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: argv[0] === "claude" ? "claude-code" : argv[0], state: "working" } });
+      pid: 9000 + Number(address.slice(1)), foreground: { argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" } });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
     out({ address });
+    break;
+  }
+  case "templates": {
+    if (!state.templates) fail("hc: no templates folder");
+    out({ templates: state.templates });
     break;
   }
   default:

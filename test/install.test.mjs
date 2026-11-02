@@ -144,13 +144,21 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
-  assert.equal(readlinkSync(s.link), cliTarget(s));
+  // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
+  const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "latest", "download", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
+  for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`spaces-agents/bin/${f}`), `the tarball has spaces-agents/bin/${f}`);
+  for (const f of ["run.sh", "automagik-herdr"]) assert.equal(lstatSync(join(s.pack, "bin", f)).mode & 0o111, 0o111, f);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:mod-manager" } });
   assert.match(readFileSync(join(s.appHome, "data", "mod-manager", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
+  // No node on PATH (a pane Herdr started): bin/run.sh finds one anyway.
+  const noNode = spawnSync(s.link, ["--version"], { encoding: "utf8",
+    env: { HOME: s.home, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) } });
+  assert.equal(noNode.stdout.trim(), "automagik-herdr 9.9.0", noNode.stderr);
   assert.deepEqual(s.brewCalls(), []);
   const before = lstatSync(s.pack).ino;
   const again = s.run();
@@ -159,6 +167,26 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.doesNotMatch(again.out, /Downloading|Linked/);
   assert.equal(lstatSync(s.pack).ino, before);
   assert.equal(existsSync(join(s.state, ".prev")), false);
+});
+
+test("a link to the .mjs (installed before bin/run.sh) is repointed at the wrapper; a pinned old pack gets the .mjs", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  rmSync(s.link);
+  symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /already up to date/);
+  assert.match(r.out, /Linked /);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
+  // A release from before the wrapper: the link names the .mjs it has.
+  s.publish("9.8.0", { latest: false, edit: (dir) => rmSync(join(dir, "spaces-agents", "bin", "automagik-herdr")) });
+  const old = s.run("--yes", "--version", "9.8.0");
+  assert.equal(old.code, 0, old.err);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  const again = s.run("--yes", "--version", "9.8.0");
+  assert.match(again.out, /already up to date/);
 });
 
 test("a newer release replaces the installed one; --version pins one", (t) => {

@@ -35,6 +35,7 @@ const MAX_BACKUPS = 100;
 
 const lstat = (path) => { try { return lstatSync(path); } catch { return null; } };
 const isLink = (path) => Boolean(lstat(path)?.isSymbolicLink());
+const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
 const isDir = (path) => { try { return statSync(path).isDirectory(); } catch { return false; } };
 const why = (error) => String(error?.message ?? error).split("\n")[0];
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -102,13 +103,14 @@ function inPlace(text, edits) {
 }
 
 /**
- * Forward: a command of the pack's shape naming this app home's own sidebar script → this app
- * home's stable one. Another app home's hook (or a checkout's) is not this run's to move: left.
+ * Forward: a command of the pack's shape (the run.sh form, or the older `node` one) naming this app
+ * home's own sidebar script, or its stable one in the older form → this app home's stable one
+ * through run.sh. Another app home's hook (or a checkout's) is not this run's to move: left.
  */
 export function toStable(appHome) {
   const home = appHome.replace(/\/+$/, "");
   const target = hookCommand(home);
-  const mine = new Set(SIDEBARS.map((m) => `${home}/mods/${m}/briefing.mjs`));
+  const mine = new Set([...SIDEBARS.map((m) => `${home}/mods/${m}/briefing.mjs`), stableBriefingPath(home)]);
   return (command) => {
     if (!OURS.test(command) || command === target) return null;
     const script = scriptOf(command);
@@ -460,19 +462,23 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit })
 
 /**
  * Repoints `<binDir>/automagik-herdr` at the CLI of the sidebar folder the record lists (am-sidebar,
- * else spaces-agents) when it is a link to either one's CLI in this app home. A link elsewhere is the
- * person's and stays; a file there is left with a note; no link there: nothing. Returns the line to
- * log, or null.
+ * else spaces-agents) when it is a link to either one's CLI in this app home: its bin/automagik-herdr
+ * wrapper when the folder ships one (it runs the .mjs through bin/run.sh, which finds a node where
+ * PATH has none; install.sh's cli_target), else bin/automagik-herdr.mjs. A link to either entry is
+ * ours. A link elsewhere is the person's and stays; a file there is left with a note; no link
+ * there: nothing. Returns the line to log, or null.
  */
 export function relink({ binDir, modsDir, owned }) {
   const link = join(binDir, CLI_LINK);
   const st = lstat(link);
   if (!st) return null;
   if (!st.isSymbolicLink()) return `left ${link} alone: it is a file, not a link (remove it and run install.sh again to link automagik-herdr)`;
-  const cli = (m) => join(resolve(modsDir), m, "bin", "automagik-herdr.mjs");
+  const bin = (m) => join(resolve(modsDir), m, "bin");
+  const entries = (m) => [join(bin(m), "automagik-herdr"), join(bin(m), "automagik-herdr.mjs")];
+  const cli = (m) => entries(m).find((p) => isFile(p)) ?? null;
   const to = resolve(binDir, readlinkSync(link));
-  if (!SIDEBARS.some((m) => to === cli(m))) return null;
-  const want = SIDEBARS.find((m) => owned.has(m) && existsSync(cli(m)));
+  if (!SIDEBARS.some((m) => entries(m).includes(to))) return null;
+  const want = SIDEBARS.find((m) => owned.has(m) && cli(m));
   if (!want || to === cli(want)) return null;
   const tmp = join(binDir, `.${CLI_LINK}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`);
   symlinkSync(cli(want), tmp);

@@ -136,19 +136,52 @@ export const ENTRY_SOURCE = "briefingEntry.mjs";
 /** The hook's entry point under an app home. */
 export const stableBriefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/${STABLE_BRIEFING}`;
 
-/** The hook command for a script path: no `node` on the agent's PATH means no briefing and no error. */
+/** The pack's runtime finder (bin/run.sh: node 22.7 or later, else bun) in a sidebar folder under an app home. */
+export const runnerPath = (appHome, sidebar = "spaces-agents") => `${appHome.replace(/\/+$/, "")}/mods/${sidebar}/bin/run.sh`;
+
+const shQuoted = (path) => `"${path.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
+
+/**
+ * The hook command for a script path, through one sidebar folder's run.sh: it finds a runtime
+ * even where the agent's PATH has no `node`; finding none, it says so on stderr and exits 127,
+ * which Claude shows without blocking the prompt. No run.sh (a rollback to an older pack, an
+ * uninstall): exit 0 and nothing, never a blocked turn (`sh <missing file>` exits 2 under dash,
+ * and 2 blocks a Claude prompt).
+ */
+export function runnerCommandFor(appHome, script) {
+  const runner = shQuoted(runnerPath(appHome));
+  return `[ ! -f ${runner} ] || sh ${runner} ${shQuoted(script)}`;
+}
+/** The older form (v0.2.0 to v0.3.4): no `node` on the agent's PATH means no briefing and no error. */
 export function commandFor(script) {
   const quoted = script.replace(/[\\"$`]/g, (c) => `\\${c}`);
   return `command -v node >/dev/null && node "${quoted}" || true`;
 }
-/** The hook command the pack writes: through the stable entry point. */
-export const hookCommand = (appHome) => commandFor(stableBriefingPath(appHome));
-/** The command v0.2.0 to v0.3.x wrote (straight at mods/spaces-agents), which a rollback restores. */
-export const legacyHookCommand = (appHome) => commandFor(briefingPath(appHome));
-/** The script a command of commandFor's shape names, or null for any other shape. */
+/**
+ * The hook command the pack writes: the stable entry point, through the run.sh of whichever
+ * sidebar folder is installed (am-sidebar, else spaces-agents: the entry point's own order), so
+ * the hook survives the folder's rename too. Neither there: exit 0 and nothing.
+ */
+export function hookCommand(appHome) {
+  const [first, second] = ["am-sidebar", "spaces-agents"].map((m) => shQuoted(runnerPath(appHome, m)));
+  return `r=${first}; [ -f "$r" ] || r=${second}; [ ! -f "$r" ] || sh "$r" ${shQuoted(stableBriefingPath(appHome))}`;
+}
+/**
+ * The command v0.3.5 to v0.4.x wrote (run.sh, straight at mods/spaces-agents): what a rollback
+ * restores, and what a hook gets when the stable entry point can't be put in place.
+ */
+export const legacyHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome));
+/** The script a command of the pack's shapes (hookCommand's, runnerCommandFor's, commandFor's) names, or null for any other. */
 export function scriptOf(command) {
-  const m = /^command -v node >\/dev\/null && node "((?:[^"\\]|\\.)*)" \|\| true$/.exec(String(command ?? ""));
-  return m ? m[1].replace(/\\(.)/g, "$1") : null;
+  const text = String(command ?? "");
+  const unq = (q) => q.replace(/\\(.)/g, "$1");
+  const q = '"((?:[^"\\\\]|\\\\.)*)"';
+  const viaEither = new RegExp(`^r=${q}; \\[ -f "\\$r" \\] \\|\\| r=${q}; \\[ ! -f "\\$r" \\] \\|\\| sh "\\$r" ${q}$`).exec(text);
+  if (viaEither) return unq(viaEither[3]);
+  const viaRunner = new RegExp(`^\\[ ! -f ${q} \\] \\|\\| sh ${q} ${q}$`).exec(text);
+  if (viaRunner) return viaRunner[1] === viaRunner[2] ? unq(viaRunner[3]) : null;
+  const viaNode = /^command -v node >\/dev\/null && node "((?:[^"\\]|\\.)*)" \|\| true$/.exec(text);
+  return viaNode ? unq(viaNode[1]) : null;
 }
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -157,10 +190,12 @@ export const OURS = /\/(?:automagik-herdr|mods\/spaces-agents|mods\/am-sidebar)\
 
 /**
  * Merges the briefing hook into a settings.local.json text (null: no file yet). Every other
- * key and hook is kept. An entry already naming the pack's briefing.mjs counts as present:
- * the same command leaves the file alone, another path (the app home moved) is updated in
- * place. A text that isn't a JSON object, or whose `hooks` or `UserPromptSubmit` has
- * another shape, is never rewritten: `error` says why.
+ * key and hook is kept. The one entry naming the pack's briefing.mjs is ours: the same command
+ * leaves the file alone, and any other (the older `command -v node … node "…" || true` form,
+ * which loses the briefing where PATH has no node, or another app home) has its `command`
+ * replaced in place, its other fields kept: never a second entry. A text that isn't a JSON
+ * object, or whose `hooks` or `UserPromptSubmit` has another shape, is never rewritten:
+ * `error` says why.
  * Returns { text, changed } or { error }.
  */
 export function mergeHook(existing, command) {

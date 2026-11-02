@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-02T15:45:21.929Z",
+  "generatedAt": "2026-11-02T22:14:51.918Z",
   "modCount": 9,
   "repositoryCount": 3,
   "source": "automagik-herdr",
@@ -12,11 +12,11 @@
       "url": "https://github.com/automagik-dev/automagik-herdr",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-02T12:44:15-03:00",
+      "pushedAt": "2026-11-02T19:14:44-03:00",
       "headCommit": "",
       "path": "",
       "name": "Automagik Herdr",
-      "blurb": "Autonomous teams of coding agents across harnesses (Claude Code, Codex, Gemini, Kimi, Oh My Pi…)",
+      "blurb": "Autonomous teams of coding agents across harnesses (Claude Code, Codex, Antigravity, Kimi, Oh My Pi…)",
       "modNames": [
         "am-quota",
         "auto-tabs",
