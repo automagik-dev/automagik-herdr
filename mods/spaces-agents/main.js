@@ -16,6 +16,7 @@ import { command } from "./argv.js";
 import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
+import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
@@ -128,6 +129,7 @@ export default class Spaces extends View {
     // Opened as a dialog (New bot, Edit, Attach as bot…): the form only, no sidebar.
     const p = props() ?? given;
     if (p?.form) { this.form = new BotForm(p, cx); return; }
+    if (p?.spaceIcon) { this.form = new SpaceIconDialog(p, cx); return; } // a space's icon (spaceIcon.js)
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -1065,7 +1067,7 @@ export default class Spaces extends View {
       .on_mouse_up("left", (_e, cx) => { if (this.pressed !== null) return; cx.stop_propagation(); action(); });
   }
 
-  // The space's icon: an emoji or an uploaded image (space-icon dialog, shared
+  // The space's icon: an emoji or an uploaded image (the icon dialog, spaceIcon.js; shared
   // "spaces-agents.icons" by full space id), else its letter on its color. Click to change.
   avatar(w, fill, t) {
     const held = (shared("spaces-agents.icons") ?? {})[w.id];
@@ -1078,7 +1080,7 @@ export default class Spaces extends View {
           ? h_flex().size(18).rounded(5).when(Boolean(fill), (el) => el.bg(fill)).items_center().justify_center().text_size(12).child(emoji)
           : h_flex().size(18).rounded(5).when(Boolean(fill), (el) => el.bg(fill)).items_center().justify_center()
             .text_size(10.5).font_bold().text_color(fill ? "#ffffff" : t.foreground).child(w.name[0]?.toUpperCase() ?? "?")),
-      () => openOverlay({ mod: "space-icon", kind: "dialog", width: 440, height: 520, props: { space: w.id } }));
+      () => openOverlay(spaceIconOverlay(w.id)));
   }
 
   compact({ w, i }, t) {

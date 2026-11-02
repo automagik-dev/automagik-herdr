@@ -17,7 +17,7 @@ export const PACK_NAME = "spaces-agents";
  * never one of them: automagik-pocket owns it.
  */
 export const PACK_MODS = Object.freeze(["am-quota", "auto-tabs", "automations", "md-menu", "mod-manager", "new-menu-tui",
-  "sidebar-chrome", "space-icon", "spaces-agents"]);
+  "sidebar-chrome", "spaces-agents"]);
 export const POCKET_LINK = "pocket-link";
 /** The one layout the pack ships, beside the mod folders in the tarball. */
 export const PACK_LAYOUT = "layouts/automagik.json";

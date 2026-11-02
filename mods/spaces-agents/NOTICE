@@ -48,3 +48,11 @@ License, Version 2.0. apps/bots-dsh/NOTICE in Automagik reads:
   This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 No code from DeepSeek Harness is in this pack.
+
+==============================================================================
+Unicode
+==============================================================================
+
+emoji-data.js (the space icon dialog) is generated from Unicode's character
+database (Python's `unicodedata`): the emoji and their names. It is not copied
+from any font or table.
