@@ -29,10 +29,11 @@ function makeCx() {
   return cx;
 }
 
-async function footer({ sidebar }) {
+async function footer({ sidebar, files = {} }) {
   const root = mkdtempSync(join(tmpdir(), "hb-footer-"));
   state.appHome = root;
   if (sidebar) { mkdirSync(join(root, "mods/spaces-agents"), { recursive: true }); writeFileSync(join(root, "mods/spaces-agents/mod.json"), "{}\n"); }
+  for (const [path, body] of Object.entries(files)) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), body); }
   ui.props = { footer: true };
   const cx = makeCx();
   const view = new Footer();
@@ -41,7 +42,8 @@ async function footer({ sidebar }) {
   rmSync(root, { recursive: true, force: true });
   const drawn = view.render();
   index(drawn);
-  return all(drawn).map((n) => n.id).filter((id) => TABS.has(id));
+  // Contributed buttons are keyed <mod>/<id>; their badge is <key>#badge.
+  return all(drawn).map((n) => n.id).filter((id) => TABS.has(id) || (typeof id === "string" && id.includes("/") && !id.includes("#")));
 }
 
 test("the rail: Bots first, ahead of Mods, Automations and Quota, while the sidebar mod is installed", async () => {
@@ -99,4 +101,58 @@ test("the popup with no bot on this computer: a single New bot line", () => {
   nodes.get("bots-new").click(null, makeCx());
   assert.deepEqual(ui.overlays, [BOT_FORMS.create]);
   state.shared.delete("bots.defined");
+});
+
+// Another mod's button (the Genie board's Tasks), from its own mod.json in the scratch app home.
+const TASKS_MOD = {
+  "mods/tasks-mock/mod.json": JSON.stringify({ place: "none", automagik: { footer: [
+    { id: "tasks", label: "Tasks", icon: "mods/genie-herdr/tasks.svg", command: "mod.open", args: { name: "tasks-mock" }, badge: "genie.tasks.waiting" },
+    { id: "broken", label: "No command" },
+  ] } }),
+  "mods/genie-herdr/tasks.svg": '<svg viewBox="0 0 24 24"><path d="M4 4h16" /></svg>',
+};
+
+test("a contributed button: after the pack's own tabs, before the app's, its icon tinted like theirs", async () => {
+  state.calls.length = 0;
+  assert.deepEqual(await footer({ sidebar: true, files: TASKS_MOD }), ["bots", "mods", "automations", "quota", "tasks-mock/tasks", "settings", "machine"]);
+  assert.equal(nodes.get("tasks-mock/tasks").kids[0].__node.kind, "svg");
+  assert.equal(nodes.get("tasks-mock/tasks").kids[0].__node.arg, "mods/genie-herdr/tasks.svg");
+  assert.ok(!state.calls.some((c) => c.kind === "write"), "the scan writes nothing");
+  assert.ok(!state.calls.some((c) => /pocket-link\/(?!mod\.json)/i.test(String(c.path))), "only Pocket Link's own tab lookup");
+});
+
+test("a contributed button's press runs its command: mod.open toggles the board", async () => {
+  await footer({ sidebar: false, files: TASKS_MOD });
+  state.runs.length = 0;
+  nodes.get("tasks-mock/tasks").click(null, makeCx());
+  assert.deepEqual(state.runs, [["mod.open", { name: "tasks-mock" }]]);
+});
+
+test("a contributed button's badge: a count for a number above 0, nothing for 0, a string or null", async () => {
+  for (const [value, drawn] of [[3, "3"], [0, null], ["x", null], [null, null]]) {
+    state.shared.set("genie.tasks.waiting", value);
+    await footer({ sidebar: false, files: TASKS_MOD });
+    const badge = nodes.get("tasks-mock/tasks#badge");
+    assert.equal(badge ? textOf(badge) : null, drawn, `badge ${JSON.stringify(value)}`);
+  }
+  state.shared.delete("genie.tasks.waiting");
+});
+
+test("a contributed button with a missing icon draws the neutral glyph", async () => {
+  const files = { "mods/tasks-mock/mod.json": TASKS_MOD["mods/tasks-mock/mod.json"] };
+  await footer({ sidebar: false, files });
+  assert.equal(nodes.get("tasks-mock/tasks").kids[0].__node.arg, "mods/sidebar-chrome/circle.svg");
+});
+
+test("a mod.json change rescans at once; a batch of other files does not", async () => {
+  const batches = [(dir) => [`${dir}/tasks-mock/main.js`], (dir) => [`${dir}/tasks-mock/mod.json`]];
+  state.watch = (dir) => (batches.length ? Promise.resolve(batches.shift()(dir)) : Promise.reject(new Error("done")));
+  state.calls.length = 0;
+  try {
+    await footer({ sidebar: false, files: TASKS_MOD });
+  } finally {
+    delete state.watch;
+  }
+  const finds = state.calls.filter((c) => c.kind === "exec" && c.command === "find");
+  assert.equal(finds.length, 2, "the first look, then the mod.json batch");
 });

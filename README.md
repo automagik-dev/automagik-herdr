@@ -375,7 +375,7 @@ with its own `RECIPE.md`:
 
 | Mod | Derived from | What it does |
 |---|---|---|
-| `sidebar-chrome` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Mods, Automations, Settings, Add machine — so tabs never stack up. |
+| `sidebar-chrome` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Mods, Automations, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
 | `auto-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. |
 | `automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
 | `md-menu` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
@@ -386,6 +386,30 @@ with its own `RECIPE.md`:
 [automagik-pocket](https://github.com/automagik-dev/automagik-pocket) (`desktop/pocket-link/`), which
 owns its mod, its LaunchAgent and its pairing state. Install it from there; this pack never vendors,
 installs, updates, removes or restarts it.
+
+## Add a sidebar button from your mod
+
+Any installed mod can put a button in the footer rail. Declare it in your own `mods/<name>/mod.json`:
+
+```json
+"automagik": { "footer": [ { "id": "tasks", "label": "Tasks", "icon": "mods/genie-herdr/tasks.svg",
+                             "command": "mod.open", "args": { "name": "tasks-mock" }, "badge": "genie.tasks.waiting" } ] }
+```
+
+- `id` (required): unique within your mod; the button's key is `<mod>/<id>`.
+- `label` (required): the name the rail shows while the pointer is on the button.
+- `command` (required) and `args` (an object, default `{}`): a press calls `run(command, args)`.
+  `mod.open {name}` opens the mod and closes it on a second press, so the button toggles it.
+- `icon`: an SVG under the app home (`~/.config/herdr-app`), drawn with `svg()` and tinted like the
+  rail's own icons. A missing, non-SVG or outside path draws a neutral circle.
+- `badge`: a `shared()` key. While its value is a number above 0, the button shows it as a small
+  count (99+ past 99); 0, `null`, a string or no value shows nothing.
+
+An entry with no `id`, `label` or `command`, an `id` used twice, or a `mod.json` that is not JSON is
+skipped (the reason goes to the console). The rail shows at most 4 contributed buttons in all, by
+mod name, then in the order each mod lists them, after the pack's own tabs and before Settings. It
+reads every installed mod's `mod.json` every 30 s, and at once when a `mod.json` or a mod folder
+changes; it writes nothing.
 
 ## Wiring (your layout)
 
