@@ -95,6 +95,8 @@ This wish turns that branch into the product:
 **depends-on:** herdr-bots
 **blocks:** none
 
+Group 8 (release v0.3.0) also waits for sidebar-rules Groups 2–5, which land in `wish/am-pack` after Group 7 and ship with v0.3.0 (owner, 2026-11-02).
+
 ## Success Criteria
 
 - [ ] On a scratch `HERDR_APP_HOME` with plain Herdr, the curl one-liner installs the eight `am-*` mods and `layouts/automagik.json`, `herdr-app check` passes for each, and after the layout switch Herdr shows the sidebar, footer rail, tab bar and `+` menu with no mod errors.
@@ -367,7 +369,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
    - **Layouts** (`<app home>/layouts/*.json`, the owner's `main-agents` included): `content.mod` and the root `terminal_menu`, old id → new. Each file is backed up to `<app home>/automagik-herdr/backup/layouts-<date>/` first. A file whose structure isn't recognised is left alone and reported.
    - **keys.json:** `spaces-agents.paste`, `spaces-agents.paste_image`, `spaces-agents.close_pane`, `mod.open:mod-manager`, the `mod:markdown-browser` section, and any other `<old>.<command>` or `mod.open:<old>`, all rewritten with a backup. `mod.open:machine-add` and `mod.open:pocket-link` are not ours and are untouched.
    - **Shared state** (`spaces-agents.icons`, `.projects`, `.pets`, `.update-shown`, `.theme-selected`, `space.colors`, `sidebar.collapsed`, `sidebar.width`, `markdown-browser.slots/.show/.last` → `am.*`): never written by the installer or updater, because Herdr owns `shared.json` and saves it in the background (Herdr AGENTS.md:86-88). Each mod's in-mod shim reads `am.*` first, then the old key, and `setShared`s the `am.*` key on first load. The old keys are left in place for one release.
-   - **App-home paths:** `spaces-agents-projects.json` → `am-sidebar-projects.json` (copied); `space-icons/` stays where it is (shared state references it); `sidebar-agents.json` (the rename map) stays, read by am-sidebar; `data/mod-manager/` copied (not moved) to `data/am-mods/`, and am-mods reads the old directory as a fallback; `data/am-quota/` unchanged.
+   - **App-home paths:** `spaces-agents-projects.json` → `am-sidebar-projects.json` (copied only when the target is absent, so a file sidebar-rules' tidy already wrote is kept); `space-icons/` stays where it is (shared state references it); `sidebar-agents.json` (the rename map) stays, read by am-sidebar; `data/mod-manager/` copied (not moved) to `data/am-mods/`, and am-mods reads the old directory as a fallback; `data/am-quota/` unchanged.
    - **Per-mod localStorage** (auto-tabs' panel memory) can't be reached from outside the mod. Its loss is stated in the release notes.
    - **The catalog** `modNames` and titles are regenerated after Group 7.
 3. `revert(backupDir)`: applies the inverse rename to layouts and keys.json (am-* → old id, only for entries the forward run changed), so edits the person made in between are kept. The dated backups stay for manual recovery. The release notes say shared-state changes made under v0.3.0 are lost on rollback. `update.mjs rollback` calls it when the `.prev/` set holds old-named folders.
@@ -428,6 +430,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
    - (b) the `am-footer`, `am-tabs`, `am-new-menu`, `am-automations`, `am-mods` and `am-markdown` folders, their `mod.json` titles, the cross-mod `mod.open`/`openOverlay` names, and their tests;
    - (c) `layouts/automagik.json`, `keys.json`, `catalog/*` (regenerated), `release.yml` paths, `scripts/version.mjs`'s VERSION path, install.sh, README, RECIPE.md, NOTICE and DESIGN references.
 2. No aliases (D12). Group 6a migrates whatever sends the old names.
+3. Before (a)'s `git mv`, merge `dev` into `wish/am-pack`, so sidebar-rules Group 1 (v0.2.1, which edits `mods/spaces-agents/main.js` and `rows.js` and adds `test/fixtures/sidebar/`) is renamed along with everything else. Git's rename detection is unreliable on the 57 KB `main.js` once both sides have edited it.
 
 **Interfaces:**
 - Consumes: Group 6a's `RENAMES` and Group 6b's stable hook.
@@ -468,7 +471,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check && sh -n install.sh && shellcheck -s sh install.sh && actionlint && node scripts/catalog.mjs --check
 ```
 
-**depends-on:** Group 7, Group 4, Group 6b
+**depends-on:** Group 7, Group 4, Group 6b, sidebar-rules Groups 2–5
 
 ---
 
