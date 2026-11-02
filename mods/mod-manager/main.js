@@ -151,7 +151,8 @@ export default class ModManager extends View {
 
   async startReview(cx, source) {
     await this.work(cx, `baixando ${source}…`, async () => {
-      const fetched = await core.fetchSource(io, source, cacheDir());
+      // A repo the catalog lists installs at the catalog's headCommit, not whatever HEAD is now.
+      const fetched = await core.fetchSource(io, source, cacheDir(), core.catalogCommit(this.catalog, source));
       const packages = core.findPackages(fetched.files);
       if (!packages.length) {
         await exec("rm", ["-rf", fetched.dir]);
@@ -370,7 +371,7 @@ export default class ModManager extends View {
       cx.notify();
       let fetched = null;
       try {
-        fetched = await core.fetchSource(io, entry.fullName, cacheDir());
+        fetched = await core.fetchSource(io, entry.fullName, cacheDir(), entry.headCommit);
         const result = await core.drift(io, { appHome: appHome(), dir: fetched.dir, entry, name: mod.name, localPath: mod.path });
         this.drift[mod.name] = result;
         this.message = result.clean

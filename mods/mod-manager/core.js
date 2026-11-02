@@ -12,6 +12,8 @@ export const POCKET_LINK_REFUSAL =
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const backupDir = (appHome) => `${appHome}/automagik-herdr/backup`;
+// Beside mods/, on the same file system, where Herdr never loads a mod from.
+const stagingDir = (appHome) => `${appHome}/automagik-herdr/staging`;
 const present = async (io, path) => (await io.exec("test", ["-e", path])).code === 0;
 
 /** Moves a folder or file aside, stamped, and returns where it went: never a delete. */
@@ -23,10 +25,11 @@ async function moveAside(io, appHome, path, name) {
 }
 
 /**
- * Puts a mod's private state back into its fresh folder: dot paths and node_modules.
- * The *contents* are copied, not the folder: the package may ship its own `.state/`, and copying
- * `from/.state` onto `to/.state` would nest it as `.state/.state/<key>`. The person's files are
- * copied after the package's, so theirs win.
+ * Puts a mod's private state into its staged folder: dot paths and node_modules.
+ * A folder's *contents* are copied, not the folder: the package may ship its own `.state/`, and
+ * copying `from/.state` onto `to/.state` would nest it as `.state/.state/<key>`. The person's files
+ * are copied after the package's, so theirs win. A link (a `.state` kept elsewhere) stays a link
+ * to the same place, and a dotfile stays a file.
  */
 async function carryPrivate(io, from, to) {
   if (!from) return 0;
@@ -34,8 +37,15 @@ async function carryPrivate(io, from, to) {
   let carried = 0;
   for (const name of names) {
     if (!(name.startsWith(".") || name === "node_modules")) continue;
-    await run(io, "mkdir", ["-p", `${to}/${name}`]);
-    await run(io, "cp", ["-R", `${from}/${name}/.`, `${to}/${name}/`]);
+    const src = `${from}/${name}`, dst = `${to}/${name}`;
+    const link = (await io.exec("test", ["-L", src])).code === 0;
+    if (!link && (await io.exec("test", ["-d", src])).code === 0) {
+      await run(io, "mkdir", ["-p", dst]);
+      await run(io, "cp", ["-RP", `${src}/.`, `${dst}/`]);
+    } else {
+      await run(io, "rm", ["-rf", dst]);
+      await run(io, "cp", ["-P", src, dst]);
+    }
     carried += 1;
   }
   return carried;
@@ -120,10 +130,15 @@ export function repoUrl(fullName) {
 }
 
 // Shallow clone into a fresh folder under `cacheDir`; returns the folder, commit and tracked files.
-export async function fetchSource(io, source, cacheDir) {
+// With `commit` (the catalog's headCommit) the clone is that commit, not whatever HEAD is now.
+export async function fetchSource(io, source, cacheDir, commit = null) {
   const dir = `${cacheDir}/${source.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, "")}-${Date.now()}`;
   await run(io, "mkdir", ["-p", cacheDir]);
   await run(io, "git", ["clone", "-q", "--depth", "1", repoUrl(source), dir]);
+  if (/^[0-9a-f]{40}$/.test(commit ?? "") && (await run(io, "git", ["-C", dir, "rev-parse", "HEAD"])).trim() !== commit) {
+    await run(io, "git", ["-C", dir, "fetch", "-q", "--depth", "1", "origin", commit]);
+    await run(io, "git", ["-C", dir, "checkout", "-q", "--detach", commit]);
+  }
   const sha = (await run(io, "git", ["-C", dir, "rev-parse", "HEAD"])).trim();
   const files = (await run(io, "git", ["-C", dir, "ls-files"])).split("\n").filter(Boolean);
   return { dir, sha, files };
@@ -187,25 +202,47 @@ async function writeKeys(io, appHome, change) {
   await io.writeText(path, JSON.stringify(keys, null, 2) + "\n");
 }
 
-// Copies the package and adds its keys. Conflicting keys are left as the person has them. On an
-// update, the package's previous folders are removed first, and only those.
+// Copies the package and adds its keys. Conflicting keys are left as the person has them. Each
+// mod is built in a staging folder (the package's files, then the installed copy's private state),
+// and only then are the record's old folders moved aside (never deleted) and the staged ones
+// renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
   if (plan.clashes.length) throw new Error(`já existe: ${plan.clashes.join(", ")}`);
-  if (plan.mods.includes(POCKET_LINK)) throw new Error(POCKET_LINK_REFUSAL);
-  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome)]);
-  // The old folder is moved aside, never deleted: an update keeps the mod's own state.
-  const aside = new Map();
-  for (const m of record?.mods ?? []) {
-    const from = `${appHome}/mods/${m}`;
-    if (await present(io, from)) aside.set(m, await moveAside(io, appHome, from, m));
+  if (plan.mods.includes(POCKET_LINK) || (record?.mods ?? []).includes(POCKET_LINK)) throw new Error(POCKET_LINK_REFUSAL);
+  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
+  const staged = [];
+  try {
+    for (const m of plan.mods) {
+      const stage = `${stagingDir(appHome)}/${m}-${stamp()}`;
+      staged.push([m, stage]);
+      await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, stage]);
+      const live = `${appHome}/mods/${m}`;
+      if ((record?.mods ?? []).includes(m) && (await present(io, live))) await carryPrivate(io, live, stage);
+    }
+  } catch (e) {
+    for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
+    throw e;
+  }
+  const aside = [];
+  const placed = [];
+  try {
+    for (const m of record?.mods ?? []) {
+      const live = `${appHome}/mods/${m}`;
+      if (await present(io, live)) aside.push([live, await moveAside(io, appHome, live, m)]);
+    }
+    for (const [m, stage] of staged) {
+      await run(io, "mv", [stage, `${appHome}/mods/${m}`]);
+      placed.push([`${appHome}/mods/${m}`, stage]);
+    }
+  } catch (e) {
+    for (const [live, stage] of placed.reverse()) await io.exec("mv", [live, stage]);
+    for (const [live, to] of aside.reverse()) await io.exec("mv", [to, live]);
+    for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
+    throw e;
   }
   for (const l of record?.layouts ?? []) {
     const p = `${appHome}/layouts/${l}`;
     if (await present(io, p)) await moveAside(io, appHome, p, l);
-  }
-  for (const m of plan.mods) {
-    await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, `${appHome}/mods/${m}`]);
-    await carryPrivate(io, aside.get(m), `${appHome}/mods/${m}`);
   }
   for (const l of plan.layouts) await run(io, "cp", [`${plan.base}/layouts/${l}`, `${appHome}/layouts/${l}`]);
   const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
@@ -373,9 +410,17 @@ export async function searchMarket(io, { query = "", sort = "stars", page = 1, p
 
 // Our marketplace: this pack publishes its own index (catalog/index.json, same shape as
 // herdr.dev's), and an installed copy may point anywhere via data/mod-manager/catalog.json.
-// The pack publishes from `dev`. Kept equal to scripts/install.mjs's PUBLISHED_CATALOG by
+// The pack publishes from `dev`. Kept equal to mods/spaces-agents/release.js's CATALOG_URL by
 // test/pack-installer.test.mjs; an installed copy can override it via data/mod-manager/catalog.json.
 export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
+
+/** The commit the catalog pins for `source` (its `headCommit`), or null: an install fetches that commit. */
+export function catalogCommit(catalog, source) {
+  for (const entry of catalog?.byMod?.values() ?? []) {
+    if (entry?.fullName === source && /^[0-9a-f]{40}$/.test(entry.headCommit ?? "")) return entry.headCommit;
+  }
+  return null;
+}
 
 export function parseCatalog(json) {
   const mods = Array.isArray(json?.mods) ? json.mods : [];

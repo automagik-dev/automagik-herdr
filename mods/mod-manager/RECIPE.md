@@ -86,15 +86,16 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background
 - `exec` has a time limit, and each check is one process: the sweep runs one at a time.
 - The dialog's preview images from a catalog (`previewUrl`) are not shown: the mod `fetch`
   returns text/JSON only, so there is no binary to draw.
-- The pack's installer (`scripts/install.mjs`) owns `mods/` and `keys.json`; the manager owns what
-  it installs. Both record what they did, in different places.
+- The pack's installer (`install.sh`) owns the folders its record lists; the manager owns what it
+  installs. Both record what they did, in different places. An install from the catalog is
+  fetched at the catalog's `headCommit`, built in `automagik-herdr/staging/`, then renamed in.
 
 ## Done when
 
 - `herdr-app check mods/mod-manager` passes.
 - `node scripts/catalog.mjs` writes `catalog/index.json` with this pack first, every `mods/*`
   folder in its `modNames`, and one owner per mod name.
-- `node scripts/install.mjs --app-home <temp>` copies the mods, adds only free keys, writes the
-  catalog config and passes `herdr-app check` on each copied mod.
+- `HERDR_APP_HOME=<temp> sh install.sh --yes` installs the pack, adds only free keys, writes the
+  catalog config and passes `herdr-app check` on each installed mod.
 - `⌘⇧M` opens the table; a mod installed from the pack's catalog shows its repo and stars in
   `SOURCE`; `d` reports equal or differing counts; the switch moves a folder to `mods-disabled/`.

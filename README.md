@@ -14,16 +14,35 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/
 ```
 
 The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
-missing (it asks first). It installs the latest release's pack, checksum verified, into
-`~/.config/herdr-app/mods/spaces-agents`, keeps a copy of any pack already there, and links
-the `automagik-herdr` command into `~/.local/bin`. It adds the `automagik` layout (Herdr's main
-layout with the Automagik sidebar) when you have none. The sidebar shows only in that layout,
-so while Herdr shows another one the installer asks before switching (or prints the
-`herdr-app do layout.switch` command when it can't ask). Running it again is safe, and
-`--uninstall` puts back the pack that was there before the first install and removes the
-layout if the installer added it and you haven't changed it. Add options after `bash -s --`: `--yes`
-answers every question, `--version 0.2.0` installs that release (v0.2.0 or later),
-`--uninstall` undoes the install.
+missing (it asks first). It downloads the latest release's pack (`automagik-herdr-pack-<v>.tgz`:
+every mod below and the `automagik` layout), checks it against `SHA256SUMS` before writing
+anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. It links the
+`automagik-herdr` command into `~/.local/bin`, merges the pack's keys where they are free (a key
+you already use stays yours), points the mod manager at this repository's catalog, and runs
+`herdr-app check` on each mod.
+
+It never touches anything it did not install:
+
+- its record (`~/.config/herdr-app/automagik-herdr/installed-by-install.sh`) lists every folder
+  it put in `mods/`, and only those are ever replaced, updated or rolled back;
+- a folder of the same name that you installed yourself (say your own `sidebar-chrome`) is
+  reported and left alone; `--adopt` takes it over, after moving it to
+  `automagik-herdr/backup/<mod>-<date>/`, where it stays until `--uninstall` puts it back;
+- the folders an install or update replaces are kept together in `automagik-herdr/.prev/`;
+- each mod's `.state/`, other dot paths and `node_modules` move into its new copy (a linked
+  `.state` stays a link), and Pocket Link (`mods/pocket-link`) is never read, written or moved.
+
+It adds the `automagik` layout (Herdr's main layout with the Automagik sidebar) when you have
+none, and replaces it only while it is v0.2's unchanged copy. The sidebar shows only in that
+layout, so while Herdr shows another one the installer asks before switching (or prints the
+`herdr-app do layout.switch` command when it can't ask). Running it again is safe. Add options
+after `bash -s --`: `--yes` answers every question, `--version 0.3.0` installs that release
+(v0.3.0 or later), `--adopt` takes over same-named mods, `--uninstall` moves the pack out of
+`mods/`, puts back what it adopted and removes the layout if the installer added it and you
+haven't changed it.
+
+**From v0.2:** rerun the one-liner above. v0.2's own `automagik-herdr update` finds nothing
+newer, because later releases ship the whole pack under a new name.
 
 ### Paste this to your agent
 
@@ -141,7 +160,7 @@ still places panes by the walk-up, so a folder joins its own project once it has
 ```bash
 automagik-herdr update --check      # the installed and the latest version
 automagik-herdr update              # download, verify against SHA256SUMS, install
-automagik-herdr update --rollback   # put the replaced pack back
+automagik-herdr update --rollback   # put the replaced set of mods back
 ```
 
 Updates come from this repository's GitHub releases. The sidebar looks 20 seconds after it
@@ -241,12 +260,12 @@ already running may need `/hooks` once to load the hook.
 
 ### Manual install
 
-Without the installer, from a release tarball or a checkout:
+Without the installer, from a checkout (the bot mod alone):
 
 ```bash
 cp -R mods/spaces-agents ~/.config/herdr-app/mods/
 mkdir -p ~/.config/herdr-app/layouts ~/.local/bin
-cp mods/spaces-agents/layouts/automagik.json ~/.config/herdr-app/layouts/
+cp layouts/automagik.json ~/.config/herdr-app/layouts/
 herdr-app do layout.switch '{"name":"automagik"}'
 ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
 ```
@@ -328,29 +347,10 @@ The bot mod's own install steps are above. For the rest, in the layout you use:
    { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
    it, and `automations` comes from the marketplace, not from this pack.
 
-## One-command install of the rest
+## One installer
 
-```sh
-node scripts/install.mjs --app-home /tmp/scratch   # ALWAYS test here first
-node scripts/install.mjs                          # install into the app home
-node scripts/install.mjs --dry-run                # say what would change
-node scripts/install.mjs --force                  # overwrite files a person edited (backed up first)
-```
-
-**A live app home is not a build directory.** The installer never deletes a folder and never
-replaces what it did not write:
-
-- files are copied one by one over the mod's folder; nothing is `rm -rf`ed;
-- private state (`node_modules/`, `.state/`, any dot path, logs) is kept untouched;
-- a *hand-edited* file of the pack's own, or a file the pack does not ship at all, **refuses the
-  run** (`--force` proceeds); whatever it is about to overwrite goes to
-  `<app home>/automagik-herdr/backup/<mod>-<timestamp>/` first;
-- only files this installer wrote before and the pack no longer ships are removed, tracked in
-  `<app home>/automagik-herdr/manifest.json`;
-
-It merges `keys.json` (a key you already use stays yours), writes
-`data/mod-manager/catalog.json`, and runs `herdr-app check` on each mod, failing the run if one
-fails. It never touches layouts or settings.
+`install.sh` (above) installs every mod of the pack; there is no second installer. To try it on a
+scratch home first: `HERDR_APP_HOME=$(mktemp -d) sh install.sh --yes`.
 
 ## Our marketplace
 
@@ -365,7 +365,8 @@ ours must carry `RECIPE.md` and `LICENSE`, a curated repo needs a licence and an
 ```
 mods/        each mod this pack installs (bots first, then the sidebar and its tools)
 catalog/     index.json (generated) · repos.json (the other repos we carry)
-scripts/     catalog.mjs (build the index) · install.mjs (install the pack)
+scripts/     catalog.mjs (build the index) · version.mjs · themes.mjs
+layouts/     automagik.json (the one layout the pack ships)
 keys.json    the keys the pack asks for
 test/        the bot work's pure-module tests (node --test)
 ```
