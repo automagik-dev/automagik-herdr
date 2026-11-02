@@ -151,14 +151,15 @@ export default class ModManager extends View {
 
   async startReview(cx, source) {
     await this.work(cx, `baixando ${source}…`, async () => {
-      const fetched = await core.fetchSource(io, source, cacheDir());
+      // A repo the catalog lists installs at the catalog's headCommit, not whatever HEAD is now.
+      const fetched = await core.fetchSource(io, source, cacheDir(), core.catalogCommit(this.catalog, source));
       const packages = core.findPackages(fetched.files);
       if (!packages.length) {
         await exec("rm", ["-rf", fetched.dir]);
         throw new Error(`${source} não tem nenhuma pasta mods/<nome>/main.js`);
       }
       // Pocket Link belongs to automagik-pocket: refuse it before anything is planned or written.
-      if (packages.some((p) => p.mods.includes(core.POCKET_LINK))) throw new Error(core.POCKET_LINK_REFUSAL);
+      if (packages.some((p) => p.mods.some(core.isPocketLink))) throw new Error(core.POCKET_LINK_REFUSAL);
       this.review = { source, fetched, packages, at: 0, plan: null, pkg: null };
       if (packages.length === 1) await this.planFor(packages[0]);
       else this.mode = "packages";
@@ -370,7 +371,7 @@ export default class ModManager extends View {
       cx.notify();
       let fetched = null;
       try {
-        fetched = await core.fetchSource(io, entry.fullName, cacheDir());
+        fetched = await core.fetchSource(io, entry.fullName, cacheDir(), entry.headCommit);
         const result = await core.drift(io, { appHome: appHome(), dir: fetched.dir, entry, name: mod.name, localPath: mod.path });
         this.drift[mod.name] = result;
         this.message = result.clean

@@ -13,10 +13,27 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const PACK_SRC = join(ROOT, "mods", "spaces-agents");
+const LAYOUT_SRC = join(ROOT, "layouts", "automagik.json");
+const { PACK_MODS, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/spaces-agents/release.js");
 const CASK = "penso/tap/herdr-gpui";
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+/** One digest over every file and link under `dir` (names, link targets, bytes). */
+const treeSum = (dir) => {
+  const h = createHash("sha256");
+  const walk = (at, rel) => {
+    for (const name of readdirSync(at).sort()) {
+      const path = join(at, name), st = lstatSync(path);
+      h.update(`${rel}${name}\0${st.mode}\0`);
+      if (st.isSymbolicLink()) h.update(readlinkSync(path));
+      else if (st.isDirectory()) walk(path, `${rel}${name}/`);
+      else h.update(readFileSync(path));
+    }
+  };
+  walk(dir, "");
+  return h.digest("hex");
+};
 
 function scratch(t, { herdr = true, os = "Darwin" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-install-")));
@@ -58,26 +75,41 @@ fi
     const r = spawnSync("sh", ["-s", "--", ...args], { cwd: root, env, encoding: "utf8", input: readFileSync(INSTALL) });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
-  /** Publishes a release: the repo's pack at `version`, or `edit(packDir)` changing it first. */
+  /**
+   * Publishes a release as release.yml packs it: every PACK_MODS folder of the repo plus
+   * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. As in a real release
+   * only spaces-agents carries VERSION; each main.js ends in a `// release <v>` line, the code
+   * change a release brings, so a test can tell which release a folder is from.
+   */
   const publish = (version, { edit, sums, latest = true } = {}) => {
     const src = join(root, `src-${version}`);
     rmSync(src, { recursive: true, force: true });
-    cpSync(PACK_SRC, join(src, "spaces-agents"), { recursive: true });
+    for (const m of PACK_MODS) {
+      cpSync(join(ROOT, "mods", m), join(src, m), { recursive: true });
+      writeFileSync(join(src, m, "main.js"), `${readFileSync(join(src, m, "main.js"), "utf8")}\n// release ${version}\n`);
+    }
     writeFileSync(join(src, "spaces-agents", "VERSION"), `${version}\n`);
-    edit?.(join(src, "spaces-agents"));
-    const name = `automagik-herdr-${version}.tgz`;
+    mkdirSync(join(src, "layouts"));
+    cpSync(LAYOUT_SRC, join(src, "layouts", "automagik.json"));
+    edit?.(src);
+    const name = `automagik-herdr-pack-${version}.tgz`;
     const dirs = [join(rel, "download", `v${version}`), ...(latest ? [join(rel, "latest", "download")] : [])];
     for (const dir of dirs) {
       mkdirSync(dir, { recursive: true });
-      execFileSync("tar", ["-czf", join(dir, name), "-C", src, "spaces-agents"]);
+      execFileSync("tar", ["-czf", join(dir, name), "-C", src, ...readdirSync(src)], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
       writeFileSync(join(dir, "SHA256SUMS"), `${sums ?? sha(join(dir, name))}  ${name}\n`);
     }
   };
   const brewCalls = () => readFileSync(brewLog, "utf8").split("\n").filter(Boolean);
-  /** herdr-app's calls other than `status`. */
-  const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l && l !== "status");
+  /** herdr-app's calls other than `status` and `check`. */
+  const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l && l !== "status" && !l.startsWith("check "));
+  const checks = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l.startsWith("check "));
   const mark = () => readFileSync(join(appHome, "automagik-herdr", "installed-by-install.sh"), "utf8");
-  return { root, bin, home, apps, appHome, pack, link, run, piped, publish, brewCalls, addHerdrApp, show, herdrCalls, mark, extraEnv };
+  const mods = join(appHome, "mods"), state = join(appHome, "automagik-herdr");
+  /** Every pack folder's release (its VERSION), by name. */
+  const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(mods, m, "main.js"), "utf8"))?.[1]]));
+  const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
+  return { root, bin, home, apps, appHome, mods, state, pack, link, run, piped, publish, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -89,9 +121,12 @@ test("a fresh install puts the pack and the command in place; a second run chang
   s.publish("9.9.0");
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\n$`));
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
-  assert.match(r.out, /Checksum: ok\.\nInstalled the pack 9\.9\.0/);
+  assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
+  assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:mod-manager" } });
+  assert.match(readFileSync(join(s.appHome, "data", "mod-manager", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
@@ -102,7 +137,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.match(again.out, /Automagik Herdr 9\.9\.0 is already up to date/);
   assert.doesNotMatch(again.out, /Downloading|Linked/);
   assert.equal(lstatSync(s.pack).ino, before);
-  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev")), false);
+  assert.equal(existsSync(join(s.state, ".prev")), false);
 });
 
 test("a newer release replaces the installed one; --version pins one", (t) => {
@@ -112,11 +147,11 @@ test("a newer release replaces the installed one; --version pins one", (t) => {
   s.publish("9.10.0");
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.10.0");
-  assert.match(r.out, /The pack it replaced \(9\.9\.0\) is kept/);
+  assert.deepEqual(s.versions(), s.all("9.10.0"));
+  assert.match(r.out, /The folders it replaced \(9\.9\.0\) are kept in .*\.prev/);
   const pinned = s.run("--yes", "--version", "v9.9.0");
   assert.equal(pinned.code, 0, pinned.err);
-  assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.equal(s.run("--version", "1.0.0").code, 1, "a release that isn't there");
 });
 
@@ -145,7 +180,7 @@ test("a tarball that doesn't match SHA256SUMS installs nothing", (t) => {
   const r = s.run("--yes");
   assert.equal(r.code, 1);
   assert.match(r.err, /does not match SHA256SUMS .*nothing was installed/);
-  assert.equal(existsSync(s.pack), false);
+  assert.equal(existsSync(s.appHome), false, "nothing written before the checksum");
   assert.equal(existsSync(s.link), false);
 });
 
@@ -153,16 +188,27 @@ test("a tarball holding a symlink installs nothing, and leaves the old pack", (t
   const s = scratch(t);
   mkdirSync(s.pack, { recursive: true });
   writeFileSync(join(s.pack, "main.js"), "// the old pack\n");
-  s.publish("9.9.0", { edit: (dir) => symlinkSync("/etc/passwd", join(dir, "evil")) });
+  s.publish("9.9.0", { edit: (dir) => symlinkSync("/etc/passwd", join(dir, "auto-tabs", "evil")) });
   const r = s.run("--yes");
   assert.equal(r.code, 1);
   assert.match(r.err, /nothing was installed: .*evil: not a plain file or folder/);
   assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// the old pack\n");
   assert.equal(existsSync(s.link), false);
-  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.before-install")), false);
+  assert.deepEqual(readdirSync(s.mods), ["spaces-agents"]);
 });
 
-test("--uninstall puts the old pack back and removes the command; bots and settings stay", (t) => {
+test("a foreign folder in the tarball (not its PACK_MODS, or pocket-link) is refused, and nothing is installed", (t) => {
+  const s = scratch(t);
+  for (const extra of ["evil-mod", "pocket-link"]) {
+    s.publish("9.9.0", { edit: (dir) => { mkdirSync(join(dir, extra)); writeFileSync(join(dir, extra, "main.js"), "x\n"); writeFileSync(join(dir, extra, "mod.json"), "{}\n"); } });
+    const r = s.run("--yes");
+    assert.equal(r.code, 1, extra);
+    assert.match(r.err, extra === "pocket-link" ? /pocket-link\/.*outside the pack's folders/ : /are not its PACK_MODS/);
+    assert.equal(existsSync(s.mods), false, extra);
+  }
+});
+
+test("--uninstall puts the adopted pack back and removes the command; bots and settings stay", (t) => {
   const s = scratch(t);
   mkdirSync(s.pack, { recursive: true });
   writeFileSync(join(s.pack, "main.js"), "// the owner's clone\n");
@@ -172,7 +218,7 @@ test("--uninstall puts the old pack back and removes the command; bots and setti
   mkdirSync(project, { recursive: true });
   writeFileSync(join(project, "bots.json"), "{\"version\":1}\n");
   s.publish("9.9.0");
-  assert.equal(s.run("--yes").code, 0);
+  assert.equal(s.run("--yes", "--adopt").code, 0);
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
@@ -193,7 +239,9 @@ test("--uninstall with nothing there before moves the pack out of mods/, never d
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
   assert.equal(existsSync(s.pack), false);
-  assert.equal(readFileSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev", "VERSION"), "utf8").trim(), "9.9.0");
+  assert.deepEqual(readdirSync(s.mods), []);
+  assert.equal(readFileSync(join(s.state, ".prev", "spaces-agents", "VERSION"), "utf8").trim(), "9.9.0");
+  assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), new RegExp(`^mods=${PACK_MODS.join(",")}$`, "m"));
 });
 
 test("not macOS: explains and exits 1; Node too old with no brew: says where to get it", (t) => {
@@ -212,7 +260,8 @@ test("not macOS: explains and exits 1; Node too old with no brew: says where to 
 test("--help and an unknown option", (t) => {
   const s = scratch(t);
   assert.match(s.run("--help").out, /install\.sh --uninstall/);
-  assert.match(s.run("--help").out, /needs v0\.2\.0 or later/);
+  assert.match(s.run("--help").out, /needs v0\.3\.0 or later/);
+  assert.match(s.run("--help").out, /--adopt replaces a pack-named mod/);
   assert.equal(s.run("--nope").code, 2);
 });
 
@@ -231,46 +280,176 @@ test("piped into sh (curl | sh -s -- --yes), with Herdr from brew, the whole scr
   assert.match(r.out, /Done: Automagik Herdr 9\.9\.0\./);
 });
 
-test("install over a pack, update, uninstall: the pack from before the first install comes back", (t) => {
+const today = () => new Date().toISOString().slice(0, 10);
+
+test("adopt, then update twice: the adopted original stays in backup/, and --uninstall puts it back", (t) => {
   const s = scratch(t);
-  mkdirSync(s.pack, { recursive: true });
-  writeFileSync(join(s.pack, "main.js"), "// the owner's clone\n");
-  writeFileSync(join(s.pack, "mod.json"), "{}\n");
+  mkdirSync(join(s.mods, "sidebar-chrome", ".state"), { recursive: true });
+  writeFileSync(join(s.mods, "sidebar-chrome", "main.js"), "// hand-installed\n");
+  writeFileSync(join(s.mods, "sidebar-chrome", ".state", "rail.json"), "{\"tab\":\"mods\"}\n");
+  const original = treeSum(join(s.mods, "sidebar-chrome"));
   s.publish("9.9.0");
-  const first = s.run("--yes");
+  const first = s.run("--yes", "--adopt");
   assert.equal(first.code, 0, first.err);
-  assert.match(first.out, /The pack from before the first install is kept in .*spaces-agents\.before-install/);
-  s.publish("9.10.0");
-  const update = s.run("--yes");
-  assert.equal(update.code, 0, update.err);
-  assert.doesNotMatch(update.out, /before the first install/);
-  const before = join(s.appHome, "automagik-herdr", "spaces-agents.before-install");
-  assert.equal(readFileSync(join(before, "main.js"), "utf8"), "// the owner's clone\n", "the copy is never overwritten");
+  const backup = join(s.state, "backup", `sidebar-chrome-${today()}`);
+  assert.ok(first.out.includes(`adopted mods/sidebar-chrome: the original is kept in ${backup}`), first.out);
+  assert.match(s.mark(), /^adopted=sidebar-chrome:backup\/sidebar-chrome-\d{4}-\d\d-\d\d$/m);
+  assert.equal(readFileSync(join(s.mods, "sidebar-chrome", ".state", "rail.json"), "utf8"), "{\"tab\":\"mods\"}\n", "its state carried over");
+  for (const v of ["9.10.0", "9.11.0"]) {
+    s.publish(v);
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(s.versions(), s.all(v));
+    assert.equal(treeSum(backup), original, `${v}: the adopted original is untouched`);
+    assert.equal(existsSync(join(s.state, ".prev", "sidebar-chrome", "main.js")), true);
+  }
+  assert.deepEqual(readdirSync(join(s.state, "backup")), [`sidebar-chrome-${today()}`]);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// the owner's clone\n");
-  assert.equal(existsSync(before), false);
-  assert.equal(readFileSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev", "VERSION"), "utf8").trim(), "9.10.0");
+  assert.equal(treeSum(join(s.mods, "sidebar-chrome")), original);
+  assert.equal(existsSync(backup), false);
+  assert.deepEqual(readdirSync(s.mods), ["sidebar-chrome"]);
 });
 
-test("a hand-placed pack already at the release's version: no marker, and --uninstall leaves it in mods/", (t) => {
+test("old-named folders the installer didn't write are left alone without --adopt; --uninstall leaves them too", (t) => {
   const s = scratch(t);
-  mkdirSync(s.pack, { recursive: true });
-  writeFileSync(join(s.pack, "main.js"), "// hand-placed\n");
-  mkdirSync(join(s.pack, "bin"));
-  writeFileSync(join(s.pack, "bin", "automagik-herdr.mjs"), "#!/usr/bin/env node\n");
-  writeFileSync(join(s.pack, "VERSION"), "9.9.0\n");
+  const mine = {};
+  for (const m of ["spaces-agents", "auto-tabs"]) {
+    mkdirSync(join(s.mods, m, "bin"), { recursive: true });
+    writeFileSync(join(s.mods, m, "main.js"), `// ${m}, hand-placed\n`);
+    writeFileSync(join(s.mods, m, "VERSION"), "9.9.0\n");
+    mine[m] = treeSum(join(s.mods, m));
+  }
   s.publish("9.9.0");
   const first = s.run("--yes");
   assert.equal(first.code, 0, first.err);
-  assert.doesNotMatch(first.out, /Downloading/);
-  assert.match(first.out, /was not installed by this script: it is left as it is/);
-  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "installed-by-install.sh")), false);
+  assert.match(first.out, /left alone: mods\/auto-tabs \(not installed by automagik-herdr; --adopt/);
+  assert.match(first.out, /Left .*automagik-herdr as it is: .*spaces-agents is not this installer's/);
+  assert.match(s.mark(), new RegExp(`^mods=${PACK_MODS.filter((m) => !(m in mine)).join(",")}$`, "m"));
+  for (const m in mine) assert.equal(treeSum(join(s.mods, m)), mine[m], m);
+  assert.equal(existsSync(s.link), false);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Nothing to uninstall/);
-  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// hand-placed\n");
-  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev")), false);
+  assert.deepEqual(readdirSync(s.mods), ["auto-tabs", "spaces-agents"]);
+  for (const m in mine) assert.equal(treeSum(join(s.mods, m)), mine[m], m);
+});
+
+test("a v0.2.0-shaped home: rerunning install.sh installs the pack beside it, then --adopt takes the hand-installed mods", (t) => {
+  const s = scratch(t);
+  // v0.2.x: its marker, its spaces-agents and kept copies, its bots-only layout; hand-installed mods.
+  mkdirSync(s.state, { recursive: true });
+  writeFileSync(join(s.state, "installed-by-install.sh"), "version=0.2.2\nbefore=kept\nlayout=added\n");
+  for (const dir of [s.pack, join(s.state, "spaces-agents.prev"), join(s.state, "spaces-agents.before-install")]) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "main.js"), `// ${dir}\n`);
+  }
+  mkdirSync(join(s.pack, ".state"));
+  writeFileSync(join(s.pack, ".state", "projects.json"), "[]\n");
+  writeFileSync(join(s.pack, "VERSION"), "0.2.2\n");
+  // The layout v0.2 shipped, byte for byte (`git show v0.2.0:mods/spaces-agents/layouts/automagik.json`).
+  const v020 = readFileSync(join(ROOT, "test", "fixtures", "layout-v0.2.0.json"));
+  assert.equal(createHash("sha256").update(v020).digest("hex"), V020_LAYOUT_SHA256);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  mkdirSync(dirname(layout));
+  writeFileSync(layout, v020);
+  const hand = {};
+  for (const m of ["sidebar-chrome", "auto-tabs"]) {
+    mkdirSync(join(s.mods, m));
+    writeFileSync(join(s.mods, m, "main.js"), `// ${m} by hand\n`);
+    hand[m] = treeSum(join(s.mods, m));
+  }
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  for (const m in hand) assert.equal(treeSum(join(s.mods, m)), hand[m], `${m} untouched without --adopt`);
+  assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
+  assert.equal(readFileSync(join(s.pack, ".state", "projects.json"), "utf8"), "[]\n", "v0.2's state carried over");
+  assert.equal(readFileSync(layout, "utf8"), readFileSync(LAYOUT_SRC, "utf8"), "v0.2's unchanged layout replaced (D8)");
+  assert.equal(readFileSync(join(s.state, ".prev", "spaces-agents", "VERSION"), "utf8"), "0.2.2\n");
+  const backups = readdirSync(join(s.state, "backup")).sort();
+  assert.deepEqual(backups, [`spaces-agents-before-install-${today()}`, `spaces-agents-v0.2-prev-${today()}`]);
+  assert.match(s.mark(), /^layout=added$/m);
+  assert.match(s.mark(), /^adopted=spaces-agents:backup\/spaces-agents-before-install-/m);
+  const adopt = s.run("--yes", "--adopt");
+  assert.equal(adopt.code, 0, adopt.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  for (const m in hand) assert.equal(treeSum(join(s.state, "backup", `${m}-${today()}`)), hand[m], `${m} moved to backup/ first`);
+  const un = s.run("--uninstall");
+  assert.equal(un.code, 0, un.err);
+  for (const m in hand) assert.equal(treeSum(join(s.mods, m)), hand[m], `${m} put back`);
+  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), `// ${join(s.state, "spaces-agents.before-install")}\n`, "the pack from before v0.2's first install");
+});
+
+test("a v1 marker is still uninstalled: v0.2's spaces-agents leaves, its first pack comes back", (t) => {
+  const s = scratch(t);
+  mkdirSync(join(s.state, "spaces-agents.before-install"), { recursive: true });
+  writeFileSync(join(s.state, "installed-by-install.sh"), "version=0.2.2\nbefore=kept\n");
+  writeFileSync(join(s.state, "spaces-agents.before-install", "main.js"), "// before\n");
+  mkdirSync(s.pack, { recursive: true });
+  writeFileSync(join(s.pack, "main.js"), "// v0.2.2\n");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// before\n");
+  assert.equal(readFileSync(join(s.state, ".prev", "spaces-agents", "main.js"), "utf8"), "// v0.2.2\n");
+});
+
+test("install, update, rollback, uninstall: a planted pocket-link stays byte-identical", (t) => {
+  const s = scratch(t);
+  const pocket = join(s.mods, "pocket-link");
+  mkdirSync(join(pocket, ".state"), { recursive: true });
+  writeFileSync(join(pocket, "main.js"), "// automagik-pocket's\n");
+  writeFileSync(join(pocket, ".state", "pairing.key"), "secret\n");
+  symlinkSync("/nowhere", join(pocket, "dangling"));
+  const sum = treeSum(pocket);
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(s.checks().length, PACK_MODS.length, "herdr-app check on every pack mod");
+  assert.equal(s.checks().some((c) => c.includes("pocket-link")), false);
+  assert.equal(treeSum(pocket), sum, "after install");
+  s.publish("9.10.0");
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(treeSum(pocket), sum, "after update");
+  const env = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: s.home, HERDR_APP_HOME: s.appHome };
+  const back = spawnSync(s.link, ["update", "--rollback"], { encoding: "utf8", env });
+  assert.equal(back.status, 0, back.stderr);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  assert.match(s.mark(), /^version=9\.9\.0$/m);
+  assert.equal(treeSum(pocket), sum, "after rollback");
+  assert.equal(s.run("--uninstall").code, 0);
+  assert.deepEqual(readdirSync(s.mods), ["pocket-link"]);
+  assert.equal(treeSum(pocket), sum, "after uninstall");
+});
+
+test("free keys only, and an unreadable keys.json stops the install before any folder moves", (t) => {
+  const s = scratch(t);
+  mkdirSync(s.appHome, { recursive: true });
+  writeFileSync(join(s.appHome, "keys.json"), JSON.stringify({ global: { "cmd-shift-m": "mine.thing" } }));
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /key = cmd-shift-m stays mine\.thing/);
+  assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mine.thing" } });
+  const bad = scratch(t);
+  mkdirSync(bad.appHome, { recursive: true });
+  writeFileSync(join(bad.appHome, "keys.json"), "{ nope");
+  bad.publish("9.9.0");
+  const b = bad.run("--yes");
+  assert.equal(b.code, 1);
+  assert.match(b.err, /keys\.json is unreadable .*nothing was installed/);
+  assert.equal(existsSync(bad.mods), false);
+});
+
+test("a failing herdr-app check exits 1 after installing, naming the mod and the rollback", (t) => {
+  const s = scratch(t);
+  s.addHerdrApp();
+  writeFileSync(join(s.bin, "herdr-app"), `${readFileSync(join(s.bin, "herdr-app"), "utf8")}case "$2" in */auto-tabs) echo broken >&2; exit 1 ;; esac\n`);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 1);
+  assert.match(r.out, /check FAILED: auto-tabs: broken/);
+  assert.match(r.err, /herdr-app check failed .*update --rollback/);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
 });
 
 const HINT = /the sidebar appears after this:\n  herdr-app do layout\.switch '\{"name":"automagik"\}'\n$/;
@@ -284,7 +463,7 @@ test("the automagik layout: added when absent, switched to only with a yes; unin
   // No terminal, no --yes: added, not switched; the command is printed.
   const r = s.run();
   assert.equal(r.code, 0, r.err);
-  assert.equal(readFileSync(layout, "utf8"), readFileSync(join(PACK_SRC, "layouts", "automagik.json"), "utf8"));
+  assert.equal(readFileSync(layout, "utf8"), readFileSync(LAYOUT_SRC, "utf8"));
   assert.match(r.out, HINT);
   assert.match(s.mark(), /^layout=added$/m);
   assert.deepEqual(s.herdrCalls(), []);
@@ -355,15 +534,15 @@ test("a layout the person copied by hand is never removed, even unchanged", (t) 
   const s = scratch(t);
   const layout = join(s.appHome, "layouts", "automagik.json");
   mkdirSync(dirname(layout), { recursive: true });
-  cpSync(join(PACK_SRC, "layouts", "automagik.json"), layout);
+  cpSync(LAYOUT_SRC, layout);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
-  assert.doesNotMatch(s.mark(), /layout=/);
+  assert.match(s.mark(), /^layout=kept$/m);
   assert.equal(s.run("--uninstall").code, 0);
   assert.equal(existsSync(layout), true);
 });
 
-test("--uninstall refuses a pack folder that is a symlink, and changes nothing", (t) => {
+test("--uninstall leaves a pack folder that became a symlink in place, and moves the rest", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
@@ -372,46 +551,10 @@ test("--uninstall refuses a pack folder that is a symlink, and changes nothing",
   rmSync(s.pack, { recursive: true });
   symlinkSync(real, s.pack);
   const r = s.run("--uninstall");
-  assert.equal(r.code, 1);
-  assert.match(r.err, /is a symlink/);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Left .*spaces-agents: it is a link/);
   assert.equal(lstatSync(s.pack).isSymbolicLink(), true);
-  assert.equal(existsSync(join(s.appHome, "automagik-herdr", "installed-by-install.sh")), true);
-  assert.equal(lstatSync(s.link).isSymbolicLink(), true);
-});
-
-test("a before-install copy that fails stops the install: no marker, no kept line, the pack unchanged", (t) => {
-  const s = scratch(t);
-  cpSync(PACK_SRC, s.pack, { recursive: true });
-  writeFileSync(join(s.pack, "VERSION"), "1.0.0\n");
-  const secret = join(s.pack, "secret");
-  writeFileSync(secret, "x");
-  chmodSync(secret, 0o000); // cp -RP can't read it
-  s.publish("9.9.0");
-  const r = s.run("--yes");
-  assert.notEqual(r.code, 0);
-  assert.match(r.err, /could not keep a copy of .*: nothing was installed/);
-  assert.doesNotMatch(r.out, /kept in|Installed the pack/);
-  const state = join(s.appHome, "automagik-herdr");
-  assert.equal(existsSync(join(state, "installed-by-install.sh")), false);
-  assert.equal(existsSync(join(state, "spaces-agents.before-install")), false);
-  assert.equal(existsSync(join(state, "spaces-agents.before-install.tmp")), false);
-  assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8"), "1.0.0\n");
-  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), readFileSync(join(PACK_SRC, "main.js"), "utf8"));
-  assert.equal(existsSync(secret), true);
-  chmodSync(secret, 0o644);
-});
-
-test("a before-install copy cut short (.tmp) is cleared, then made whole", (t) => {
-  const s = scratch(t);
-  mkdirSync(s.pack, { recursive: true });
-  writeFileSync(join(s.pack, "main.js"), "// the owner's clone\n");
-  const state = join(s.appHome, "automagik-herdr");
-  mkdirSync(join(state, "spaces-agents.before-install.tmp"), { recursive: true });
-  writeFileSync(join(state, "spaces-agents.before-install.tmp", "half"), "");
-  s.publish("9.9.0");
-  assert.equal(s.run("--yes").code, 0);
-  assert.equal(existsSync(join(state, "spaces-agents.before-install.tmp")), false);
-  assert.equal(readFileSync(join(state, "spaces-agents.before-install", "main.js"), "utf8"), "// the owner's clone\n");
+  assert.deepEqual(readdirSync(s.mods), ["spaces-agents"]);
 });
 
 test("AUTOMAGIK_HERDR_RELEASE_URL: a file:// folder or this repository on GitHub only, always said", (t) => {
@@ -473,10 +616,9 @@ test("a download cut short runs nothing (the body is one function called on the 
   assert.equal(existsSync(s.pack), false);
 });
 
-test("the sidebar mod docks nowhere by itself; the shipped layout names only it and stock Herdr mods", () => {
+test("every pack mod docks nowhere by itself; the shipped layout names only pack mods and stock Herdr mods", () => {
   // place "left" plus a layout that also names spaces-agents made Herdr show two sidebars.
-  const mod = JSON.parse(readFileSync(join(PACK_SRC, "mod.json"), "utf8"));
-  assert.equal(mod.place, "none");
+  for (const m of PACK_MODS) assert.equal(JSON.parse(readFileSync(join(ROOT, "mods", m, "mod.json"), "utf8")).place, "none", m);
   const stock = new Set(["changes", "files", "pane", "tabs", "workspace-chrome", "workspace-status", "spaces", "agents"]);
   const named = [];
   const walk = (node) => {
@@ -486,8 +628,47 @@ test("the sidebar mod docks nowhere by itself; the shipped layout names only it 
       Object.values(node).forEach(walk);
     }
   };
-  walk(JSON.parse(readFileSync(join(PACK_SRC, "layouts", "automagik.json"), "utf8")));
+  walk(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")));
   assert.ok(named.includes("spaces-agents"));
-  assert.deepEqual(named.filter((m) => m !== "spaces-agents" && !stock.has(m)), []);
-  assert.deepEqual(readdirSync(join(PACK_SRC, "layouts")), ["automagik.json"]);
+  assert.deepEqual(named.filter((m) => !PACK_MODS.includes(m) && !stock.has(m)), []);
+  assert.deepEqual(readdirSync(join(ROOT, "layouts")), ["automagik.json"]);
+  assert.equal(existsSync(join(PACK_SRC, "layouts")), false, "one layout: the root one (D8)");
+  assert.deepEqual(readdirSync(join(ROOT, "mods")).filter((m) => m !== "pocket-link").sort(), [...PACK_MODS].sort());
+});
+
+test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from the kept set", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  for (const m of ["am-quota", "auto-tabs"]) {
+    mkdirSync(join(s.mods, m, ".state"));
+    writeFileSync(join(s.mods, m, ".state", "cred"), `${m} secret\n`);
+  }
+  assert.equal(s.run("--uninstall").code, 0);
+  assert.equal(existsSync(join(s.mods, "am-quota")), false);
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  for (const m of ["am-quota", "auto-tabs"]) assert.equal(readFileSync(join(s.mods, m, ".state", "cred"), "utf8"), `${m} secret\n`, m);
+});
+
+test("--uninstall never glob-expands the record, and moves only backup/<name> paths it adopted", (t) => {
+  const s = scratch(t);
+  mkdirSync(join(s.state, "backup", "keep"), { recursive: true });
+  writeFileSync(join(s.state, "backup", "keep", "main.js"), "// mine\n");
+  mkdirSync(join(s.mods, "pocket-link"), { recursive: true });
+  writeFileSync(join(s.mods, "pocket-link", "main.js"), "// pocket\n");
+  writeFileSync(join(s.root, "auto-tabs"), "a file in the cwd a glob would find\n");
+  mkdirSync(join(s.mods, "auto-tabs"));
+  writeFileSync(join(s.mods, "auto-tabs", "main.js"), "// not the record's\n");
+  const stateBefore = treeSum(s.state);
+  writeFileSync(join(s.state, "installed-by-install.sh"),
+    "version=9.9.0\nmods=*,auto-*\nbefore=none\nadopted=am-quota:,auto-tabs:.,md-menu:backup/,mod-manager:backup/../..,new-menu-tui:/etc,automations:backup/*,sidebar-chrome:backup/.hidden\n");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(readdirSync(s.mods), ["auto-tabs", "pocket-link"], "nothing put back; `auto-*` matched nothing");
+  assert.equal(readFileSync(join(s.mods, "auto-tabs", "main.js"), "utf8"), "// not the record's\n");
+  assert.equal(readFileSync(join(s.mods, "pocket-link", "main.js"), "utf8"), "// pocket\n");
+  rmSync(join(s.state, "installed-by-install.sh"), { force: true });
+  assert.equal(treeSum(s.state), stateBefore, "the state folder is whole");
+  assert.deepEqual(parseMarker("mods=a\nadopted=a:,b:.,c:backup/,d:backup/../x,e:backup/ok,pocket-link:backup/p\n").adopted, [{ mod: "e", path: "backup/ok" }]);
 });

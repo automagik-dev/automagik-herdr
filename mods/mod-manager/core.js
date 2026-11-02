@@ -7,11 +7,20 @@ export const MARKET_TOPIC = "herdr-mod";
 // reads its row and links to that repo's installer; it never installs, updates or removes it —
 // a delete here would destroy the pairing key in .state/.
 export const POCKET_LINK = "pocket-link";
+/** Pocket Link under any spelling: macOS's disk is case-insensitive, so `Pocket-Link` is its folder too. */
+export const isPocketLink = (name) => String(name ?? "").toLowerCase() === POCKET_LINK;
+/** A mod folder a package may bring: lowercase words and dashes, as update.mjs's packFolder. */
+export const MOD_NAME = /^[a-z0-9][a-z0-9-]*$/;
+/** A layout file a package may bring. */
+const LAYOUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
+const lower = (names) => new Set([...names].map((n) => String(n).toLowerCase()));
 export const POCKET_LINK_REFUSAL =
   "Pocket Link pertence a automagik-dev/automagik-pocket: instale ou remova pelo instalador de lá. Esta linha é só leitura.";
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const backupDir = (appHome) => `${appHome}/automagik-herdr/backup`;
+// Beside mods/, on the same file system, where Herdr never loads a mod from.
+const stagingDir = (appHome) => `${appHome}/automagik-herdr/staging`;
 const present = async (io, path) => (await io.exec("test", ["-e", path])).code === 0;
 
 /** Moves a folder or file aside, stamped, and returns where it went: never a delete. */
@@ -23,10 +32,11 @@ async function moveAside(io, appHome, path, name) {
 }
 
 /**
- * Puts a mod's private state back into its fresh folder: dot paths and node_modules.
- * The *contents* are copied, not the folder: the package may ship its own `.state/`, and copying
- * `from/.state` onto `to/.state` would nest it as `.state/.state/<key>`. The person's files are
- * copied after the package's, so theirs win.
+ * Puts a mod's private state into its staged folder: dot paths and node_modules.
+ * A folder's *contents* are copied, not the folder: the package may ship its own `.state/`, and
+ * copying `from/.state` onto `to/.state` would nest it as `.state/.state/<key>`. The person's files
+ * are copied after the package's, so theirs win. A link (a `.state` kept elsewhere) stays a link
+ * to the same place, and a dotfile stays a file.
  */
 async function carryPrivate(io, from, to) {
   if (!from) return 0;
@@ -34,8 +44,15 @@ async function carryPrivate(io, from, to) {
   let carried = 0;
   for (const name of names) {
     if (!(name.startsWith(".") || name === "node_modules")) continue;
-    await run(io, "mkdir", ["-p", `${to}/${name}`]);
-    await run(io, "cp", ["-R", `${from}/${name}/.`, `${to}/${name}/`]);
+    const src = `${from}/${name}`, dst = `${to}/${name}`;
+    const link = (await io.exec("test", ["-L", src])).code === 0;
+    if (!link && (await io.exec("test", ["-d", src])).code === 0) {
+      await run(io, "mkdir", ["-p", dst]);
+      await run(io, "cp", ["-RP", `${src}/.`, `${dst}/`]);
+    } else {
+      await run(io, "rm", ["-rf", dst]);
+      await run(io, "cp", ["-P", src, dst]);
+    }
     carried += 1;
   }
   return carried;
@@ -120,10 +137,15 @@ export function repoUrl(fullName) {
 }
 
 // Shallow clone into a fresh folder under `cacheDir`; returns the folder, commit and tracked files.
-export async function fetchSource(io, source, cacheDir) {
+// With `commit` (the catalog's headCommit) the clone is that commit, not whatever HEAD is now.
+export async function fetchSource(io, source, cacheDir, commit = null) {
   const dir = `${cacheDir}/${source.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, "")}-${Date.now()}`;
   await run(io, "mkdir", ["-p", cacheDir]);
   await run(io, "git", ["clone", "-q", "--depth", "1", repoUrl(source), dir]);
+  if (/^[0-9a-f]{40}$/.test(commit ?? "") && (await run(io, "git", ["-C", dir, "rev-parse", "HEAD"])).trim() !== commit) {
+    await run(io, "git", ["-C", dir, "fetch", "-q", "--depth", "1", "origin", commit]);
+    await run(io, "git", ["-C", dir, "checkout", "-q", "--detach", commit]);
+  }
   const sha = (await run(io, "git", ["-C", dir, "rev-parse", "HEAD"])).trim();
   const files = (await run(io, "git", ["-C", dir, "ls-files"])).split("\n").filter(Boolean);
   return { dir, sha, files };
@@ -153,12 +175,15 @@ function parseKeys(text) {
 // a clash and blocks the install, as AGENTS.md never overwrites.
 export async function planInstall(io, { appHome, dir, pkg, record, existingMods, existingLayouts }) {
   const base = pkg.prefix ? `${dir}/${pkg.prefix}` : dir;
-  const ownMods = new Set(record?.mods ?? []);
-  const ownLayouts = new Set(record?.layouts ?? []);
+  // Names compare case-insensitively (macOS's disk does): `Demo` is the person's `demo`.
+  const ownMods = lower(record?.mods ?? []);
+  const ownLayouts = lower(record?.layouts ?? []);
+  const haveMods = lower(existingMods);
+  const haveLayouts = lower(existingLayouts);
   const layouts = pkg.layouts.map((f) => f.split("/").at(-1));
   const clashes = [
-    ...pkg.mods.filter((m) => existingMods.includes(m) && !ownMods.has(m)).map((m) => `mods/${m}`),
-    ...layouts.filter((l) => existingLayouts.includes(l) && !ownLayouts.has(l)).map((l) => `layouts/${l}`),
+    ...pkg.mods.filter((m) => !MOD_NAME.test(m) || (haveMods.has(m.toLowerCase()) && !ownMods.has(m.toLowerCase()))).map((m) => `mods/${m}`),
+    ...layouts.filter((l) => !LAYOUT_NAME.test(l) || (haveLayouts.has(l.toLowerCase()) && !ownLayouts.has(l.toLowerCase()))).map((l) => `layouts/${l}`),
   ];
   const theirs = pkg.keys ? parseKeys(await io.readText(`${base}/keys.json`)) : {};
   const mine = parseKeys(await io.readText(`${appHome}/keys.json`));
@@ -187,33 +212,76 @@ async function writeKeys(io, appHome, change) {
   await io.writeText(path, JSON.stringify(keys, null, 2) + "\n");
 }
 
-// Copies the package and adds its keys. Conflicting keys are left as the person has them. On an
-// update, the package's previous folders are removed first, and only those.
+// Copies the package and adds its keys. Conflicting keys are left as the person has them. Each
+// mod is built in a staging folder (the package's files, then the installed copy's private state),
+// and only then are the record's old folders moved aside (never deleted) and the staged ones
+// renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
   if (plan.clashes.length) throw new Error(`já existe: ${plan.clashes.join(", ")}`);
-  if (plan.mods.includes(POCKET_LINK)) throw new Error(POCKET_LINK_REFUSAL);
-  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome)]);
-  // The old folder is moved aside, never deleted: an update keeps the mod's own state.
-  const aside = new Map();
-  for (const m of record?.mods ?? []) {
-    const from = `${appHome}/mods/${m}`;
-    if (await present(io, from)) aside.set(m, await moveAside(io, appHome, from, m));
+  if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
+  const badName = plan.mods.find((m) => !MOD_NAME.test(m)) ?? plan.layouts.find((l) => !LAYOUT_NAME.test(l));
+  if (badName) throw new Error(`nome recusado: ${badName} (pastas de mod em minúsculas, a-z 0-9 -)`);
+  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
+  const staged = [];
+  try {
+    for (const m of plan.mods) {
+      const stage = `${stagingDir(appHome)}/${m}-${stamp()}`;
+      staged.push([m, stage]);
+      await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, stage]);
+      // The package brings plain files and folders only: a link it ships (a `.state` pointing
+      // outside, a dangling dotfile) would be written through or installed as is. Refused, as
+      // update.mjs refuses one in a release tarball.
+      const odd = (await run(io, "find", [stage, "!", "-type", "f", "!", "-type", "d"])).split("\n").filter(Boolean);
+      if (odd.length) throw new Error(`${m}: o pacote traz um link ou arquivo especial (${odd[0].slice(stage.length + 1)}): recusado`);
+      const live = `${appHome}/mods/${m}`;
+      if ((record?.mods ?? []).includes(m) && (await present(io, live))) await carryPrivate(io, live, stage);
+    }
+  } catch (e) {
+    for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
+    throw e;
   }
-  for (const l of record?.layouts ?? []) {
-    const p = `${appHome}/layouts/${l}`;
-    if (await present(io, p)) await moveAside(io, appHome, p, l);
+  // Mods, then layouts, then keys, journalled: a failure anywhere puts every folder and layout
+  // back where it was. keys.json is written last, in one write, so a failed write changed nothing
+  // and nothing after it can fail.
+  const aside = [];
+  const placed = [];
+  const laid = [];
+  try {
+    for (const m of record?.mods ?? []) {
+      const live = `${appHome}/mods/${m}`;
+      if (await present(io, live)) aside.push([live, await moveAside(io, appHome, live, m)]);
+    }
+    for (const [m, stage] of staged) {
+      // Only into a free name: `mv` onto an existing folder (any case) would land inside it, and
+      // the undo below must reverse only what this run created.
+      const dest = `${appHome}/mods/${m}`;
+      if (await present(io, dest)) throw new Error(`já existe: mods/${m}`);
+      await run(io, "mv", [stage, dest]);
+      placed.push([dest, stage]);
+    }
+    for (const l of record?.layouts ?? []) {
+      const p = `${appHome}/layouts/${l}`;
+      if (await present(io, p)) aside.push([p, await moveAside(io, appHome, p, l)]);
+    }
+    for (const l of plan.layouts) {
+      const to = `${appHome}/layouts/${l}`;
+      if (await present(io, to)) throw new Error(`já existe: layouts/${l}`);
+      laid.push(to);
+      await run(io, "cp", [`${plan.base}/layouts/${l}`, to]);
+    }
+    if (plan.keyAdds.length) {
+      await writeKeys(io, appHome, (all) => {
+        for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
+      });
+    }
+  } catch (e) {
+    for (const to of laid) await io.exec("rm", ["-f", to]);
+    for (const [live, stage] of placed.reverse()) await io.exec("mv", [live, stage]);
+    for (const [live, to] of aside.reverse()) await io.exec("mv", [to, live]);
+    for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
+    throw e;
   }
-  for (const m of plan.mods) {
-    await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, `${appHome}/mods/${m}`]);
-    await carryPrivate(io, aside.get(m), `${appHome}/mods/${m}`);
-  }
-  for (const l of plan.layouts) await run(io, "cp", [`${plan.base}/layouts/${l}`, `${appHome}/layouts/${l}`]);
   const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
-  if (plan.keyAdds.length) {
-    await writeKeys(io, appHome, (all) => {
-      for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
-    });
-  }
   return {
     source, prefix, sha, mods: plan.mods, layouts: plan.layouts, keys: dedupeKeys(keys),
     risks: plan.risks.map((r) => r.label), at: new Date().toISOString(),
@@ -238,7 +306,7 @@ export async function checkMods(io, appHome, mods) {
 // Removes what the record says the manager installed. A key is removed only while it still runs
 // the action the package added: one the person rebound since then stays.
 export async function uninstall(io, { appHome, record }) {
-  if (record.mods.includes(POCKET_LINK)) throw new Error(POCKET_LINK_REFUSAL);
+  if (record.mods.some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
   for (const m of record.mods) {
     const p = `${appHome}/mods/${m}`;
     if (await present(io, p)) await moveAside(io, appHome, p, m);
@@ -258,7 +326,7 @@ export async function uninstall(io, { appHome, record }) {
 
 // A mod the manager did not install: a symlink is only unlinked, the folder it points to stays.
 export async function removeLocal(io, { appHome, name, symlink, path }) {
-  if (name === POCKET_LINK) throw new Error(POCKET_LINK_REFUSAL);
+  if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
   const where = `${appHome}/${path ?? `mods/${name}`}`;
   if (symlink) return void (await run(io, "rm", [where]));   // only the link; the folder it points to stays
   if (await present(io, where)) await moveAside(io, appHome, where, name);
@@ -326,7 +394,7 @@ export async function listMods(io, { appHome, records }) {
 export async function setEnabled(io, { appHome, name, enabled }) {
   if (!name || /\//.test(name)) throw new Error(`not a mod name: ${name}`);
   // Off means "moved to mods-disabled/", which would strand a pairing key that lives in .state/.
-  if (name === POCKET_LINK) throw new Error(POCKET_LINK_REFUSAL);
+  if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
   const to = enabled ? "mods" : OFF_DIR;
   await run(io, "mkdir", ["-p", `${appHome}/${to}`]);
   await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);
@@ -373,9 +441,17 @@ export async function searchMarket(io, { query = "", sort = "stars", page = 1, p
 
 // Our marketplace: this pack publishes its own index (catalog/index.json, same shape as
 // herdr.dev's), and an installed copy may point anywhere via data/mod-manager/catalog.json.
-// The pack publishes from `dev`. Kept equal to scripts/install.mjs's PUBLISHED_CATALOG by
+// The pack publishes from `dev`. Kept equal to mods/spaces-agents/release.js's CATALOG_URL by
 // test/pack-installer.test.mjs; an installed copy can override it via data/mod-manager/catalog.json.
 export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
+
+/** The commit the catalog pins for `source` (its `headCommit`), or null: an install fetches that commit. */
+export function catalogCommit(catalog, source) {
+  for (const entry of catalog?.byMod?.values() ?? []) {
+    if (entry?.fullName === source && /^[0-9a-f]{40}$/.test(entry.headCommit ?? "")) return entry.headCommit;
+  }
+  return null;
+}
 
 export function parseCatalog(json) {
   const mods = Array.isArray(json?.mods) ? json.mods : [];

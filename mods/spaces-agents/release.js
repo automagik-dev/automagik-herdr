@@ -8,9 +8,56 @@ export const REPO = "automagik-dev/automagik-herdr";
 /** `/latest` answers the newest release that is neither a draft nor a prerelease. */
 export const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 export const SUMS_NAME = "SHA256SUMS";
+/** The folder that carries the pack's VERSION, update.mjs and the CLI. */
 export const PACK_NAME = "spaces-agents";
-/** The pack's tarball on release `version`: `tar czf … -C mods spaces-agents` in release.yml. */
-export const tarballName = (version) => `automagik-herdr-${version}.tgz`;
+/**
+ * Every mod folder the pack ships (D3, D10): the tarball's top level is exactly these plus
+ * `layouts/automagik.json`, and release.yml asserts it. It ships inside the tarball it checks, so
+ * it guards against packaging bugs, not tampering (SHA256SUMS covers integrity). Pocket Link is
+ * never one of them: automagik-pocket owns it.
+ */
+export const PACK_MODS = Object.freeze(["am-quota", "auto-tabs", "automations", "md-menu", "mod-manager", "new-menu-tui",
+  "sidebar-chrome", "spaces-agents"]);
+export const POCKET_LINK = "pocket-link";
+/** The one layout the pack ships, beside the mod folders in the tarball. */
+export const PACK_LAYOUT = "layouts/automagik.json";
+/** sha256 of the bots-only layout v0.2.0–v0.2.2 installed: only that copy is replaced (D8). */
+export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caaf1c7096c6b84778a8a3";
+/** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */
+export const PACK_KEYS = Object.freeze({ global: Object.freeze({ "cmd-shift-m": "mod.open:mod-manager" }) });
+/** What the mod manager lists; mods/mod-manager/core.js's CATALOG_URL is kept equal by a test. */
+export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
+/** The pack's tarball on release `version` (release.yml's Pack step). */
+export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
+
+/**
+ * The installer's ownership record (`<app home>/automagik-herdr/installed-by-install.sh`) as data.
+ * v2: `version=`, `mods=<comma list>`, `layout=added|kept`, `before=kept|none`, and
+ * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt. A v1
+ * marker (v0.2.x: no `mods=`) installed only spaces-agents.
+ */
+/** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
+export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function parseMarker(text) {
+  if (typeof text !== "string") return null;
+  const get = (key) => (new RegExp(`^${key}=(.*)$`, "m").exec(text)?.[1] ?? "").trim();
+  const list = (value) => value.split(",").map((s) => s.trim()).filter(Boolean);
+  const v1 = !/^mods=/m.test(text);
+  return {
+    v1,
+    version: get("version") || null,
+    mods: v1 ? [PACK_NAME] : list(get("mods")),
+    layout: get("layout") || null,
+    before: get("before") || "none",
+    adopted: list(get("adopted")).map((e) => ({ mod: e.slice(0, e.indexOf(":")), path: e.slice(e.indexOf(":") + 1) }))
+      .filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a.mod) && a.mod !== POCKET_LINK && ADOPTED_PATH.test(a.path)),
+  };
+}
+
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [] }) =>
+  [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
+    ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */
 export const NO_UPDATE_ENV = "AUTOMAGIK_HERDR_NO_UPDATE";
 export const FIRST_CHECK_MS = 20_000;

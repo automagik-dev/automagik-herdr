@@ -145,13 +145,12 @@ test("an update carries themes/ (the release packs the whole folder; nothing is 
   }
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-carry-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const src = join(root, "src/spaces-agents");
-  cpSync(PACK, src, { recursive: true });
-  writeFileSync(join(src, "VERSION"), "9.9.9\n");
+  const { PACK_MODS } = await import("../mods/spaces-agents/release.js");
+  for (const m of PACK_MODS) cpSync(join(ROOT, "mods", m), join(root, "src", m), { recursive: true });
+  writeFileSync(join(root, "src/spaces-agents/VERSION"), "9.9.9\n");
   const tgz = join(root, "pack.tgz");
-  execFileSync("tar", ["czf", tgz, "-C", join(root, "src"), "spaces-agents"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+  execFileSync("tar", ["czf", tgz, "-C", join(root, "src"), ...PACK_MODS], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
   const mods = join(root, "mods");
   await applyUpdate({ tgzPath: tgz, version: "9.9.9", modsDir: mods });
   for (const n of THEME_NAMES) assert.ok(existsSync(join(mods, "spaces-agents/themes", `${n}.json`)), n);
-  assert.ok(existsSync(join(mods, "spaces-agents/layouts/automagik.json")));
 });
