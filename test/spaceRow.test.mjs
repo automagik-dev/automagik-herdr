@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   DASH, readFeed, projectOf, lineTwo, cardsOf, botCard, namesOf, arrowOf, fmtCount, fmtMinutes, fmtShare,
-  fmtUsd, fmtTokens, fmtAsOf, scaleColor, scaleK, colorOf, pieAngles, sliceAt, polar,
+  fmtUsd, fmtTokens, fmtAsOf, scaleColor, scaleK, colorOf, pieAngles, sliceAt, polar, fetchFeed,
 } from "../mods/spaces-agents/spaceRow.js";
 
 const TEXT = readFileSync(new URL("./fixtures/herdr-meter-space.sample.json", import.meta.url), "utf8");
@@ -179,6 +179,22 @@ test("cost scale: theme anchors, exact stops from the rules table", () => {
   assert.equal(colorOf({ token: "ansi13" }, { ansi13: "#976ee6" }), "#976ee6");
   assert.equal(colorOf({ k: 0 }, dark), "#009957");
   assert.equal(scaleColor(0.5, { dim: "#666666" }), "#666666");
+});
+
+test("fetchFeed: hc doc get first, doc.get over hc connect on an older hc, null when both fail", async () => {
+  const calls = [];
+  const ok = { code: 0, stdout: TEXT, stderr: "" };
+  const usage = { code: 2, stdout: '{"error":{"kind":"usage","message":"unrecognized subcommand \'doc\'"}}', stderr: "" };
+  assert.equal(await fetchFeed({ hc: async (a) => (calls.push(["hc", ...a]), ok), exec: async () => assert.fail("no fallback") }), TEXT);
+  assert.deepEqual(calls, [["hc", "doc", "get", "herdr-meter", "--json"]]);
+  let script = null;
+  const viaConnect = await fetchFeed({ hc: async () => usage, exec: async (cmd, args) => { script = [cmd, ...args]; return { code: 0, stdout: `{"id":1,"result":{"value":${TEXT}}}\n` }; } });
+  assert.equal(readFeed(viaConnect).space.version, 1);
+  assert.equal(script[0], "sh");
+  assert.match(script[2], /"method":"doc.get","params":\{"name":"herdr-meter"\}/);
+  assert.match(script[2], /connect \| head -n 1$/);
+  assert.equal(await fetchFeed({ hc: async () => { throw new Error("no hc"); }, exec: async () => { throw new Error("no sh"); } }), null);
+  assert.equal(await fetchFeed({ hc: async () => usage, exec: async () => ({ code: 1, stdout: "" }) }), null);
 });
 
 test("pie: 12 o'clock clockwise, zero slices empty, the slice under the pointer", () => {

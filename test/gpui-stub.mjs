@@ -26,7 +26,7 @@ function element(kind, arg) {
       return api[prop] ?? ((...args) => { node.calls.push([prop, ...args]); return proxy; });
     },
   });
-  if (kind === "button" || kind === "popover") api.id(arg);
+  if (kind === "button" || kind === "popover" || kind === "hovercard") api.id(arg);
   return proxy;
 }
 
@@ -85,3 +85,13 @@ function textState({ value = "" } = {}) {
 }
 export const InputState = { new: textState };
 export const TextareaState = { new: textState };
+// The Space Row's cards (spaceCards.js): a hover card is a node whose kids are its trigger then
+// its content; a path builder records its steps; paint_path lives on the gpui `window` global.
+export const HoverCard = { new: (id) => element("hovercard", id) };
+function pathBuilder(kind) {
+  const steps = [kind];
+  const b = new Proxy({}, { get: (_t, prop) => (prop === "build" ? () => ({ steps }) : (...args) => { steps.push([prop, ...args]); return b; }) });
+  return b;
+}
+export const PathBuilder = { fill: () => pathBuilder("fill"), stroke: (w) => pathBuilder(["stroke", w]) };
+globalThis.window ??= { paint_path: (path, color) => element("path", { path, color }) };

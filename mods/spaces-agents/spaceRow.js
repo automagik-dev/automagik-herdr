@@ -124,6 +124,29 @@ export function readFeed(input) {
   return { space, generatedAt: text(doc.generated_at), truncated: space.truncated === true };
 }
 
+/** How often the sidebar reads the feed; the feed itself changes at most every 10 minutes. */
+export const FEED_EVERY_MS = 60_000;
+/** The herdr-core doc the feed is in. */
+export const FEED_DOC = "herdr-meter";
+const RPC = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "doc.get", params: { name: FEED_DOC } });
+
+/**
+ * The feed's text, or null. `hc doc get herdr-meter --json` first; a core whose `hc` has no
+ * `doc` verb (0.1.x) answers it over `hc connect` instead (JSON-RPC `doc.get`, one reply line;
+ * `hc connect` ends at the end of its input). `hc` and `exec` are Herdr's; never throws.
+ */
+export async function fetchFeed({ hc, exec }) {
+  try {
+    const r = await hc(["doc", "get", FEED_DOC, "--json"]);
+    if (r?.code === 0 && r.stdout.trim()) return r.stdout;
+  } catch {}
+  try {
+    const script = `h=$(command -v hc || echo "$HOME/.local/bin/hc"); printf '%s\\n' '${RPC}' | "$h" connect | head -n 1`;
+    const r = await exec("sh", ["-c", script]);
+    return r?.code === 0 && r.stdout.trim() ? r.stdout : null;
+  } catch { return null; }
+}
+
 /** The project of an absolute main-checkout path, or null. */
 export function projectOf(feed, path) {
   if (!feed || typeof path !== "string") return null;

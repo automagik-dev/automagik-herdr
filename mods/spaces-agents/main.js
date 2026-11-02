@@ -21,6 +21,8 @@ import { ensureTheme, themeSettled } from "./theme.js";
 import { carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
+import { FEED_EVERY_MS, fetchFeed, readFeed, lineTwo, cardsOf, botCard, namesOf } from "./spaceRow.js";
+import { lineTwoEl, statsButtonEl } from "./spaceCards.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -104,6 +106,8 @@ function place(s, ps) {
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
+// The Space Row's line 2 adds this much to a space row.
+const LINE_TWO = 20;
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
@@ -177,6 +181,16 @@ export default class Spaces extends View {
     // METER_EVERY_MS while Herdr is open, one run at a time (meter.js). No LaunchAgent, no daemon.
     this.meter = { busy: false };
     cx.timer.after(METER_FIRST_MS, (cx) => this.meterTick(cx));
+    // The Space Row (docs/space-row-rendering.md): the herdr-meter doc's `space` key, read now
+    // and every FEED_EVERY_MS, parsed once per change; view models cached per project until the
+    // next change, so a render only looks them up. cardUi: the last hovered chip or stats button
+    // (only its card is built) and the pie slice pulled out.
+    this.feedText = null;
+    this.feed = null;
+    this.feedViews = new Map();
+    this.cardUi = { lastCard: null, pie: null };
+    this.feedTick(cx);
+    cx.timer.every(FEED_EVERY_MS, (cx) => this.feedTick(cx));
     // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
     // Otherwise as before: Cmd+V pastes text, or gives a local agent its Ctrl+V for an
@@ -463,6 +477,56 @@ export default class Spaces extends View {
 
   // On the 250 ms timer: one redraw when the next idle bot reaches its asleep mark, and the
   // character pictures the last render asked for, written once each.
+  // One read of the feed; a new text is parsed and drops the cached view models.
+  feedTick(cx) {
+    if (this.feedBusy) return;
+    this.feedBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        const text = await fetchFeed({ hc, exec });
+        if (text === this.feedText) return;
+        this.feedText = text;
+        this.feed = text ? readFeed(text) : null;
+        this.feedViews.clear();
+        cx.notify();
+      } finally { this.feedBusy = false; }
+    });
+  }
+
+  // A space's project in the feed: the absolute main-checkout path the bot trees are keyed by,
+  // else its repo's (the git common dir's folder). This computer's spaces only.
+  projectPath(w, g) {
+    if (w.machine) return null;
+    const tree = this.trees.find((tr) => !tr.machine && tr.spaces.includes(w.id));
+    if (tree) return tree.key;
+    if (!g?.repo) return null;
+    const [on, repo] = JSON.parse(g.repo);
+    return !on && repo.endsWith("/.git") ? repo.slice(0, -5) : null;
+  }
+
+  // Line 2's chips and their cards for a project, or null (no feed, or not in it).
+  feedView(path) {
+    if (!this.feed || !path) return null;
+    if (!this.feedViews.has(path)) {
+      const chips = lineTwo(this.feed, path);
+      this.feedViews.set(path, chips ? { chips, cards: cardsOf(this.feed, path) } : null);
+    }
+    return this.feedViews.get(path);
+  }
+
+  // A bot's stats card (names from its project's bots.json), cached until the feed or the file
+  // changes; null when there's no feed (no button then).
+  botStats(tree, b) {
+    if (!this.feed || tree.machine) return null;
+    const file = this.bots.find((p) => !p.machine && p.key === tree.key)?.file ?? null;
+    const k = `${tree.key}\n${b.id}`;
+    const hit = this.feedViews.get(k);
+    if (hit && hit.file === file) return hit.card;
+    const card = botCard(this.feed, tree.key, b.id, namesOf(file), b.name);
+    this.feedViews.set(k, { file, card });
+    return card;
+  }
+
   botTick(cx) {
     if (this.wakeAt !== null && Date.now() >= this.wakeAt) { this.wakeAt = null; cx.notify(); }
     if (this.petsWanted.size && !this.petsBusy) this.writePets(cx);
@@ -632,7 +696,9 @@ export default class Spaces extends View {
       row = row.child(div().flex_none().px(7).py(2).rounded(999).border_1().border_color(t.border)
         .text_size(10).font_semibold().text_color(t.muted).child(`Wave ${b.planned.wave}`));
     } else {
-      row = row.child(this.agentIcon(n, main ? 16 : 15, t))
+      const stats = this.botStats(tree, b);
+      row = row.when(Boolean(stats), (el) => el.child(statsButtonEl(stats, `${tree.key}:${r.id}`, this.hoverRow === r.id, t, this.cardUi)))
+        .child(this.agentIcon(n, main ? 16 : 15, t))
         .child(live ? this.status(t, { status: s }) : div().w(13).flex_none());
     }
     const box = this.rowEvents(row, r, t, onClick, onMenu).rounded(main ? 10 : 8);
@@ -1034,11 +1100,13 @@ export default class Spaces extends View {
     const colors = shared("am.space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
     const fill = color === "transparent" ? null : color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+    // Line 2 (the Space Row): a space with its project in the feed, never a nested worktree's.
+    const view = tree ? null : this.feedView(this.projectPath(w, g));
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
       .px(8)
-      .h(rowHeight({ tree }))
+      .h(rowHeight({ tree }) + (view ? LINE_TWO : 0))
       .flex_none()
       .justify_center()
       .rounded(8)
@@ -1072,7 +1140,9 @@ export default class Spaces extends View {
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.addButton(w, t)),
-      );
+      )
+      .when(Boolean(view), (el) => el.child(div().mt(3).pl(27).w_full().min_w(0).overflow_hidden()
+        .child(lineTwoEl(view.chips, view.cards, w.id, t, this.cardUi))));
   }
 
   // The row's + (new agent in this space): always there at the same size, so hovering

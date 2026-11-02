@@ -22,6 +22,14 @@ One scrolling column, `chrome` background, 13 px text.
   A planned bot is dimmed and dashed, asleep, with its note and a `Wave n` pill. A project the CLI
   listed with no open space draws its tree at the end, under the project's name. Plain agents with
   no bot still list as they always did.
+- **Space Row** (`spaceRow.js`, `spaceCards.js`; rules in `docs/space-row-rendering.md`, shared
+  with Herdr Pocket): when the herdr-core doc `herdr-meter` has a `space` key (version 1) with this
+  space's project, a second line under its name, one line at any width: forge, merges, median
+  time to merge, first pass, spent (share of the Codex week) and tokens, each with a ▲/▼ against
+  the day before. Resting on a chip for 260 ms opens its card under it (pies whose slices pull out
+  on hover); it closes 350 ms after the pointer leaves chip and card. A bot row shows a three-bars
+  button while hovered; its card ($ / task, time / task, 24 h, one bar and the legend in $) opens
+  from the button only. Missing numbers show "–", never 0. The doc is read once a minute.
 - **Collapsed**, the rail shows numbers and status glyphs only.
 
 ## How it behaves
