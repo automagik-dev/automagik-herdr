@@ -107,9 +107,9 @@ automagik-herdr update [--check | --rollback]
   the one the current folder belongs to: its git main checkout, or outside git the nearest
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
   project itself outside git, never a parent folder's project; in git it is still the main
-  checkout. A `--project` folder that isn't there is refused.
-- A bot is named by its id or by its name. A refusal exits 1, a usage mistake exits 2, and
-  nothing is written.
+  checkout. A `--project` folder that isn't there is a usage mistake.
+- A bot is named by its id or by its name. A refusal exits 1, a usage mistake (such as a
+  missing `--project` folder) exits 2, and nothing is written.
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`. A member
   whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's

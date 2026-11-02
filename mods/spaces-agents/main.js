@@ -20,7 +20,7 @@ import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./up
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -508,8 +508,8 @@ export default class Spaces extends View {
       .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
   }
 
-  // One tree's rows (visibleRows decides which show, unless given), in one block.
-  botBlock(tree, t, dark, shown = visibleRows(tree, this.open)) {
+  // One tree's rows, as spaceRowOrder gives them, in one block.
+  botBlock(tree, t, dark, shown) {
     const rows = shown.map((r) => {
       if (r.kind === "category") return this.categoryRow(r, t);
       if (r.kind === "helper") return this.helperRow(r, t);
@@ -909,8 +909,8 @@ export default class Spaces extends View {
       const shown = spaceRowOrder({ tree, agents: this.spaceAgents(r.w), shells: [], open: this.open });
       const indent = r.tree ? 44 : 20;
       const out = [this.row(r, t)];
-      const treeRows = shown.filter((d) => d.row).map((d) => d.row);
-      if (treeRows.length) out.push(...this.botBlock(tree, t, dark, treeRows));
+      const placed = shown.filter((d) => d.row).map((d) => d.row);
+      if (placed.length) out.push(...this.botBlock(tree, t, dark, placed));
       for (const d of shown) {
         if (d.kind !== "agent") continue;
         out.push(d.sub ? this.subRow(d.sub.k, d.sub.lines, indent, t) : this.agentRow(d.agent.a, indent, t));

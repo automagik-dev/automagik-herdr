@@ -3,7 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fixtures, golden, view, openAll } from "./sidebar-fixture.mjs";
 import { spaceRowOrder, buildTree } from "../mods/spaces-agents/rows.js";
 import { parseBots } from "../mods/spaces-agents/model.js";
@@ -30,12 +31,32 @@ test("fixtures are redacted: no home path, no instructions text, no tokens", () 
   }
 });
 
-// This repo is public: a fixture holds no private name. Every string in it, its words and
-// runs of up to 8 words (lowercased) are hashed against a list of sha256 hashes, so the list
-// itself names nothing.
-const PRIVATE = new Set(readFileSync(new URL("./fixtures/sidebar-private.sha256", import.meta.url), "utf8")
-  .split("\n").filter((l) => /^[0-9a-f]{64}$/.test(l)));
-const sha = (s) => createHash("sha256").update(s).digest("hex");
+// This repo is public, so a fixture is anonymised. Structure checked here: machines are
+// machine-N, folders are herdr-bots' or a project-x placeholder, worktrees are branch-N.
+const PLACEHOLDER = /^~\/workspace\/repos\/project-[a-z]+$/;
+const BRANCH = /^branch-\d+$/;
+const HERDR_BOTS = /^~\/workspace\/repos\/herdr-bots(\/.*)?$/;
+const MACHINE = /^machine-\d+$/;
+function folderOk(f) {
+  if (f === "" || f === "~" || HERDR_BOTS.test(f)) return true;
+  const w = /^(.*)\.worktrees\/([^/]+)$/.exec(f);
+  return w ? PLACEHOLDER.test(w[1]) && BRANCH.test(w[2]) : PLACEHOLDER.test(f);
+}
+
+test("fixtures are anonymised: machines machine-N, folders herdr-bots or project-x, worktrees branch-N", () => {
+  for (const { name, state } of ALL) {
+    const machines = [...state.spaces.map((s) => s.machine), ...state.projects.map((p) => p.machine)].filter((m) => m != null);
+    for (const t of state.terminals) for (const a of [t.address, t.parent]) if (a?.includes("/")) machines.push(a.split("/")[0]);
+    for (const s of state.spaces) for (const id of [s.id, ...s.tabs.flatMap((t) => [t.id, ...t.panes.flatMap((p) => [p.pane, p.terminal])])]) {
+      if (id?.includes("/")) machines.push(id.split("/")[0]);
+    }
+    for (const m of machines) assert.match(m, MACHINE, `${name}: machine ${m}`);
+    const folders = [...state.terminals.map((t) => t.cwd), ...state.spaces.map((s) => s.folder), ...state.projects.map((p) => p.key), ...state.registry];
+    for (const f of folders.filter((x) => x != null)) assert.ok(folderOk(f), `${name}: folder ${f}`);
+  }
+});
+
+// Every string of a fixture, its words and runs of up to 8 words, lowercased.
 function candidates(value) {
   const out = new Set();
   const walk = (v) => {
@@ -51,24 +72,19 @@ function candidates(value) {
   walk(value);
   return out;
 }
-const FOLDER = /^(|~|~\/workspace\/repos\/herdr-bots(\/.*)?|~\/workspace\/repos\/project-[a-z]+(\.worktrees\/branch-\d+)?)$/;
-const MACHINE = /^machine-\d+$/;
 
-test("fixtures are anonymised: no private string, machines are machine-N, folders herdr-bots or project-x", () => {
-  assert.ok(PRIVATE.size > 0);
+// Optional, local only: SIDEBAR_PRIVATE_LIST=<file outside the repo, one private string per line> checks none is in a fixture.
+test("fixtures hold none of the strings in SIDEBAR_PRIVATE_LIST (local check)", (t) => {
+  const list = process.env.SIDEBAR_PRIVATE_LIST;
+  if (!list) { t.skip("SIDEBAR_PRIVATE_LIST is not set: the private-string check runs only locally"); return; }
+  const repo = fileURLToPath(new URL("../", import.meta.url));
+  assert.ok(!resolve(list).startsWith(repo), "SIDEBAR_PRIVATE_LIST must point outside the repo");
+  const words = readFileSync(list, "utf8").split("\n").map((l) => l.trim().toLowerCase()).filter(Boolean);
   for (const { name, state } of ALL) {
     for (const [what, value] of [[name, state], [`${name}.golden`, golden(name)]]) {
-      const hits = [...candidates(value)].filter((c) => PRIVATE.has(sha(c)));
-      assert.deepEqual(hits.map(sha), [], `${what}: holds a private string`);
+      const found = candidates(value);
+      assert.deepEqual(words.filter((w) => found.has(w)), [], `${what}: holds a private string`);
     }
-    const machines = [...state.spaces.map((s) => s.machine), ...state.projects.map((p) => p.machine)].filter((m) => m != null);
-    for (const t of state.terminals) for (const a of [t.address, t.parent]) if (a?.includes("/")) machines.push(a.split("/")[0]);
-    for (const s of state.spaces) for (const id of [s.id, ...s.tabs.flatMap((t) => [t.id, ...t.panes.flatMap((p) => [p.pane, p.terminal])])]) {
-      if (id?.includes("/")) machines.push(id.split("/")[0]);
-    }
-    for (const m of machines) assert.match(m, MACHINE, `${name}: machine ${m}`);
-    const folders = [...state.terminals.map((t) => t.cwd), ...state.spaces.map((s) => s.folder), ...state.projects.map((p) => p.key), ...state.registry];
-    for (const f of folders.filter((x) => x != null)) assert.match(f, FOLDER, `${name}: folder ${f}`);
   }
 });
 
@@ -95,6 +111,25 @@ test("R3 invariants, every fixture space, all folds open: tree, then agents, the
       const terms = v.rows.map((d) => d.terminal).filter(Boolean);
       assert.equal(new Set(terms).size, terms.length, `${where}: a terminal listed twice`);
       for (const p of v.panes) assert.ok(terms.includes(p.address), `${where}: ${p.address} not drawn`);
+    }
+  }
+});
+
+test("R3, parked terminals (live, no pane): each tied to a bot is drawn exactly once in the sidebar; one tied to none is not", () => {
+  for (const { name, state } of ALL) {
+    const inPane = new Set(state.spaces.flatMap((s) => s.tabs.flatMap((t) => t.panes.map((p) => p.terminal))));
+    const known = new Set(state.projects.flatMap((p) => p.file.bots.map((b) => b.id)));
+    const byAddress = new Map(state.terminals.map((t) => [t.address, t]));
+    // Tied: a live bot's own terminal, or anything started (by hc parent, at any depth) from one.
+    const tied = (t, seen = new Set()) => Boolean(t) && !seen.has(t.address)
+      && ((known.has(t.labels?.bot) && t.program?.agent) || tied(byAddress.get(t.parent), seen.add(t.address)));
+    const drawn = new Map();
+    for (const v of view(state, { open: openAll })) for (const d of v.rows) if (d.terminal) drawn.set(d.terminal, (drawn.get(d.terminal) ?? 0) + 1);
+    const parked = state.terminals.filter((t) => t.state === "live" && !inPane.has(t.address));
+    assert.ok(parked.some((t) => tied(t)), `${name}: the fixture holds parked bots`);
+    for (const t of parked) {
+      // One tied to no bot (no parent, or its parent gone) has no row: tidy reports it (sidebar-rules Group 2).
+      assert.equal(drawn.get(t.address) ?? 0, tied(t) ? 1 : 0, `${name}: parked ${t.address}`);
     }
   }
 });

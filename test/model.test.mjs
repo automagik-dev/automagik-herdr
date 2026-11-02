@@ -82,18 +82,18 @@ test("project key: outside git with no bots.json above, the folder itself", asyn
 });
 
 test("project key: a picked folder outside git under another project's folder is its own (own), passing by it is not (key)", async (t) => {
-  // The owner's case: ~/repos/cadu, no git, under ~/repos holding another project's bots.json.
+  // The owner's case: ~/repos/child, no git, under ~/repos holding another project's bots.json.
   const root = scratch(t);
-  const cadu = join(root, "repos", "cadu");
-  mkdirSync(cadu, { recursive: true });
+  const child = join(root, "repos", "child");
+  mkdirSync(child, { recursive: true });
   mkdirSync(join(root, "repos", ".herdr"));
   writeFileSync(join(root, "repos", ".herdr", "bots.json"), "{}");
-  assert.deepEqual(await projectOf(cadu, git, exists), { key: join(root, "repos"), own: cadu });
-  assert.equal(await projectKeyOf(cadu, git, exists), join(root, "repos"));
-  // Once cadu has its own file, the walk-up finds it first.
-  mkdirSync(join(cadu, ".herdr"));
-  writeFileSync(join(cadu, ".herdr", "bots.json"), "{}");
-  assert.deepEqual(await projectOf(cadu, git, exists), { key: cadu, own: cadu });
+  assert.deepEqual(await projectOf(child, git, exists), { key: join(root, "repos"), own: child });
+  assert.equal(await projectKeyOf(child, git, exists), join(root, "repos"));
+  // Once child has its own file, the walk-up finds it first.
+  mkdirSync(join(child, ".herdr"));
+  writeFileSync(join(child, ".herdr", "bots.json"), "{}");
+  assert.deepEqual(await projectOf(child, git, exists), { key: child, own: child });
 });
 
 test("project key: in git, a picked worktree or subfolder is still its main checkout", async (t) => {
