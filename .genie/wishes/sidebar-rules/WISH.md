@@ -22,7 +22,7 @@ This wish turns the rules into code:
 - a fixed space order with three modes (alphabetical, manual, pinned) and a temporary float for spaces that need the owner;
 - one placement truth, the project key, with one space per project named from bots.json;
 - `automagik-herdr tidy`: a pure, idempotent planner that reports drift, fixes the non-visual part on its own, and changes the window only on `--apply`;
-- the new space row the owner picked ("A with C's bar"): a pulse line with live counts and an activity bar.
+- the new space row the owner picked ("A with C's bar"): a pulse line with live counts, and a second line with the project's output over 24 hours.
 
 Every rule is a pure function, tested over fixtures recorded from today's messy state.
 
@@ -37,7 +37,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 - An optional project display name in `.herdr/bots.json` (Group 3a).
 - Placement from the project key; Start creates the project's space when none is open; one briefing line for helpers (R6) and one for owner decisions (Group 3b).
 - `automagik-herdr tidy --apply`: strays moved with the park/keep sequence, empty and duplicate spaces closed, spaces renamed, Herdr's order aligned with `space.move`, a report of every change (Group 4).
-- The space row redesign "A with C's bar": the pulse row, the activity bar, the needs-you badge and its clicks (Group 5).
+- The space row redesign "A with C's bar": the pulse row, the 24-hour output line, the verdict log it reads, the needs-you badge and its clicks (Group 5).
 
 ### OUT
 
@@ -64,6 +64,8 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 | D10 | **The space row "A with C's bar" is in scope (owner's pick, 2026-11-02),** as its own group (Group 5). The ordering functions return slot keys and row descriptors only. Rendering stays in `main.js` `row()`, so the redesign and the ordering never edit the same function. | The owner picked the design. Keeping order and rendering apart lets Groups 3a and 5 change without conflict. |
 | D11 | **A pending owner decision is a pane label.** A main bot that waits on the owner sets `automagik-herdr.needs-owner=<short text>` on its own pane with `hc label`, and removes it once answered. One briefing line tells main bots this (Group 3b). | There is no other primitive for "a decision waiting". A label is visible to the sidebar's single hc read, needs no new process, and the main bot controls it. |
 | D12 | **Drag in the sidebar.** A drag writes the manual order to `am.sidebar.order` and switches the mode to manual. It then moves only the dragged space with `space.move`, to the index the base order (pins + manual, no float) gives it, looked up by space id, never by row index. | A drag is the owner's own gesture, so one `space.move` is allowed and keeps ⌘1-9 in step. Today's handler (`main.js:973`) indexes `spaces()` by row index, which is wrong once the sidebar sorts. |
+| D13 | **Line 2 is 24-hour output, and first-pass needs a verdict log** (owner, 2026-11-02; this replaces the provider bar). It shows merges per hour with failure ticks, the merged count without chores, the median time from first commit to merge, and the first-pass SHIP rate. Main bots record each independent review verdict with `automagik-herdr verdict`, as append-only JSON lines under `<app home>/automagik-herdr/verdicts/`. | The owner judges a project by what it ships, not by which provider ran. PR-open → merge is ~15 minutes everywhere, because agents open PRs late, so the first commit is the honest start. No forge stores "first review said SHIP", so it has to be recorded where reviews happen. The log lives in the app home, not in the repo, so it never blocks a `git pull` (issue #6). |
+| D14 | **Estimates.** Group 1 ~3 h; Group 2 ~6 h; Group 3a ~6 h; Group 3b ~5 h; Group 4 ~8 h; Group 5 ~13 h (it was ~10 h before line 2 changed). The total is ~41 focused agent-hours. | The estimates are in focused agent-hours, not calendar time. Groups 2 and 3a run in parallel, and so do Groups 4 and 5. |
 
 ## Simplicity Case
 
@@ -74,7 +76,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 - **Added machinery:**
   - `am.sidebar.order`, because the owner asked for manual order and pins, which must survive restarts;
   - the label `automagik-herdr.needs-owner`, because no other signal says "a decision waits";
-  - an in-memory ring buffer of turn counts, because the activity bar needs 30 minutes of history and hc keeps none;
+  - an append-only verdict log, because the first-pass rate needs each PR's first review verdict and no forge records it;
   - a per-project forge cache, because "ready" and CI cost a network call each.
 - **Deferred until measured:**
   - hysteresis on the needs-me float (a minimum time at the top): add it only if the owner reports flicker;
@@ -101,7 +103,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 - [ ] `automagik-herdr tidy` on the recorded fixtures lists every drift in the request (1–7) that the pack can fix or report, and changes nothing.
 - [ ] `automagik-herdr tidy --apply` on a scratch window ends with one space per project, named by display name, in the sidebar's order; a second `--apply` plans nothing.
 - [ ] Starting a bot of a project with no open space creates that space.
-- [ ] Each space row shows the pulse line and the activity bar; the badge appears only when `needsOwner` is true.
+- [ ] Each space row shows the pulse line and the 24-hour output line; the badge appears only when `needsOwner` is true.
 
 ## Execution Strategy
 
@@ -131,7 +133,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
 | 4 | engineer + qa | High: changes the owner's window; the park/keep sequence is fragile. ~8 focused agent-hours | inherit | `tidy --apply` |
-| 5 | engineer | High: live data, forge calls and a per-tick budget on the sidebar. ~10 focused agent-hours | inherit | The space row: pulse line and activity bar |
+| 5 | engineer | High: live data, two forge adapters with history queries, the verdict log, and a per-tick budget on the sidebar. ~13 focused agent-hours | inherit | The space row: pulse line and 24-hour output |
 
 **Global constraints:**
 - Never push to main; PRs --base dev (Group 1) or into wish/am-pack (Groups 2-4).
@@ -296,26 +298,55 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 
 ---
 
-### Group 5: The space row, "A with C's bar"
+### Group 5: The space row: pulse line and 24-hour output
 
-**Goal:** Each space row shows the owner's pick: a pulse line of live counts with a needs-you badge, and an activity bar of turns per minute by provider.
+**Goal:** Each space row shows the owner's pick. Line 1 is a pulse line of live counts with a needs-you badge. Line 2 is the project's output over the last 24 hours (owner, 2026-11-02; this replaces the provider bar).
 
 **Deliverables:**
-1. The pulse line: ● working / ○ idle / ⚠ blocked seat counts from hc status; "N ready" (PRs/MRs open, not draft, approved, mergeable) and ✓/✗ for the default branch's CI from the forge (`gh` or `glab`, picked by the remote's host); ↓/↑ from git (the sidebar's existing cached git info); the "N need you" badge from `needsOwner`.
-2. The activity bar: turns per minute over the last 30 minutes, coloured by provider (Claude orange, Codex green, DeepSeek blue, others grey), with each provider's share. Source: hc's `turn` counter ("goes up each time the status leaves `working`"), sampled each tick into a 30-bucket ring buffer in memory. A counter that goes down (a new terminal) counts from zero. No transcript scanning.
-3. Clicks: the badge opens the oldest waiting item (`pane.focus` on its terminal); ⚠ focuses the stuck seat.
-4. Performance: one hc read per tick for all spaces; git and forge calls cached per project, the forge at most once a minute; no process per space per tick; nothing polls while the sidebar is hidden.
-5. Pure functions with tests over the fixtures plus a synthetic turn series: counts, bar buckets, provider shares.
+1. **Line 1, the pulse line:**
+   - ● working / ○ idle / ⚠ blocked seat counts from hc status;
+   - "N ready": PRs/MRs that are open, not draft, approved and mergeable;
+   - ✓/✗ for the default branch's CI, from the forge (`gh` or `glab`, picked by the remote's host);
+   - ↓/↑ from the sidebar's existing cached git info;
+   - the "N need you" badge from `needsOwner`.
+2. **Line 2, output over 24 hours:** `▂▅▇▆▃▁▂▅▇█▆▃  77 merged · ⏱ 18m · 1st 68%`.
+   - **Bar:** merges per hour, 24 buckets, oldest on the left. A red tick marks an hour in which a run failed (forge CI runs on any branch).
+   - **merged:** PRs/MRs merged in the last 24 hours. `isChore(title)` excludes `docs(memory)`, `chore(release)` and version bumps, with the patterns listed in one place and tested.
+   - **⏱:** the median time from the branch's **first commit** to the merge. PR-open → merge is not used, because agents open PRs late and it reads ~15 minutes everywhere. A merged item's first-commit time never changes, so it is fetched once and cached for good.
+   - **1st:** the first-pass rate, the share of merged items whose first recorded review verdict was SHIP. Items with no recorded verdict are left out, and the count shown is the number covered (`1st 68% of 50`). With no verdicts at all, it shows `1st –`.
+3. **The verdict log (D13):**
+   - `automagik-herdr verdict <pr> <SHIP|FIX-FIRST|BLOCKED> --head <sha> [--reviewer <name>]` appends one JSON line `{pr, head, verdict, reviewer, at}` to `<app home>/automagik-herdr/verdicts/<project>.jsonl`, where `<project>` is the project-key slug.
+   - It is append-only, one line per call, and never rewritten.
+   - A briefing line tells main bots to record each independent review verdict this way.
+   - `firstPass(merged, verdicts)` is pure.
+4. **Forge reads, through one forge adapter per project:**
+   - `gh`: `pr list --state merged --search "merged:>=<24h ago>" --json number,title,mergedAt,commits` (the first commit is the earliest `authoredDate`), and `run list --status failure --created ">=<24h ago>"`;
+   - `glab`: the merged-MRs API with `updated_after`, and per new MR one commits call that is then cached.
+   - Line 1's ready/CI refreshes at most once a minute. Line 2 refreshes at most every 10 minutes. A forge that fails or is missing shows `–` and an error tooltip, never stale numbers presented as current.
+5. **Clicks:** the badge opens the oldest waiting item (`pane.focus` on its terminal); ⚠ focuses the stuck seat.
+6. **Performance:**
+   - one hc read per tick for all spaces;
+   - git and forge calls cached per project, with no process per space per tick;
+   - nothing polls while the sidebar is hidden;
+   - forge commands run with argument lists (no shell) and a 20 s timeout.
+7. **Tests:** pure functions tested over the fixtures, plus a recorded forge sample (redacted titles, synthetic numbers): counts, hourly buckets and failure ticks, `isChore`, the first-commit median, `firstPass` with and without coverage.
 
 **Interfaces:**
 - Consumes: Group 3a's `needsOwner`, `slotKey`; Group 1's `State`; `row()` in main.js.
-- Produces: `pulseOf(space, state) → {working, idle, blocked, needYou}`; `bucketsOf(samples, now) → {minute, byProvider: Record<string, number>}[]` (30 entries); `sharesOf(buckets) → Record<string, number>`; `providerOf(terminal) → "claude"|"codex"|"deepseek"|"other"`; `forgeOf(remoteUrl) → "gh"|"glab"|null`.
+- Produces:
+  - `pulseOf(space, state) → {working, idle, blocked, needYou}`;
+  - `forgeOf(remoteUrl) → "gh"|"glab"|null`;
+  - `outputOf(merged, failedRuns, verdicts, now) → {hours: {merges, failed}[24], merged, medianMs|null, firstPass: {rate|null, covered}}`;
+  - `isChore(title) → boolean`;
+  - `firstPass(merged, verdicts) → {rate|null, covered}`;
+  - CLI `automagik-herdr verdict`, and the verdict line format `{pr, head, verdict, reviewer, at}`.
 
 **Acceptance Criteria:**
-- [ ] The synthetic turn series gives the expected buckets and shares; a counter reset adds no negative turns.
+- [ ] The recorded forge sample gives the expected 24 buckets, the failure ticks, the merged count (chores excluded), the first-commit median and the first-pass rate with its coverage.
+- [ ] `verdict` appends exactly one line per call, refuses an unknown verdict (exit 2), and never rewrites the file.
 - [ ] The counts on the fixtures match a hand count.
-- [ ] With 10 spaces open, one tick starts at most one hc process; forge calls per project are at most one a minute (counted with fakes).
-- [ ] The badge shows only when `needsOwner` is non-empty; clicking it focuses the oldest item.
+- [ ] With 10 spaces open, one tick starts at most one hc process. Counted with fakes, forge calls per project stay within one a minute for line 1 and one every 10 minutes for line 2. Merged items' commits are fetched once.
+- [ ] The badge shows only when `needsOwner` is non-empty, and clicking it focuses the oldest item.
 - [ ] The recorded fixtures still give the golden order.
 
 **Validation:**
@@ -335,7 +366,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - [ ] On a scratch home with the pack: Start of a bot whose project has no space creates the space, named by display name, and the bot shows in it.
 - [ ] On a scratch window: `tidy` changes nothing; `tidy --apply` reconciles; a second `tidy --apply` plans nothing.
 - [ ] Pinning, manual drag and alphabetical mode each survive a Herdr restart; a blocked seat floats its space and the float ends when it unblocks.
-- [ ] The pulse line and activity bar update live without visible load (Activity Monitor: the sidebar adds no steady process).
+- [ ] The pulse line and the output line update live without visible load (Activity Monitor: the sidebar adds no steady process).
 - [ ] Regression: Start, Attach, Detach, the briefing and the bot form work as in v0.2.0.
 
 ---
