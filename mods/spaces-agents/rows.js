@@ -339,3 +339,14 @@ export function spaceRowOrder({ tree = null, agents = [], shells = [], open = ne
   }
   return out;
 }
+
+/**
+ * What a click on a terminal's row runs. A pane shows it: agent.focus. None does (a parked
+ * seat: running, no pane): terminal.peek, which peeks over the tab with keep-as-tab and close,
+ * so the person sees it and chooses to keep it; never terminal.keep on their behalf. The same
+ * on any machine (`box/t4`). `panes`: panes() rows, read at click time.
+ */
+export function clickActionOf(terminal, panes) {
+  const shown = (panes ?? []).some((p) => p?.terminal === terminal);
+  return { command: shown ? "agent.focus" : "terminal.peek", args: { terminal } };
+}

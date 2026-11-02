@@ -20,7 +20,7 @@ import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./up
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -28,6 +28,12 @@ function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
     ? { mod: "spaces-agents", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
     : { mod: "spaces-agents", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
+}
+
+// A terminal row's click: its pane when it has one, else a peek (a parked seat has no pane).
+function focusOrPeek(terminal) {
+  const { command, args } = clickActionOf(terminal, panes());
+  run(command, args);
 }
 
 // Agent naming, as in the agents mod.
@@ -315,7 +321,7 @@ export default class Spaces extends View {
       .when(a.focused, (el) => el.bg(t.selected))
       .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
       // Not in agents() (no status, or a renamed machine): agent.focus wouldn't know it; its pane does.
-      .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : run("agent.focus", { terminal: a.address })))
+      .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : focusOrPeek(a.address)))
       // "Attach as bot…": the clone has no terminal menu of its own, so the row's right-click.
       .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address }, "popup")))
       .when(Boolean(pic), (el) => el.child(pic))
@@ -334,7 +340,7 @@ export default class Spaces extends View {
       .cursor_pointer()
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => run("agent.focus", { terminal: k.address }))
+      .on_click(() => focusOrPeek(k.address))
       .children(lines.map((l) => div().self_start().mt(-4).w(8).h(16).mr(3).flex_none()
         .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(6))))
@@ -535,7 +541,7 @@ export default class Spaces extends View {
       .children(this.guides(r.guides, t))
       .child(h_flex().id(`row-${r.id}`).flex_1().min_w(0).h(26).px(6).gap(8).items_center().rounded(8).text_size(12).cursor_pointer()
         .when(shown, (el) => el.bg(t.raised)).hover((s) => s.bg(t.hover))
-        .on_click(() => run("agent.focus", { terminal: h.terminal }))
+        .on_click(() => focusOrPeek(h.terminal))
         .child(pic)
         .child(div().flex_1().min_w(0).truncate().text_color(shown ? t.foreground : t.muted).child(h.name))
         .when(h.terminal.includes("/"), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(h.terminal.split("/")[0])))
@@ -555,7 +561,7 @@ export default class Spaces extends View {
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     const onClick = live
-      ? () => run("agent.focus", { terminal: live.terminal })
+      ? () => focusOrPeek(live.terminal)
       : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
       machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");
