@@ -270,6 +270,16 @@ test("start, attach and detach rows: by start, attach and detach, each with core
   assert.equal(s.ledger().length, 3, "a second detach writes nothing");
 });
 
+test("detach: the row is the authority; an hc failure clearing labels afterwards only warns", (t) => {
+  const s = scene(t, (p) => [term("t1", { cwd: p })]);
+  assert.equal(s.cli("attach", "Genie", "t1").code, 0);
+  s.edit((st) => { st.fail = ["ls"]; });
+  const r = s.cli("detach", "Genie");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /Genie is detached from t1, but its labels weren't cleared/);
+  assert.deepEqual(brief([s.ledger().at(-1)]), [["detach", ID.main, "t1", "detach", null]]);
+});
+
 test("the end row on a sweep: ls notices the finished terminal, appends one end row, and only once", (t) => {
   const s = scene(t, (p) => [term("t1", { cwd: p }), term("t2", { cwd: p })]);
   assert.equal(s.cli("attach", "Genie", "t1").code, 0);

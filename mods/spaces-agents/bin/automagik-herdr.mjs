@@ -358,7 +358,8 @@ async function projectDefining(botId, folder) {
 async function importLabels(path) {
   const core = await coreId();
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
-  const gets = (await Promise.all(rows.map((r) => hcLookup(r.address))))
+  // One terminal hc fails to answer for is left out, never the whole import.
+  const gets = (await Promise.all(rows.map((r) => hcLookup(r.address).catch(() => null))))
     .filter((g) => g?.state === "live" && local(g.address) && typeof g.labels?.[BOT_LABEL] === "string" && Number.isSafeInteger(g.created_ms));
   const byBot = new Map();
   for (const g of gets) byBot.set(g.labels[BOT_LABEL], [...(byBot.get(g.labels[BOT_LABEL]) ?? []), g]);
@@ -1170,15 +1171,21 @@ async function cmdDetach(opts, [ref]) {
   });
   // The labels, a display hint, come off the detached pane and any other local pane carrying
   // them. A16: role= and category= go with bot=; squad= only when this pack copied it there.
-  const { addresses, gets } = await paneOf(id, hcJson, { localOnly: true });
+  // The row is written already: a failure here only warns.
   const cleared = [];
-  for (const t of new Set([...(from && local(from) ? [from] : []), ...addresses])) {
-    const have = gets.find((g) => g?.address === t)?.labels ?? (await hcGet(t).catch(() => null))?.labels ?? {};
-    if (have[BOT_LABEL] !== id) continue;
-    const words = detachWords(have);
-    const r = await hc(["label", t, ...words]);
-    if (r.code !== 0) report([`${name} is detached, but hc label ${t} ${words.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`]);
-    else cleared.push(t);
+  try {
+    const { addresses, gets } = await paneOf(id, hcJson, { localOnly: true });
+    for (const t of new Set([...(from && local(from) ? [from] : []), ...addresses])) {
+      const have = gets.find((g) => g?.address === t)?.labels ?? (await hcGet(t).catch(() => null))?.labels ?? {};
+      if (have[BOT_LABEL] !== id) continue;
+      const words = detachWords(have);
+      const r = await hc(["label", t, ...words]);
+      if (r.code !== 0) report([`${name} is detached, but hc label ${t} ${words.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`]);
+      else cleared.push(t);
+    }
+  } catch (e) {
+    if (!(e instanceof CliError)) throw e;
+    report([`${name} is detached${from ? ` from ${from}` : ""}, but its labels weren't cleared: ${e.message}`]);
   }
   const detached = from ? [from] : [];
   return opts.json ? { id, defined: Boolean(bot), detached, labelsCleared: cleared }

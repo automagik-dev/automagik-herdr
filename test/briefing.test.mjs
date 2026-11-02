@@ -256,6 +256,7 @@ if (a[0] === "ls") {
   const [k, v] = i >= 0 ? a[i + 1].split("=") : [];
   out({ machines: [], terminals: all.filter((t) => i < 0 || t.labels?.[k] === v).map(row) });
 } else if (a[0] === "get" && fx.terminals[a[1]]) out(fx.terminals[a[1]]);
+else if (a[0] === "server" && a[1] === "status") out({ core: { id: fx.core ?? "fakecore", name: "fake" } });
 else if (a[0] === "read" && fx.terminals[a[1]]) out({ text: fx.screens?.[a[1]] ?? "", complete: true, how: "screen" });
 else if (a[0] === "label" && fx.terminals[a[1]]) {
   const t = fx.terminals[a[1]];
@@ -347,6 +348,43 @@ test("briefing.mjs: silent for a bot of a project with no bots.json, and for a p
   const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree });
   assert.equal(r.stdout, "");
   assert.match(r.stderr, /^automagik-herdr briefing: .+\n$/); // one line, exit 0 (run() would reject otherwise)
+});
+
+test("briefing.mjs: once there is an attach ledger it says who plays where; a relabel moves no briefing", async (t) => {
+  const { root, main, tree, brief } = await scratch(t);
+  const app = join(root, "app");
+  const fxPath = join(root, "hc.json");
+  const fx = JSON.parse(readFileSync(fxPath, "utf8"));
+  for (const x of Object.values(fx.terminals)) x.state = "live";
+  writeFileSync(fxPath, JSON.stringify(fx));
+  const as = (terminal) => brief({ HC_TERMINAL_ID: terminal, CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app });
+  // No ledger yet (before the CLI's first run): the label stands in; Captain's newest pane, t2.
+  assert.match((await as("t1")).stdout, /Captain \(bot b-bbbbbbbbbb[^)]*\): working at t2/);
+  // The ledger ties Genie to t1 and Captain to its older pane, t7: that is the answer now.
+  const ledger = join(app, "automagik-herdr/attach.jsonl");
+  mkdirSync(dirname(ledger), { recursive: true });
+  const row = (bot, terminal, created) => JSON.stringify({ v: 1, event: "attach", bot, project: main, terminal, core: "fakecore",
+    created_ms: created, machine: null, at: "2026-11-02T00:00:00.000Z", by: "attach" });
+  writeFileSync(ledger, `${row(ID.main, "t1", 1000)}\n${row(ID.cap, "t7", 2000)}\n`);
+  chmodSync(ledger, 0o600);
+  const byLedger = await as("t1");
+  assert.match(byLedger.stdout, /You are Genie/);
+  assert.match(byLedger.stdout, /Captain \(bot b-bbbbbbbbbb[^)]*\): idle at t7/);
+  // A relabel: Genie's label moves from t1 to t5. t1 still gets Genie's briefing; t5 none.
+  fx.terminals.t1.labels = {};
+  fx.terminals.t5.labels = { bot: ID.main };
+  writeFileSync(fxPath, JSON.stringify(fx));
+  assert.match((await as("t1")).stdout, /You are Genie/);
+  assert.equal((await as("t5")).stdout, "");
+  // t1 reused after an hc restart (another created_ms): not Genie's pane any more.
+  fx.terminals.t1.created_ms = 9999;
+  writeFileSync(fxPath, JSON.stringify(fx));
+  assert.equal((await as("t1")).stdout, "");
+  // A group- or world-writable ledger is not read: no briefing, one stderr line, exit 0.
+  chmodSync(ledger, 0o666);
+  const unsafe = await as("t7");
+  assert.equal(unsafe.stdout, "");
+  assert.match(unsafe.stderr, /^automagik-herdr briefing: .*attach\.jsonl is group- or world-writable/);
 });
 
 test("briefing.mjs: a new Claude session is labelled on its terminal and logged once; the briefing is unchanged", async (t) => {
