@@ -56,6 +56,9 @@ export const PATH_RENAMES = Object.freeze([
   ["data/mod-manager", "data/am-mods", "mod-manager"],
 ]);
 
+/** The old name `table` maps to `name` (RENAMES, SHARED_RENAMES), or undefined: the one place old names live. */
+export const renamedFrom = (table, name) => Object.keys(table).find((old) => table[old] === name);
+
 /**
  * The shim (D12): for each old key in `olds`, when its am.* key holds nothing yet and the old one
  * holds something, the value is copied over. Returns the keys copied. Never removes the old key.

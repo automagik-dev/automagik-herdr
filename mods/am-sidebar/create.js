@@ -25,7 +25,7 @@ const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
 export const FORM_SIZE = { width: 1000, height: 840 };
 // Character pictures: the sidebar's folder under the app home, outside mods/ (a write inside
 // a mod folder reloads it), drawn by the path relative to the app home, as image() takes it.
-const PETS = "spaces-agents-pets";
+const PETS = "am-sidebar-pets";
 const COLOUR_ORDER = Object.keys(INKS); // the mockup's swatch order
 const CLEAR = "#00000000";
 
@@ -276,7 +276,7 @@ export class BotForm {
         cx.notify();
         return;
       }
-      run("spaces-agents.refresh");
+      run("am-sidebar.refresh");
       if (andStart) {
         // Saved either way from here: a refused or failed Start says so, and the form
         // stops offering to create the bot a second time.
@@ -304,19 +304,19 @@ export class BotForm {
       const r = await attachBot(project.key, bot.id, this.p.terminal);
       this.busy = false;
       if (r.refused) this.error = r.refused;
-      else { run("spaces-agents.refresh"); closeOverlay(this.p.overlay); }
+      else { run("am-sidebar.refresh"); closeOverlay(this.p.overlay); }
       cx.notify();
     });
   }
 
   // The bot list's and the row menu's actions.
   create() {
-    openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "create" } });
+    openOverlay({ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "create" } });
     closeOverlay(this.p.overlay);
   }
 
   edit(project, bot) {
-    openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: bot.id, project: project.key } });
+    openOverlay({ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: bot.id, project: project.key } });
     closeOverlay(this.p.overlay);
   }
 
@@ -328,7 +328,7 @@ export class BotForm {
       const r = await startBot(project.key, bot.id);
       this.busy = false;
       if (r.refused) this.error = r.refused;
-      else { run("spaces-agents.refresh"); closeOverlay(this.p.overlay); }
+      else { run("am-sidebar.refresh"); closeOverlay(this.p.overlay); }
       cx.notify();
     });
   }

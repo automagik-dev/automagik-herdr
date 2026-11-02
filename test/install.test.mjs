@@ -12,9 +12,9 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
-const PACK_SRC = join(ROOT, "mods", "spaces-agents");
+const PACK_SRC = join(ROOT, "mods", "am-sidebar");
 const LAYOUT_SRC = join(ROOT, "layouts", "automagik.json");
-const { PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/spaces-agents/release.js");
+const { OLD_PACK_NAME, PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/am-sidebar/release.js");
 const CASK = "penso/tap/herdr-gpui";
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
@@ -70,7 +70,8 @@ fi
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
   };
   const appHome = join(home, ".config", "herdr-app");
-  const pack = join(appHome, "mods", "spaces-agents");
+  const pack = join(appHome, "mods", "am-sidebar");
+  const old = join(appHome, "mods", OLD_PACK_NAME); // the sidebar's folder before the rename (v0.2-v0.4.x)
   const link = join(home, ".local", "bin", "automagik-herdr");
   const run = (...args) => {
     const r = spawnSync("sh", [INSTALL, ...args], { cwd: root, env: { ...env, ...extraEnv }, encoding: "utf8" });
@@ -84,7 +85,7 @@ fi
   /**
    * Publishes a release as release.yml packs it: every PACK_MODS folder of the repo plus
    * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. As in a real release
-   * only spaces-agents carries VERSION; each main.js ends in a `// release <v>` line, the code
+   * only am-sidebar carries VERSION; each main.js ends in a `// release <v>` line, the code
    * change a release brings, so a test can tell which release a folder is from.
    */
   const publish = (version, { edit, sums, latest = true } = {}) => {
@@ -94,7 +95,7 @@ fi
       cpSync(join(ROOT, "mods", m), join(src, m), { recursive: true });
       writeFileSync(join(src, m, "main.js"), `${readFileSync(join(src, m, "main.js"), "utf8")}\n// release ${version}\n`);
     }
-    writeFileSync(join(src, "spaces-agents", "VERSION"), `${version}\n`);
+    writeFileSync(join(src, "am-sidebar", "VERSION"), `${version}\n`);
     mkdirSync(join(src, "layouts"));
     cpSync(LAYOUT_SRC, join(src, "layouts", "automagik.json"));
     edit?.(src);
@@ -129,7 +130,7 @@ fi
   /** Every pack folder's release (its VERSION), by name. */
   const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(mods, m, "main.js"), "utf8"))?.[1]]));
   const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
-  return { root, bin, home, apps, appHome, mods, state, pack, link, run, piped, publish, publishMeter, meterCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
+  return { root, bin, home, apps, appHome, mods, state, pack, old, link, run, piped, publish, publishMeter, meterCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -146,7 +147,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
   // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
   const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "latest", "download", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
-  for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`spaces-agents/bin/${f}`), `the tarball has spaces-agents/bin/${f}`);
+  for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`am-sidebar/bin/${f}`), `the tarball has am-sidebar/bin/${f}`);
   for (const f of ["run.sh", "automagik-herdr"]) assert.equal(lstatSync(join(s.pack, "bin", f)).mode & 0o111, 0o111, f);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
@@ -183,7 +184,7 @@ test("a link to the .mjs (installed before bin/run.sh) is repointed at the wrapp
   assert.match(r.out, /Linked /);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   // A release from before the wrapper: the link names the .mjs it has.
-  s.publish("9.8.0", { latest: false, edit: (dir) => rmSync(join(dir, "spaces-agents", "bin", "automagik-herdr")) });
+  s.publish("9.8.0", { latest: false, edit: (dir) => rmSync(join(dir, "am-sidebar", "bin", "automagik-herdr")) });
   const old = s.run("--yes", "--version", "9.8.0");
   assert.equal(old.code, 0, old.err);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
@@ -245,7 +246,7 @@ test("a tarball holding a symlink installs nothing, and leaves the old pack", (t
   assert.match(r.err, /nothing was installed: .*evil: not a plain file or folder/);
   assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// the old pack\n");
   assert.equal(existsSync(s.link), false);
-  assert.deepEqual(readdirSync(s.mods), ["spaces-agents"]);
+  assert.deepEqual(readdirSync(s.mods), ["am-sidebar"]);
 });
 
 test("a foreign folder in the tarball (not its PACK_MODS, or pocket-link) is refused, and nothing is installed", (t) => {
@@ -291,7 +292,7 @@ test("--uninstall with nothing there before moves the pack out of mods/, never d
   assert.equal(r.code, 0, r.err);
   assert.equal(existsSync(s.pack), false);
   assert.deepEqual(readdirSync(s.mods), []);
-  assert.equal(readFileSync(join(s.state, ".prev", "spaces-agents", "VERSION"), "utf8").trim(), "9.9.0");
+  assert.equal(readFileSync(join(s.state, ".prev", "am-sidebar", "VERSION"), "utf8").trim(), "9.9.0");
   assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), new RegExp(`^mods=${PACK_MODS.join(",")}$`, "m"));
 });
 
@@ -398,7 +399,7 @@ test("adopt, then update twice: the adopted original stays in backup/, and --uni
 test("old-named folders the installer didn't write are left alone without --adopt; --uninstall leaves them too", (t) => {
   const s = scratch(t);
   const mine = {};
-  for (const m of ["spaces-agents", "auto-tabs"]) {
+  for (const m of ["am-sidebar", "auto-tabs"]) {
     mkdirSync(join(s.mods, m, "bin"), { recursive: true });
     writeFileSync(join(s.mods, m, "main.js"), `// ${m}, hand-placed\n`);
     writeFileSync(join(s.mods, m, "VERSION"), "9.9.0\n");
@@ -408,13 +409,13 @@ test("old-named folders the installer didn't write are left alone without --adop
   const first = s.run("--yes");
   assert.equal(first.code, 0, first.err);
   assert.match(first.out, /left alone: mods\/auto-tabs \(not installed by automagik-herdr; --adopt/);
-  assert.match(first.out, /Left .*automagik-herdr as it is: .*spaces-agents is not this installer's/);
+  assert.match(first.out, /Left .*automagik-herdr as it is: .*am-sidebar is not this installer's/);
   assert.match(s.mark(), new RegExp(`^mods=${PACK_MODS.filter((m) => !(m in mine)).join(",")}$`, "m"));
   for (const m in mine) assert.equal(treeSum(join(s.mods, m)), mine[m], m);
   assert.equal(existsSync(s.link), false);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(readdirSync(s.mods), ["auto-tabs", "spaces-agents"]);
+  assert.deepEqual(readdirSync(s.mods), ["am-sidebar", "auto-tabs"]);
   for (const m in mine) assert.equal(treeSum(join(s.mods, m)), mine[m], m);
 });
 
@@ -423,13 +424,13 @@ test("a v0.2.0-shaped home: rerunning install.sh installs the pack beside it, th
   // v0.2.x: its marker, its spaces-agents and kept copies, its bots-only layout; hand-installed mods.
   mkdirSync(s.state, { recursive: true });
   writeFileSync(join(s.state, "installed-by-install.sh"), "version=0.2.2\nbefore=kept\nlayout=added\n");
-  for (const dir of [s.pack, join(s.state, "spaces-agents.prev"), join(s.state, "spaces-agents.before-install")]) {
+  for (const dir of [s.old, join(s.state, "spaces-agents.prev"), join(s.state, "spaces-agents.before-install")]) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "main.js"), `// ${dir}\n`);
   }
-  mkdirSync(join(s.pack, ".state"));
-  writeFileSync(join(s.pack, ".state", "projects.json"), "[]\n");
-  writeFileSync(join(s.pack, "VERSION"), "0.2.2\n");
+  mkdirSync(join(s.old, ".state"));
+  writeFileSync(join(s.old, ".state", "projects.json"), "[]\n");
+  writeFileSync(join(s.old, "VERSION"), "0.2.2\n");
   // The layout v0.2 shipped, byte for byte (`git show v0.2.0:mods/spaces-agents/layouts/automagik.json`).
   const v020 = readFileSync(join(ROOT, "test", "fixtures", "layout-v0.2.0.json"));
   assert.equal(createHash("sha256").update(v020).digest("hex"), V020_LAYOUT_SHA256);
@@ -447,6 +448,7 @@ test("a v0.2.0-shaped home: rerunning install.sh installs the pack beside it, th
   assert.equal(r.code, 0, r.err);
   for (const m in hand) assert.equal(treeSum(join(s.mods, m)), hand[m], `${m} untouched without --adopt`);
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
+  assert.equal(existsSync(s.old), false, "v0.2's folder became am-sidebar");
   assert.equal(readFileSync(join(s.pack, ".state", "projects.json"), "utf8"), "[]\n", "v0.2's state carried over");
   assert.equal(readFileSync(layout, "utf8"), readFileSync(LAYOUT_SRC, "utf8"), "v0.2's unchanged layout replaced (D8)");
   assert.equal(readFileSync(join(s.state, ".prev", "spaces-agents", "VERSION"), "utf8"), "0.2.2\n");
@@ -461,7 +463,7 @@ test("a v0.2.0-shaped home: rerunning install.sh installs the pack beside it, th
   const un = s.run("--uninstall");
   assert.equal(un.code, 0, un.err);
   for (const m in hand) assert.equal(treeSum(join(s.mods, m)), hand[m], `${m} put back`);
-  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), `// ${join(s.state, "spaces-agents.before-install")}\n`, "the pack from before v0.2's first install");
+  assert.equal(readFileSync(join(s.old, "main.js"), "utf8"), `// ${join(s.state, "spaces-agents.before-install")}\n`, "the pack from before v0.2's first install");
 });
 
 test("a v1 marker is still uninstalled: v0.2's spaces-agents leaves, its first pack comes back", (t) => {
@@ -469,11 +471,11 @@ test("a v1 marker is still uninstalled: v0.2's spaces-agents leaves, its first p
   mkdirSync(join(s.state, "spaces-agents.before-install"), { recursive: true });
   writeFileSync(join(s.state, "installed-by-install.sh"), "version=0.2.2\nbefore=kept\n");
   writeFileSync(join(s.state, "spaces-agents.before-install", "main.js"), "// before\n");
-  mkdirSync(s.pack, { recursive: true });
-  writeFileSync(join(s.pack, "main.js"), "// v0.2.2\n");
+  mkdirSync(s.old, { recursive: true });
+  writeFileSync(join(s.old, "main.js"), "// v0.2.2\n");
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.equal(readFileSync(join(s.pack, "main.js"), "utf8"), "// before\n");
+  assert.equal(readFileSync(join(s.old, "main.js"), "utf8"), "// before\n");
   assert.equal(readFileSync(join(s.state, ".prev", "spaces-agents", "main.js"), "utf8"), "// v0.2.2\n");
 });
 
@@ -574,9 +576,9 @@ test("a same-version rerun repairs a corrupted main.js, a deleted layout and a m
   const again = s.run("--yes");
   assert.equal(again.code, 0, again.err);
   assert.match(again.out, /Checking the installed Automagik Herdr 9\.9\.0 against the release\.\.\.\nChecksum: ok\./);
-  assert.match(again.out, /differs from the release: mods\/spaces-agents \(bin\/automagik-herdr\.mjs, main\.js\)/);
+  assert.match(again.out, /differs from the release: mods\/am-sidebar \(bin\/automagik-herdr\.mjs, main\.js\)/);
   assert.match(again.out, /missing: the automagik layout/);
-  assert.match(again.out, /repaired mods\/spaces-agents: reinstalled 9\.9\.0; the damaged copy is kept in .*backup\/spaces-agents-/);
+  assert.match(again.out, /repaired mods\/am-sidebar: reinstalled 9\.9\.0; the damaged copy is kept in .*backup\/am-sidebar-/);
   assert.match(again.out, /added the automagik layout/);
   assert.match(again.out, /Repaired the pack 9\.9\.0/);
   assert.match(again.out, /Done: Automagik Herdr 9\.9\.0\./);
@@ -644,7 +646,7 @@ test("a same-version rerun never installs a pack-named folder the record doesn't
   chmodSync(cmd, 0o644);
   const bit = s.run("--yes");
   assert.equal(bit.code, 0, bit.err);
-  assert.match(bit.out, /differs from the release: mods\/spaces-agents \(bin\/automagik-herdr\.mjs\)/);
+  assert.match(bit.out, /differs from the release: mods\/am-sidebar \(bin\/automagik-herdr\.mjs\)/);
   assert.notEqual(lstatSync(cmd).mode & 0o111, 0);
 });
 
@@ -754,7 +756,7 @@ test("a layout already showing the pack (the owner's main-agents): --yes switche
   s.show("main-agents");
   const own = join(s.appHome, "layouts", "main-agents.json");
   mkdirSync(dirname(own), { recursive: true });
-  writeFileSync(own, JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "spaces-agents" } }] }, null, 2));
+  writeFileSync(own, JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
   s.publish("9.9.0");
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
@@ -797,9 +799,9 @@ test("--uninstall leaves a pack folder that became a symlink in place, and moves
   symlinkSync(real, s.pack);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Left .*spaces-agents: it is a link/);
+  assert.match(r.out, /Left .*am-sidebar: it is a link/);
   assert.equal(lstatSync(s.pack).isSymbolicLink(), true);
-  assert.deepEqual(readdirSync(s.mods), ["spaces-agents"]);
+  assert.deepEqual(readdirSync(s.mods), ["am-sidebar"]);
 });
 
 test("AUTOMAGIK_HERDR_RELEASE_URL: a file:// folder or this repository on GitHub only, always said", (t) => {
@@ -862,7 +864,7 @@ test("a download cut short runs nothing (the body is one function called on the 
 });
 
 test("every pack mod docks nowhere by itself; the shipped layout names only pack mods and stock Herdr mods", () => {
-  // place "left" plus a layout that also names spaces-agents made Herdr show two sidebars.
+  // place "left" plus a layout that also names am-sidebar made Herdr show two sidebars.
   for (const m of PACK_MODS) assert.equal(JSON.parse(readFileSync(join(ROOT, "mods", m, "mod.json"), "utf8")).place, "none", m);
   const stock = new Set(["changes", "files", "pane", "tabs", "workspace-chrome", "workspace-status", "spaces", "agents"]);
   const named = [];
@@ -874,7 +876,7 @@ test("every pack mod docks nowhere by itself; the shipped layout names only pack
     }
   };
   walk(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")));
-  assert.ok(named.includes("spaces-agents"));
+  assert.ok(named.includes("am-sidebar"));
   assert.deepEqual(named.filter((m) => !PACK_MODS.includes(m) && !stock.has(m)), []);
   assert.deepEqual(readdirSync(join(ROOT, "layouts")), ["automagik.json"]);
   assert.equal(existsSync(join(PACK_SRC, "layouts")), false, "one layout: the root one (D8)");

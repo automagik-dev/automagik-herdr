@@ -1,4 +1,4 @@
-// The space icon dialog (spaces-agents/spaceIcon.js, spaceIconModel.js) under `node --test`,
+// The space icon dialog (am-sidebar/spaceIcon.js, spaceIconModel.js) under `node --test`,
 // with gpui and herdr stood in for (gpui-stub.mjs, form-herdr-stub.mjs): what an emoji, an
 // image and a colour write to the shared keys, which kept file a change deletes, and that the
 // sidebar opens it as its own dialog. Its look is checked live.
@@ -11,15 +11,15 @@ import { join } from "node:path";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./form-herdr-stub.mjs"), "fs/promises": here("./fs-stub.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
-const fromPack = (context) => context.parentURL?.includes("/mods/spaces-agents/");
+const fromPack = (context) => context.parentURL?.includes("/mods/am-sidebar/");
 registerHooks({
   resolve: (specifier, context, next) => (stubs[specifier] && fromPack(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
 });
 const { state } = await import(stubs.herdr);
 const { nodes, index } = await import(stubs["gpui-kit"]);
-const { SpaceIconDialog, spaceIconOverlay } = await import("../mods/spaces-agents/spaceIcon.js");
-const { chars, names } = await import("../mods/spaces-agents/emoji-data.js");
-const model = await import("../mods/spaces-agents/spaceIconModel.js");
+const { SpaceIconDialog, spaceIconOverlay } = await import("../mods/am-sidebar/spaceIcon.js");
+const { chars, names } = await import("../mods/am-sidebar/emoji-data.js");
+const model = await import("../mods/am-sidebar/spaceIconModel.js");
 const { KEY, COLORS_KEY } = model;
 
 // A PNG header of `w`×`h`: the signature, then IHDR's length, name, width and height.
@@ -66,7 +66,7 @@ function open() {
 // ---- the pure parts ----
 
 test("the sidebar opens the icon dialog as its own mod, by space id", () => {
-  assert.deepEqual(spaceIconOverlay("w1"), { mod: "spaces-agents", kind: "dialog", width: 440, height: 520, props: { spaceIcon: "w1" } });
+  assert.deepEqual(spaceIconOverlay("w1"), { mod: "am-sidebar", kind: "dialog", width: 440, height: 520, props: { spaceIcon: "w1" } });
 });
 
 test("one emoji passes; words, spaces and empty input are refused", () => {

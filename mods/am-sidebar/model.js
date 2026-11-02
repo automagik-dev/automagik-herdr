@@ -410,7 +410,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
  * computer, `PROJECTS_FILE` in the app home (outside mods/, so writing it reloads nothing).
  * Only the CLI writes it; the sidebar reads it beside its own remembered list.
  */
-export const PROJECTS_FILE = "spaces-agents-projects.json";
+export const PROJECTS_FILE = "am-sidebar-projects.json";
 export const MAX_LISTED_PROJECTS = 200;
 
 /** The keys in a PROJECTS_FILE text (null, unparsable or the wrong shape: none). */

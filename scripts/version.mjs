@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Automagik Herdr's one version (A14), after Automagik's scripts/version.ts: the repository's
- * package.json and the pack's VERSION file (mods/spaces-agents/VERSION, which the release
+ * package.json and the pack's VERSION file (mods/am-sidebar/VERSION, which the release
  * tarball carries and update.mjs reads) both hold it. Releases are 0.N.P, tagged v0.N.P by
  * release.yml, numbers compared as numbers. Until the first release the repository carries
  * 0.0.0, which is never released (as Automagik carried 3.0.0); the first release is 0.2.0 (FIRST:
@@ -47,7 +47,7 @@ export const FIX = /^fix(\([^)]*\))?: /;
 /** Every file that carries the version: JSON at `path`, or a text file holding only it. */
 export const FIELDS = [
   { file: "package.json", path: ["version"] },
-  { file: "mods/spaces-agents/VERSION" },
+  { file: "mods/am-sidebar/VERSION" },
 ];
 
 const readField = (root, { file, path }) => {

@@ -9,17 +9,17 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ledgerPath } from "../mods/spaces-agents/workers.js";
-import { OURS, commandFor, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/spaces-agents/briefingText.mjs";
+import { ledgerPath } from "../mods/am-sidebar/workers.js";
+import { OURS, commandFor, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
   toStable,
-} from "../mods/spaces-agents/migrateHooks.mjs";
+} from "../mods/am-sidebar/migrateHooks.mjs";
 
 // git here must not read this host's global config.
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const PACK = join(ROOT, "mods", "spaces-agents");
+const PACK = join(ROOT, "mods", "am-sidebar");
 const UPDATE = join(PACK, "update.mjs");
 const NODE_DIR = dirname(process.execPath);
 const read = (path) => readFileSync(path, "utf8");

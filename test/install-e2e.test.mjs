@@ -2,7 +2,7 @@
 // as a file:// release with SHA256SUMS, installed by install.sh piped into bash as the README's
 // one-liner runs it, on three scratch homes: a fresh one, a v0.4.0 sidebar-only install, and one
 // with a personal layout and an unrelated mod (sheepdog). The folder list is PACK_MODS from
-// mods/spaces-agents/release.js, as release.yml reads it from the tag; this test does not take it
+// mods/am-sidebar/release.js, as release.yml reads it from the tag; this test does not take it
 // from release.yml. Fake `uname`, `brew` and `herdr-app`; never the real home,
 // ~/.config/herdr-app or Homebrew.
 import { test } from "node:test";
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const RELEASE_YML = join(ROOT, ".github", "workflows", "release.yml");
-const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, tarballName } = await import("../mods/spaces-agents/release.js");
+const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, tarballName } = await import("../mods/am-sidebar/release.js");
 /** The release this branch becomes; release.yml sets VERSION to it in the commit it tags. */
 const RELEASE = "0.5.0";
 /** The latest sidebar-only release (v0.2-v0.4.x: automagik-herdr-<v>.tgz, spaces-agents only). */
@@ -47,7 +47,7 @@ exec sh "$dir/run.sh" "$dir/automagik-herdr.mjs" "$@"
 `;
 /** A stand-in for their bin/run.sh (it looks for node 22.7+ or bun); node is on PATH here. */
 const RUN_SH = "#!/bin/sh\nexec node \"$@\"\n";
-const LAUNCHER = ["mods/spaces-agents/bin/automagik-herdr", "mods/spaces-agents/bin/run.sh"];
+const LAUNCHER = ["mods/am-sidebar/bin/automagik-herdr", "mods/am-sidebar/bin/run.sh"];
 
 /** Every file and link under `dir`, as `rel → {bytes or link target, exec bit}`. */
 function files(dir, { skip = () => false } = {}) {
@@ -90,7 +90,7 @@ function buildPack(dir, { launcher } = {}) {
   assert.equal(only(/^tgz=/), 'tgz="release/automagik-herdr-pack-${VERSION}.tgz"');
   // The folder list is the tag's PACK_MODS (bash-only lines, checked as text; the checks they
   // feed are repeated below).
-  assert.equal(only(/^git show "v\$\{VERSION\}:mods\//), 'git show "v${VERSION}:mods/spaces-agents/release.js" > "${RUNNER_TEMP}/release.mjs"');
+  assert.equal(only(/^git show "v\$\{VERSION\}:mods\//), 'git show "v${VERSION}:mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"');
   assert.match(only(/^mapfile -t mods /), /const \{ PACK_MODS \} = await import\(process\.argv\[1\]\); for \(const m of PACK_MODS\) console\.log\(m\);' "\$\{RUNNER_TEMP\}\/release\.mjs"\)$/);
   const show = swap(only(/^git show "v\$\{VERSION\}:layouts\//), '"v${VERSION}:', '"${TREE}:');
   const archive = swap(swap(only(/^git archive /), '"v${VERSION}:mods"', '"${TREE}:mods"'), '"${mods[@]}"', '"$@"');
@@ -99,7 +99,7 @@ function buildPack(dir, { launcher } = {}) {
   const idx = { GIT_INDEX_FILE: join(dir, "index") };
   git(["add", "-A", "--", "mods", "layouts"], idx);
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${RELEASE}\n`, encoding: "utf8" }).trim();
-  git(["update-index", "--cacheinfo", `100644,${blob},mods/spaces-agents/VERSION`], idx);
+  git(["update-index", "--cacheinfo", `100644,${blob},mods/am-sidebar/VERSION`], idx);
   const staged = new Set(git(["ls-files", "--", ...LAUNCHER], idx).split("\n").filter(Boolean));
   for (const path of LAUNCHER) {
     if ((launcher === false || launcher === "none") && staged.has(path)) git(["update-index", "--force-remove", "--", path], idx);
@@ -109,7 +109,7 @@ function buildPack(dir, { launcher } = {}) {
       git(["update-index", "--add", "--cacheinfo", `100755,${b},${path}`], idx);
     }
   }
-  if (launcher === "none") git(["update-index", "--force-remove", "--", "mods/spaces-agents/bin/automagik-herdr.mjs"], idx);
+  if (launcher === "none") git(["update-index", "--force-remove", "--", "mods/am-sidebar/bin/automagik-herdr.mjs"], idx);
   const tree = git(["write-tree"], idx);
 
   const tagged = git(["ls-tree", "--name-only", `${tree}:mods`]).split("\n").filter((m) => m !== POCKET_LINK).sort();
@@ -209,7 +209,7 @@ function assertFullPack(m, r) {
     assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} is installed`);
     assert.deepEqual(files(join(m.mods, mod), { skip: PRIVATE }), files(join(x, mod)), `${mod} is byte-identical to the archive`);
   }
-  assert.equal(readFileSync(join(m.mods, "spaces-agents", "VERSION"), "utf8"), `${RELEASE}\n`);
+  assert.equal(readFileSync(join(m.mods, "am-sidebar", "VERSION"), "utf8"), `${RELEASE}\n`);
   // The ownership record lists every pack folder, and the output names them all: never a
   // sidebar-only install that reads like a complete one.
   const mark = readFileSync(join(m.state, "installed-by-install.sh"), "utf8");
@@ -232,10 +232,10 @@ function assertFullPack(m, r) {
   const walk = (n) => { if (n.content?.mod) blocks.push(n.content); (n.children ?? []).forEach(walk); };
   walk(layout);
   const named = blocks.map((c) => c.mod);
-  for (const mod of ["spaces-agents", "auto-tabs", "automations", "am-quota"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
+  for (const mod of ["am-sidebar", "auto-tabs", "automations", "am-quota"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
   assert.deepEqual(blocks.find((c) => c.mod === "sidebar-chrome")?.props, { footer: true }, "the footer rail");
   assert.equal(layout.terminal_menu, "md-menu");
-  assert.match(readFileSync(join(m.mods, "spaces-agents", "main.js"), "utf8"), /openOverlay\(\{ mod: "new-menu-tui"/, "the sidebar's + opens new-menu-tui");
+  assert.match(readFileSync(join(m.mods, "am-sidebar", "main.js"), "utf8"), /openOverlay\(\{ mod: "new-menu-tui"/, "the sidebar's + opens new-menu-tui");
   for (const mod of [...named, layout.terminal_menu].filter((n) => PACK_MODS.includes(n))) assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} (in the layout) is installed`);
   // The mod manager: its catalog and its key (merged only where free).
   assert.deepEqual(JSON.parse(readFileSync(join(m.appHome, "data", "mod-manager", "catalog.json"), "utf8")), { url: CATALOG_URL });
@@ -244,8 +244,8 @@ function assertFullPack(m, r) {
   for (const mod of PACK_MODS) assert.ok(existsSync(join(m.mods, mod)), mod);
   // The command, linked to the entry the installed sidebar ships (the launcher's wrapper, else
   // the .mjs), and it runs.
-  const entry = existsSync(join(x, "spaces-agents", "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs";
-  assert.equal(readlinkSync(m.link), join(m.mods, "spaces-agents", "bin", entry));
+  const entry = existsSync(join(x, "am-sidebar", "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs";
+  assert.equal(readlinkSync(m.link), join(m.mods, "am-sidebar", "bin", entry));
   // usagemeter, the token meter the sidebar runs, in place beside it.
   const meter = spawnSync(join(m.home, ".local", "bin", "usagemeter"), ["--version"], { encoding: "utf8" });
   assert.equal(meter.stdout, `usagemeter ${USAGEMETER.version}\n`, "usagemeter is installed");
@@ -259,7 +259,7 @@ test("e2e: release.yml's pack is the whole pack: every PACK_MODS folder plus the
   const { x } = pack();
   assert.deepEqual(readdirSync(x).sort(), [...PACK_MODS, "layouts"].sort());
   assert.deepEqual(readdirSync(join(x, "layouts")), ["automagik.json"]);
-  assert.equal(readFileSync(join(x, "spaces-agents", "VERSION"), "utf8"), `${RELEASE}\n`);
+  assert.equal(readFileSync(join(x, "am-sidebar", "VERSION"), "utf8"), `${RELEASE}\n`);
   // Each folder holds what git tracks under mods/<mod>, byte for byte.
   for (const mod of PACK_MODS) {
     const tracked = git(["ls-files", "--", `mods/${mod}`]).split("\n").filter(Boolean).map((p) => p.slice(`mods/${mod}/`.length)).sort();
@@ -328,15 +328,21 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   assertFullPack(m, r);
   // The sidebar-only pack is replaced and kept as the rollback set; its state carried over.
   assert.equal(readFileSync(join(m.state, ".prev", "spaces-agents", "VERSION"), "utf8"), `${OLD}\n`);
-  assert.equal(readFileSync(join(old, ".state", "projects.json"), "utf8"), "[\"/work/acme\"]\n", "the sidebar's state carried over");
+  assert.equal(existsSync(old), false, "spaces-agents became am-sidebar");
+  assert.equal(readFileSync(join(m.mods, "am-sidebar", ".state", "projects.json"), "utf8"), "[\"/work/acme\"]\n", "the sidebar's state carried over");
+  // The rename migration ran: the link (asserted above) is am-sidebar's wrapper, and the personal
+  // layout that names the sidebar follows the rename, its original kept in the dated backup.
+  const day = new Date().toISOString().slice(0, 10);
+  assert.match(readFileSync(join(m.state, "installed-by-install.sh"), "utf8"), new RegExp(`^migrated=backup/layouts-${day}`, "m"));
+  assert.equal(readFileSync(join(m.state, "backup", `layouts-${day}`, "layouts", "main-agents.json"), "utf8"), mine);
   assert.match(r.out, new RegExp(`The folders it replaced \\(${OLD.replaceAll(".", "\\.")}\\) are kept in .*\\.prev`));
   assert.match(r.out, /replaced the automagik layout .*an older release shipped/, "v0.4's unchanged layout becomes the pack's (D8)");
-  // The personal layout and Sheepdog are untouched, and nothing switched the person's layout...
-  assert.equal(readFileSync(personal, "utf8"), mine);
+  // The personal layout changed only there, Sheepdog is untouched, and nothing switched the person's layout...
+  assert.deepEqual(JSON.parse(readFileSync(personal, "utf8")), JSON.parse(mine.replace('"mod": "spaces-agents"', '"mod": "am-sidebar"')));
   assert.deepEqual(files(sheepdog), dogBefore);
   assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("do ")), []);
   // ...but the output says what that layout lacks and how it gains it.
-  const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes(personal));
+  const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
   for (const what of ["footer rail (sidebar-chrome)", "tab bar (auto-tabs)", "Markdown menu (md-menu)", "automations panel", "quota panel (am-quota)"]) {

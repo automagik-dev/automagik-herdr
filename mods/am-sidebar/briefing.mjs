@@ -162,7 +162,7 @@ export async function joinSession(self, me, input, appHome) {
   } catch { return false; }
 }
 
-// The app home this script is installed in (<app home>/mods/spaces-agents/briefing.mjs).
+// The app home this script is installed in (<app home>/mods/am-sidebar/briefing.mjs).
 const appHomeOf = () => process.env.HERDR_APP_HOME || fileURLToPath(new URL("../..", import.meta.url)).replace(/\/+$/, "");
 
 // Run as the hook (node briefing.mjs), not when the CLI imports gatherBriefing.

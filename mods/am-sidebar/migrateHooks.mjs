@@ -24,13 +24,15 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { ENTRY_SOURCE, OURS, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
+import { PATH_RENAMES, SHARED_RENAMES, renamedFrom } from "./migrate.js";
 import { PROJECTS_FILE, listedProjects } from "./model.js";
+import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 
 export const HOOKS_JOURNAL = "hooks-journal.json";
 export const BACKUP_SUFFIX = ".am-backup";
 export const CLI_LINK = "automagik-herdr";
 /** The sidebar folders, in the order the entry point tries them. */
-export const SIDEBARS = Object.freeze(["am-sidebar", "spaces-agents"]);
+export const SIDEBARS = Object.freeze([PACK_NAME, OLD_PACK_NAME]);
 const MAX_BACKUPS = 100;
 
 const lstat = (path) => { try { return lstatSync(path); } catch { return null; } };
@@ -130,19 +132,19 @@ const usable = (p) => typeof p === "string" && isAbsolute(p) && resolve(p) !== "
 
 /**
  * The projects the pack knows on this computer: the sidebar's remembered projects (shared.json,
- * read only: am.sidebar.projects, then spaces-agents.projects), the CLI's lists (am-sidebar-projects.json,
- * spaces-agents-projects.json) and `extra` (the open spaces' folders). Absolute paths, once each.
+ * read only: am.sidebar.projects, then its name before the rename), the CLI's lists (PROJECTS_FILE,
+ * then the name PATH_RENAMES copies it from) and `extra` (the open spaces' folders). Absolute paths, once each.
  */
 export function knownProjects(appHome, extra = []) {
   const keys = [];
   try {
     const shared = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8"));
-    for (const name of ["am.sidebar.projects", "spaces-agents.projects"]) {
+    for (const name of ["am.sidebar.projects", renamedFrom(SHARED_RENAMES, "am.sidebar.projects")]) {
       const list = isObject(shared) && Object.hasOwn(shared, name) ? shared[name] : null;
       for (const p of Array.isArray(list) ? list : []) if (typeof p?.key === "string" && !p.machine) keys.push(p.key);
     }
   } catch { /* none, or unreadable: none */ }
-  for (const name of ["am-sidebar-projects.json", PROJECTS_FILE]) {
+  for (const name of [PROJECTS_FILE, PATH_RENAMES.find(([, to]) => to === PROJECTS_FILE)?.[0]].filter(Boolean)) {
     try { keys.push(...listedProjects(readFileSync(join(appHome, name), "utf8"))); } catch { /* none */ }
   }
   keys.push(...extra);
@@ -461,8 +463,8 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit })
 }
 
 /**
- * Repoints `<binDir>/automagik-herdr` at the CLI of the sidebar folder the record lists (am-sidebar,
- * else spaces-agents) when it is a link to either one's CLI in this app home: its bin/automagik-herdr
+ * Repoints `<binDir>/automagik-herdr` at the CLI of the sidebar folder the record lists (PACK_NAME,
+ * else OLD_PACK_NAME) when it is a link to either one's CLI in this app home: its bin/automagik-herdr
  * wrapper when the folder ships one (it runs the .mjs through bin/run.sh, which finds a node where
  * PATH has none; install.sh's cli_target), else bin/automagik-herdr.mjs. A link to either entry is
  * ours. A link elsewhere is the person's and stays; a file there is left with a note; no link

@@ -50,7 +50,7 @@ function toggleSidebar() {
 }
 
 // The rename shim (D12): the rail's shared keys live under am.*; the values from before the rename
-// are copied over once on load, and the old keys stay (spaces-agents/migrate.js SHARED_RENAMES).
+// are copied over once on load, and the old keys stay (am-sidebar/migrate.js SHARED_RENAMES).
 export const SHARED_OLD = Object.freeze({ "sidebar.width": "am.sidebar.width", "sidebar.collapsed": "am.sidebar.collapsed" });
 function carryShared() {
   for (const [old, now] of Object.entries(SHARED_OLD)) if (shared(now) == null && shared(old) != null) setShared(now, shared(old));
@@ -65,11 +65,11 @@ function openMods() {
 }
 
 // The Bots tab's two entries: the sidebar mod's own forms, opened as their own copy of it
-// (spaces-agents' init returns the form when props.form is set), so they work with no sidebar
+// (am-sidebar's init returns the form when props.form is set), so they work with no sidebar
 // shown. Sizes as the sidebar opens them: the form 1000 × 840, the bot list 560 × 0.85.
 export const BOT_FORMS = {
-  create: { mod: "spaces-agents", kind: "dialog", modal: true, width: 1000, height: 840, props: { form: "create" } },
-  pick: { mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "pick" } },
+  create: { mod: "am-sidebar", kind: "dialog", modal: true, width: 1000, height: 840, props: { form: "create" } },
+  pick: { mod: "am-sidebar", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "pick" } },
 };
 
 // The popup's lines. The sidebar publishes `bots.defined` (false: no bot on this computer);
@@ -93,7 +93,7 @@ export default class WorkspaceChrome extends View {
     if (props()?.botsMenu) return;
     carryShared();
     this.pocket = false;
-    this.bots = false;     // the Bots tab: only while the sidebar mod (spaces-agents) is installed
+    this.bots = false;     // the Bots tab: only while the sidebar mod (am-sidebar) is installed
     this.phone = false;
     this.statusPath = null;
     this.hovered = null;   // the name of the tab under the pointer, shown dim in the rail
@@ -101,7 +101,7 @@ export default class WorkspaceChrome extends View {
     const footer = Boolean(props()?.footer);
     const look = (cx) => cx.spawn(async (cx) => {
       let bots = false;
-      try { bots = (await readTextFile(`${appHome()}/mods/spaces-agents/mod.json`)) !== null; } catch { bots = false; }
+      try { bots = (await readTextFile(`${appHome()}/mods/am-sidebar/mod.json`)) !== null; } catch { bots = false; }
       if (bots !== this.bots) { this.bots = bots; cx.notify(); }
       let found = false;
       try { found = (await readTextFile(`${appHome()}/mods/pocket-link/mod.json`)) !== null; } catch { found = false; }

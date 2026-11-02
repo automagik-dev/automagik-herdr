@@ -5,6 +5,7 @@
 // node and `node --test` runs it too. Apache-2.0.
 
 import { effectiveLead, MAX_INSTRUCTIONS } from "./model.js";
+import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 
 /** How a bot works (bot workers): it writes no code; one worker per task does. */
 export const WORKER_LINE = "You write no code yourself: for each task start one worker with "
@@ -123,11 +124,11 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 // ---- the hook entry and the git exclude (written by launch.js afterBind) ----
 
 /** The pack's installed briefing script under an app home (the sidebar folder's own copy). */
-export const briefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/mods/spaces-agents/briefing.mjs`;
+export const briefingPath = (appHome, sidebar = PACK_NAME) => `${appHome.replace(/\/+$/, "")}/mods/${sidebar}/briefing.mjs`;
 
 /**
  * The hook's entry point, relative to the app home (Group 6b): a shim outside mods/ that runs
- * whichever sidebar folder's briefing.mjs is there (am-sidebar, else spaces-agents), so a hook
+ * whichever sidebar folder's briefing.mjs is there (PACK_NAME, else OLD_PACK_NAME), so a hook
  * pointing at it survives the folder's rename and a rollback across it. The pack ships it as
  * ENTRY_SOURCE in the sidebar folder; the installer, the updater and installHook put it in place.
  */
@@ -137,7 +138,7 @@ export const ENTRY_SOURCE = "briefingEntry.mjs";
 export const stableBriefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/${STABLE_BRIEFING}`;
 
 /** The pack's runtime finder (bin/run.sh: node 22.7 or later, else bun) in a sidebar folder under an app home. */
-export const runnerPath = (appHome, sidebar = "spaces-agents") => `${appHome.replace(/\/+$/, "")}/mods/${sidebar}/bin/run.sh`;
+export const runnerPath = (appHome, sidebar = PACK_NAME) => `${appHome.replace(/\/+$/, "")}/mods/${sidebar}/bin/run.sh`;
 
 const shQuoted = (path) => `"${path.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
 
@@ -148,8 +149,8 @@ const shQuoted = (path) => `"${path.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
  * uninstall): exit 0 and nothing, never a blocked turn (`sh <missing file>` exits 2 under dash,
  * and 2 blocks a Claude prompt).
  */
-export function runnerCommandFor(appHome, script) {
-  const runner = shQuoted(runnerPath(appHome));
+export function runnerCommandFor(appHome, script, sidebar = PACK_NAME) {
+  const runner = shQuoted(runnerPath(appHome, sidebar));
   return `[ ! -f ${runner} ] || sh ${runner} ${shQuoted(script)}`;
 }
 /** The older form (v0.2.0 to v0.3.4): no `node` on the agent's PATH means no briefing and no error. */
@@ -159,18 +160,20 @@ export function commandFor(script) {
 }
 /**
  * The hook command the pack writes: the stable entry point, through the run.sh of whichever
- * sidebar folder is installed (am-sidebar, else spaces-agents: the entry point's own order), so
+ * sidebar folder is installed (PACK_NAME, else OLD_PACK_NAME: the entry point's own order), so
  * the hook survives the folder's rename too. Neither there: exit 0 and nothing.
  */
 export function hookCommand(appHome) {
-  const [first, second] = ["am-sidebar", "spaces-agents"].map((m) => shQuoted(runnerPath(appHome, m)));
+  const [first, second] = [PACK_NAME, OLD_PACK_NAME].map((m) => shQuoted(runnerPath(appHome, m)));
   return `r=${first}; [ -f "$r" ] || r=${second}; [ ! -f "$r" ] || sh "$r" ${shQuoted(stableBriefingPath(appHome))}`;
 }
 /**
- * The command v0.3.5 to v0.4.x wrote (run.sh, straight at mods/spaces-agents): what a rollback
- * restores, and what a hook gets when the stable entry point can't be put in place.
+ * The command v0.3.5 to v0.4.x wrote (run.sh, straight at the sidebar's folder before the
+ * rename, OLD_PACK_NAME): what a rollback across the rename restores.
  */
-export const legacyHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome));
+export const legacyHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome, OLD_PACK_NAME), OLD_PACK_NAME);
+/** The same shape, straight at this pack's folder: what a hook gets when the stable entry point can't be put in place. */
+export const directHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome));
 /** The script a command of the pack's shapes (hookCommand's, runnerCommandFor's, commandFor's) names, or null for any other. */
 export function scriptOf(command) {
   const text = String(command ?? "");
@@ -308,13 +311,13 @@ async function entryCommand(appHome, io) {
   if ((await read(entry)) !== null) return hookCommand(appHome);
   const script = briefingPath(appHome);
   const source = await read(`${script.slice(0, script.lastIndexOf("/"))}/${ENTRY_SOURCE}`);
-  if (source === null) return legacyHookCommand(appHome);
+  if (source === null) return directHookCommand(appHome);
   try {
     await io.mkdir(entry.slice(0, entry.lastIndexOf("/")));
     await io.write(entry, source, null);
     return hookCommand(appHome);
   } catch {
-    return legacyHookCommand(appHome);
+    return directHookCommand(appHome);
   }
 }
 
@@ -331,8 +334,8 @@ export async function installHook(botName, folder, appHome, io, { lost = null } 
   try {
     if ((await io.read(script)) === null) {
       warnings.push(`${lost ?? `${botName} gets no per-turn briefing`}: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
-        + "whose name is taken. The README's install step fixes it: move the old spaces-agents clone out of mods/, remove the "
-        + "renamed copy, and copy the pack in again as mods/spaces-agents.");
+        + `whose name is taken. The README's install step fixes it: move the old ${PACK_NAME} clone out of mods/, remove the `
+        + `renamed copy, and copy the pack in again as mods/${PACK_NAME}.`);
       return { written: false, warnings };
     }
     const path = `${folder}/.claude/settings.local.json`;

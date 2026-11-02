@@ -11,13 +11,13 @@ import { join } from "node:path";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./form-herdr-stub.mjs"), "fs/promises": here("./fs-stub.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
-const fromPack = (context) => context.parentURL?.includes("/mods/spaces-agents/");
+const fromPack = (context) => context.parentURL?.includes("/mods/am-sidebar/");
 registerHooks({
   resolve: (specifier, context, next) => (stubs[specifier] && fromPack(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
 });
 const { state } = await import(stubs.herdr);
 const { nodes, textOf, index, all } = await import(stubs["gpui-kit"]);
-const { BotForm, FORM_SIZE } = await import("../mods/spaces-agents/create.js");
+const { BotForm, FORM_SIZE } = await import("../mods/am-sidebar/create.js");
 
 const look = (character, colour) => ({ character, colour });
 const MAIN = { id: "b-mainaaaaaa", name: "orch", kind: "main", look: look("octopus", "deepseek"), role: "", instructions: "", agent: "claude" };
@@ -176,7 +176,7 @@ test("a character picture that can't be written is not retried, and one notice n
   const { form, cx, draw, click } = await open({ form: "create" });
   const spawns = cx.spawns;
   assert.equal(state.notes.length, 1);
-  assert.match(state.notes[0].body, new RegExp(`${root}/app/spaces-agents-pets`));
+  assert.match(state.notes[0].body, new RegExp(`${root}/app/am-sidebar-pets`));
   assert.ok(form.petsFailed.size > 0 && form.pets.size === 0);
   // Redraws and a new colour: no endless retry, no second notice.
   draw(); draw();
@@ -193,18 +193,18 @@ test("character pictures are written under the app home outside mods/ and drawn"
   const { form } = await open({ form: "create" });
   assert.ok(form.pets.size >= 22);
   const file = [...form.pets][0];
-  assert.match(readFileSync(join(root, "app/spaces-agents-pets", file), "utf8"), /^<svg /);
+  assert.match(readFileSync(join(root, "app/am-sidebar-pets", file), "utf8"), /^<svg /);
 });
 
 test("the mockup's six icons are SVG files under the app home, drawn tinted with svg()", async () => {
   seed([MAIN]);
   const { form, draw } = await open({ form: "create" });
   for (const name of ["folder", "clock", "shuffle", "chevron", "close", "copy"]) {
-    assert.match(readFileSync(join(root, "app/spaces-agents-pets", `ui-${name}.svg`), "utf8"), /^<svg [^>]*stroke="currentColor"/, name);
+    assert.match(readFileSync(join(root, "app/am-sidebar-pets", `ui-${name}.svg`), "utf8"), /^<svg [^>]*stroke="currentColor"/, name);
   }
-  const drawn = all(draw()).filter((n) => n.kind === "svg" && /^spaces-agents-pets\/ui-/.test(n.arg));
+  const drawn = all(draw()).filter((n) => n.kind === "svg" && /^am-sidebar-pets\/ui-/.test(n.arg));
   assert.deepEqual([...new Set(drawn.map((n) => n.arg))].sort(),
-    ["chevron", "clock", "close", "copy", "folder", "shuffle"].map((n) => `spaces-agents-pets/ui-${n}.svg`));
+    ["chevron", "clock", "close", "copy", "folder", "shuffle"].map((n) => `am-sidebar-pets/ui-${n}.svg`));
   assert.ok(drawn.every((n) => /^#[0-9a-f]{6}$/i.test(n.props.color)), "each one tinted");
   assert.ok(form.pets.has("ui-close.svg"));
 });
@@ -249,7 +249,7 @@ test("Bot settings (pick) with no bot: one New bot line that opens the Create fo
   assert.equal(textOf(nodes.get("bot-form-body")), "New bot");
   state.opened = [];
   await click("pick-new");
-  assert.deepEqual(state.opened, [{ mod: "spaces-agents", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "create" } }]);
+  assert.deepEqual(state.opened, [{ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "create" } }]);
   assert.deepEqual(state.closed, ["o9"]);
 });
 

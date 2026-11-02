@@ -9,15 +9,21 @@ export const REPO = "automagik-dev/automagik-herdr";
 export const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 export const SUMS_NAME = "SHA256SUMS";
 /** The folder that carries the pack's VERSION, update.mjs and the CLI. */
-export const PACK_NAME = "spaces-agents";
+export const PACK_NAME = "am-sidebar";
+/**
+ * That folder's name before the rename (v0.2.0 to v0.4.x): what a v1 marker installed, where an
+ * older install keeps its CLI, its first pack (`<name>.before-install`) and its briefing. Kept
+ * here, not imported from migrate.js, because release.yml imports this file on its own.
+ */
+export const OLD_PACK_NAME = "spaces-agents";
 /**
  * Every mod folder the pack ships (D3, D10): the tarball's top level is exactly these plus
  * `layouts/automagik.json`, and release.yml asserts it. It ships inside the tarball it checks, so
  * it guards against packaging bugs, not tampering (SHA256SUMS covers integrity). Pocket Link is
  * never one of them: automagik-pocket owns it.
  */
-export const PACK_MODS = Object.freeze(["am-quota", "auto-tabs", "automations", "md-menu", "mod-manager", "new-menu-tui",
-  "sidebar-chrome", "spaces-agents"]);
+export const PACK_MODS = Object.freeze(["am-quota", "am-sidebar", "auto-tabs", "automations", "md-menu", "mod-manager",
+  "new-menu-tui", "sidebar-chrome"]);
 export const POCKET_LINK = "pocket-link";
 /**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
@@ -49,7 +55,7 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
  * the rename reverts, and `usagemeter=<version>` when install.sh put the usagemeter binary in
- * ~/.local/bin (--uninstall removes only that one). A v1 marker (v0.2.x: no `mods=`) installed only spaces-agents.
+ * ~/.local/bin (--uninstall removes only that one). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -62,7 +68,7 @@ export function parseMarker(text) {
   return {
     v1,
     version: get("version") || null,
-    mods: v1 ? [PACK_NAME] : list(get("mods")),
+    mods: v1 ? [OLD_PACK_NAME] : list(get("mods")),
     layout: get("layout") || null,
     before: get("before") || "none",
     adopted: list(get("adopted")).map((e) => ({ mod: e.slice(0, e.indexOf(":")), path: e.slice(e.indexOf(":") + 1) }))

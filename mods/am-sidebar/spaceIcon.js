@@ -1,6 +1,6 @@
 // A space's icon: an emoji (typed, pasted, or picked below), or an image — drop or type a
 // PNG, SVG or ICO. Kept under the app home in space-icons/, mapped by full space id in
-// shared "am.sidebar.icons" (the spaces-agents sidebar draws it). An ICO is converted
+// shared "am.sidebar.icons" (the am-sidebar mod draws it). An ICO is converted
 // to PNG on import with sips, which is what the sidebar can draw.
 // Part of the sidebar mod: a space's tile opens this mod as a dialog with props
 // {spaceIcon: <space id>}, and main.js's init hands it to this class (as it does BotForm).
@@ -18,7 +18,7 @@ const PER_PAGE = COLS * 7;
 
 // The overlay a space's tile opens: this mod again, as the icon dialog for that space.
 export function spaceIconOverlay(spaceId) {
-  return { mod: "spaces-agents", kind: "dialog", width: 440, height: 520, props: { spaceIcon: spaceId } };
+  return { mod: "am-sidebar", kind: "dialog", width: 440, height: 520, props: { spaceIcon: spaceId } };
 }
 
 export class SpaceIconDialog {

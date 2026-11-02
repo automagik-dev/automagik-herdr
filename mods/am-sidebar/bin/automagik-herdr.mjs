@@ -4,7 +4,7 @@
 // sidebar (model.js, launchArgs.js, briefingText.mjs, models.js, briefing.mjs' gathering),
 // with herdr-core reached through `hc` directly. Plain node (≥ 24): no `herdr` or `gpui`
 // import, no Herdr window.
-// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr ~/.local/bin/automagik-herdr
+// Install: ln -s ~/.config/herdr-app/mods/am-sidebar/bin/automagik-herdr ~/.local/bin/automagik-herdr
 // (that wrapper runs this file through bin/run.sh, which finds node 22.7+ or bun without node on PATH).
 // Apache-2.0.
 
@@ -31,6 +31,7 @@ import { EFFORT_SHAPE, LEDGER_FILE, ROLES, TASK_LABEL, WORKER_OF_LABEL, WORKER_R
   workerRole, worktreeFolder, writesWorktree } from "../workers.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
+import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState } from "./state.mjs";
 
@@ -566,7 +567,7 @@ function rememberedKeys() {
   try {
     // The sidebar's remembered projects: am.* since the rename, else the old key (read only).
     const held = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}");
-    const list = held?.["am.sidebar.projects"] ?? held?.["spaces-agents.projects"];
+    const list = held?.["am.sidebar.projects"] ?? held?.[renamedFrom(SHARED_RENAMES, "am.sidebar.projects")];
     keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
   } catch { /* unreadable: none */ }
   let listed = [];

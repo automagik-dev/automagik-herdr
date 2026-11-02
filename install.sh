@@ -46,10 +46,12 @@ main() {
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
   MODS=$APP_HOME/mods
-  PACK=$MODS/spaces-agents
+  PACK=$MODS/am-sidebar
+  # The sidebar's folder before the rename (release.js OLD_PACK_NAME): what a v0.2-v0.4.x install has.
+  OLD=spaces-agents
   STATE=$APP_HOME/automagik-herdr
   MARK=$STATE/installed-by-install.sh
-  BEFORE=$STATE/spaces-agents.before-install
+  BEFORE=$STATE/$OLD.before-install
   LAYOUT=$APP_HOME/layouts/automagik.json
   REF=$STATE/automagik.json
   HINT=no
@@ -140,7 +142,7 @@ ask() {
 
 # A line of the marker (the ownership record, release.js parseMarker): v2 has `version=`,
 # `mods=<comma list>`, `layout=added|kept`, `before=kept|none` and `adopted=<mod>:<path>,…`;
-# v0.2's v1 has no `mods=` (it installed spaces-agents only, its first pack copied to $BEFORE).
+# v0.2's v1 has no `mods=` (it installed $OLD only, its first pack copied to $BEFORE).
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 
 # Whether $LINK is a link to the pack's own command in this app home (the sidebar folder's
@@ -151,19 +153,19 @@ link_ours() {
   [ -L "$LINK" ] || return 1
   to=$(readlink "$LINK" 2>/dev/null) || return 1
   case $to in
-    "$MODS/spaces-agents/bin/automagik-herdr"|"$MODS/spaces-agents/bin/automagik-herdr.mjs") return 0 ;;
-    "$MODS/am-sidebar/bin/automagik-herdr"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;;
+    "$MODS/$OLD/bin/automagik-herdr"|"$MODS/$OLD/bin/automagik-herdr.mjs") return 0 ;;
+    "$PACK/bin/automagik-herdr"|"$PACK/bin/automagik-herdr.mjs") return 0 ;;
   esac
   return 1
 }
 
 # The command the link points at, in the sidebar folder the ownership record lists (am-sidebar,
-# else spaces-agents): its bin/automagik-herdr wrapper when the pack ships one (it finds a node
+# else $OLD, a rollback's): its bin/automagik-herdr wrapper when the pack ships one (it finds a node
 # where PATH has none), else bin/automagik-herdr.mjs; empty when the record lists neither folder.
 cli_target() {
   case ",$(mark_get mods)," in
-    *,am-sidebar,*) dir=$MODS/am-sidebar/bin ;;
-    *,spaces-agents,*) dir=$PACK/bin ;;
+    *,"${PACK##*/}",*) dir=$PACK/bin ;;
+    *,"$OLD",*) dir=$MODS/$OLD/bin ;;
     *) return 0 ;;
   esac
   if [ -f "$dir/automagik-herdr" ]; then echo "$dir/automagik-herdr"; else echo "$dir/automagik-herdr.mjs"; fi
@@ -186,7 +188,7 @@ offer_switch() {
   [ "$shown" != automagik ] || return 0
   # A layout that already shows the pack (the person's own, like main-agents): nothing to do.
   if [ -n "$shown" ] && [ -f "$APP_HOME/layouts/$shown.json" ] \
-    && grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$APP_HOME/layouts/$shown.json"; then
+    && grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$APP_HOME/layouts/$shown.json"; then
     return 0
   fi
   if [ -z "$shown" ] || [ ! -f "$REF" ] || ! cmp -s "$LAYOUT" "$REF"; then
@@ -210,7 +212,7 @@ layout_notes() {
   [ -f "$REF" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
     if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
-    grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$f" || continue
+    grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$f" || continue
     lacks=
     for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
       'md-menu:the Markdown menu (md-menu)' 'automations:the automations panel (automations)' 'am-quota:the quota panel (am-quota)'; do
@@ -237,10 +239,10 @@ uninstall() {
   adopted=$(mark_get adopted)
   ref=$REF
   if ! grep -q '^mods=' "$MARK"; then
-    # v1 (v0.2.x): spaces-agents only, the layout's reference inside it, its first pack in $BEFORE.
-    mods=spaces-agents
-    ref=$PACK/layouts/automagik.json
-    if [ "$(mark_get before)" = kept ] && [ -d "$BEFORE" ]; then adopted=spaces-agents:v1; fi
+    # v1 (v0.2.x): $OLD only, the layout's reference inside it, its first pack in $BEFORE.
+    mods=$OLD
+    ref=$MODS/$OLD/layouts/automagik.json
+    if [ "$(mark_get before)" = kept ] && [ -d "$BEFORE" ]; then adopted=$OLD:v1; fi
   fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
@@ -295,7 +297,7 @@ uninstall() {
     p=${e#*:}
     case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
     case $e in
-      spaces-agents:v1) p=${BEFORE#"$STATE"/} ;;
+      "$OLD:v1") p=${BEFORE#"$STATE"/} ;;
       *:backup/*) n=${p#backup/}
         case $n in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac ;;
       *) continue ;;
@@ -491,17 +493,17 @@ install() {
   # migrateHooks.mjs (with briefingText.mjs, model.js and its models.js) the briefing hooks onto a
   # fixed path.
   mkdir "$TMP/x"
-  tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js spaces-agents/migrate.js \
-    spaces-agents/migrateHome.mjs spaces-agents/migrateHooks.mjs spaces-agents/briefingText.mjs spaces-agents/model.js \
-    spaces-agents/models.js \
-    </dev/null 2>/dev/null || fail "$TGZ lacks spaces-agents' updater files: nothing was installed."
+  s=${PACK##*/}
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$s/update.mjs" "$s/release.js" "$s/migrate.js" \
+    "$s/migrateHome.mjs" "$s/migrateHooks.mjs" "$s/briefingText.mjs" "$s/model.js" "$s/models.js" \
+    </dev/null 2>/dev/null || fail "$TGZ lacks $s's updater files: nothing was installed."
   for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js; do
-    { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
+    { [ -f "$TMP/x/$s/$f" ] && [ ! -L "$TMP/x/$s/$f" ]; } || fail "$TGZ: $s/$f is not a plain file: nothing was installed."
   done
   rc=0
   changed=yes
   if [ "$same" = yes ]; then
-    out=$(node "$TMP/x/spaces-agents/update.mjs" repair --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>"$TMP/log") || rc=$?
+    out=$(node "$TMP/x/$s/update.mjs" repair --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>"$TMP/log") || rc=$?
     if [ "$rc" = 2 ]; then
       # A release whose updater has no `repair` command (cut before #44): it is installed again.
       say "This release's updater cannot check the installed files; installing $VERSION again."
@@ -519,7 +521,7 @@ install() {
   if [ "$same" = no ]; then
     set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
     if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
-    out=$(node "$TMP/x/spaces-agents/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
+    out=$(node "$TMP/x/$s/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
     if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
       fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"

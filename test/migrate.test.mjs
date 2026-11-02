@@ -14,14 +14,14 @@ import { fileURLToPath } from "node:url";
 import { registerHooks } from "node:module";
 import {
   ABSORBED, KEY_RENAMES, RENAMES, SHARED_RENAMES, activeRenames, carryShared, renameAction, rewriteKeys, rewriteLayout,
-} from "../mods/spaces-agents/migrate.js";
-import { apply, plan, pending, revert } from "../mods/spaces-agents/migrateHome.mjs";
-import { CATALOG_URL, parseMarker } from "../mods/spaces-agents/release.js";
-import { migrateRefs, revertRefs, setupHome } from "../mods/spaces-agents/update.mjs";
+} from "../mods/am-sidebar/migrate.js";
+import { apply, plan, pending, revert } from "../mods/am-sidebar/migrateHome.mjs";
+import { CATALOG_URL, parseMarker } from "../mods/am-sidebar/release.js";
+import { migrateRefs, revertRefs, setupHome } from "../mods/am-sidebar/update.mjs";
 import { catalogUrl } from "../mods/mod-manager/core.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const UPDATE = join(ROOT, "mods", "spaces-agents", "update.mjs");
+const UPDATE = join(ROOT, "mods", "am-sidebar", "update.mjs");
 const today = () => new Date().toISOString().slice(0, 10);
 const read = (path) => readFileSync(path, "utf8");
 const readJson = (path) => JSON.parse(read(path));

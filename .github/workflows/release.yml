@@ -171,7 +171,7 @@ jobs:
           # anything else). Only those folders and the one layout go in: no other file.
           mkdir -p release
           tgz="release/automagik-herdr-pack-${VERSION}.tgz"
-          git show "v${VERSION}:mods/spaces-agents/release.js" > "${RUNNER_TEMP}/release.mjs"
+          git show "v${VERSION}:mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"
           mapfile -t mods < <(node --input-type=module -e 'const { PACK_MODS } = await import(process.argv[1]); for (const m of PACK_MODS) console.log(m);' "${RUNNER_TEMP}/release.mjs")
           tagged=$(git ls-tree --name-only "v${VERSION}:mods" | grep -vx pocket-link | sort)
           [[ "${tagged}" == "$(printf '%s\n' "${mods[@]}" | sort)" ]] || { echo "::error::mods/ at v${VERSION} (${tagged//$'\n'/ }) is not PACK_MODS (${mods[*]})"; exit 1; }

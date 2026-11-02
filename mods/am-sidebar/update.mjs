@@ -50,7 +50,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
+  CATALOG_URL, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
@@ -94,8 +94,12 @@ export function readVersion(packDir) {
 export const readMarker = (modsDir) => { try { return parseMarker(readFileSync(markerOf(modsDir), "utf8")); } catch { return null; } };
 const readSet = (modsDir) => { try { return parseMarker(readFileSync(join(prevSetOf(modsDir), ".pack"), "utf8")); } catch { return null; } };
 
-/** The installed pack's version: the ownership record's, else the VERSION in mods/spaces-agents. */
-export const installedVersion = ({ modsDir = defaultModsDir() } = {}) => readMarker(modsDir)?.version ?? readVersion(join(modsDir, PACK_NAME));
+/**
+ * The installed pack's version: the ownership record's, else the VERSION in the sidebar folder
+ * (PACK_NAME, else its name before the rename, OLD_PACK_NAME, as a hand-installed v0.2 has it).
+ */
+export const installedVersion = ({ modsDir = defaultModsDir() } = {}) => readMarker(modsDir)?.version
+  ?? readVersion(join(modsDir, [PACK_NAME, OLD_PACK_NAME].find((m) => isFile(join(modsDir, m, "VERSION"))) ?? PACK_NAME));
 
 /**
  * Checks `buf` against the SHA256SUMS line for `name` (`sums`: the file's text or parseSums' Map).
@@ -269,18 +273,18 @@ const writeMarker = (modsDir, record) => {
 };
 
 /**
- * v0.2.x left `spaces-agents.before-install` (the pack found at the first install) and
- * `spaces-agents.prev` in the state folder: both move to backup/, the first recorded as adopted
+ * v0.2.x left `<OLD_PACK_NAME>.before-install` (the pack found at the first install) and
+ * `<OLD_PACK_NAME>.prev` in the state folder: both move to backup/, the first recorded as adopted
  * so --uninstall puts it back.
  */
 function carryV1(modsDir, record, log) {
   const state = stateDirOf(modsDir);
-  for (const [old, adopted] of [[`${PACK_NAME}.before-install`, true], [`${PACK_NAME}.prev`, false]]) {
+  for (const [old, adopted] of [[`${OLD_PACK_NAME}.before-install`, true], [`${OLD_PACK_NAME}.prev`, false]]) {
     if (!exists(join(state, old))) continue;
-    const name = backupName(modsDir, `${PACK_NAME}-${adopted ? "before-install" : "v0.2-prev"}`);
+    const name = backupName(modsDir, `${OLD_PACK_NAME}-${adopted ? "before-install" : "v0.2-prev"}`);
     mkdirSync(backupOf(modsDir), { recursive: true });
     renameSync(join(state, old), join(backupOf(modsDir), name));
-    if (adopted) record.adopted.push({ mod: PACK_NAME, path: `backup/${name}` });
+    if (adopted) record.adopted.push({ mod: OLD_PACK_NAME, path: `backup/${name}` });
     log(`kept v0.2's ${old} in ${join(backupOf(modsDir), name)}`);
   }
 }
@@ -768,8 +772,10 @@ export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app
 /**
  * Points the CLI link at the entry the installed pack has: bin/automagik-herdr (it runs the .mjs
  * through bin/run.sh, which finds node 22.7+ or bun where PATH has none) or, in a pack from before
- * it (a rollback), bin/automagik-herdr.mjs. Only a link to one of those two in this pack is ours;
- * a file, a missing link or one pointing elsewhere is left alone. Cheap (an lstat, a readlink)
+ * it (a rollback), bin/automagik-herdr.mjs. Only a link to one of those two in this pack, or in
+ * the sidebar's folder from before the rename (OLD_PACK_NAME: a v0.4.x link the migration didn't
+ * move), is ours; one from the old folder moves only onto an entry that is there. A file, a
+ * missing link or one pointing elsewhere is left alone. Cheap (an lstat, a readlink)
  * and idempotent: the CLI runs it on every start. Returns `{ link, from, to }` when it
  * repointed the link, else null; throws only when the swap itself fails.
  */
@@ -778,13 +784,13 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
   const link = join(binDir, CLI_LINK);
   if (!isLink(link)) return null;
   const from = readlinkSync(link);
-  const bin = join(resolve(modsDir), name, "bin");
-  const wrapper = join(bin, "automagik-herdr");
-  const mjs = join(bin, "automagik-herdr.mjs");
+  const entries = (m) => ["automagik-herdr", "automagik-herdr.mjs"].map((f) => join(resolve(modsDir), m, "bin", f));
+  const [wrapper, mjs] = entries(name);
   const now = resolve(dirname(link), from);
-  if (now !== wrapper && now !== mjs) return null;
+  const old = name !== OLD_PACK_NAME && entries(OLD_PACK_NAME).includes(now);
+  if (now !== wrapper && now !== mjs && !old) return null;
   const to = isFile(wrapper) ? wrapper : mjs;
-  if (now === to) return null;
+  if (now === to || (old && !isFile(to))) return null;
   const tmp = join(binDir, `.${CLI_LINK}.relink-${process.pid}`);
   rmSync(tmp, { force: true });
   symlinkSync(to, tmp);
