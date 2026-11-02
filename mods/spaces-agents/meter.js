@@ -20,8 +20,9 @@ export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
  * stderr }`, rejects when the program can't start), unless this copy's run is still going
  * (`state.busy`) or a run started less than METER_EVERY_MS ago (`get(METER_KEY)`, from any copy).
  * The start is stored with `set(METER_KEY, now())` before the run, so a second caller in the
- * meantime finds it fresh. No timeout: usagemeter ends itself (a 20-second budget), and a copy
- * never starts a second run while one it started is still going.
+ * meantime finds it fresh. No timeout of its own: Herdr's exec gives a program at most 30 s, and
+ * usagemeter ends itself within its 20-second budget; a copy never starts a second run while one
+ * it started is still going.
  * Resolves `{ ran, why?, code?, wait }`: wait is when to look again (ms).
  */
 export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {} }) {

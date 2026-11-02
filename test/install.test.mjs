@@ -834,7 +834,7 @@ test("usagemeter: never a downgrade (0.10.0 is newer than 0.2.0); an older one i
   const kept = sha(meterBin(s));
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /usagemeter 0\.10\.0 is installed .*newer than 0\.2\.0: not downgrading/);
+  assert.match(r.out, /usagemeter 0\.10\.0 is installed .*not older than 0\.2\.0: not replacing it/);
   assert.equal(sha(meterBin(s)), kept);
   assert.deepEqual(s.meterCalls(), []);
   assert.equal(parseMarker(s.mark()).usagemeter, null);
@@ -857,6 +857,52 @@ test("usagemeter: never a downgrade (0.10.0 is newer than 0.2.0); an older one i
   const folder = s.run();
   assert.equal(folder.code, 0, folder.err);
   assert.deepEqual(readdirSync(meterBin(s)), ["inside"]);
+});
+
+test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left with a warning", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  // A pre-release of a newer version, or of the pinned one: kept, no download.
+  for (const dev of ["0.3.0-dev", "0.2.0-dev", "0.2.1+abc"]) {
+    plantMeter(s, dev);
+    const kept = sha(meterBin(s));
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`usagemeter ${dev.replace(/[.+]/g, "\\$&")} is installed .*not replacing it`));
+    assert.equal(sha(meterBin(s)), kept, dev);
+    assert.deepEqual(s.meterCalls(), [], dev);
+    assert.equal(parseMarker(s.mark()).usagemeter, null);
+  }
+  // No version at all (not a usagemeter answer): left, with exactly one warning.
+  exe(meterBin(s), "#!/bin/sh\necho 'something else 1.0'\n");
+  const kept = sha(meterBin(s));
+  const none = s.run();
+  assert.equal(none.code, 0, none.err);
+  assert.equal(none.out.split("\n").filter((l) => /^Warning:/.test(l)).length, 1, none.out);
+  assert.match(none.out, /Warning: .*\/usagemeter reports no usagemeter version; left it as it is/);
+  assert.equal(sha(meterBin(s)), kept);
+  assert.deepEqual(s.meterCalls(), []);
+  // A pre-release of an older version is older: replaced by the pinned release.
+  plantMeter(s, "0.1.0-dev");
+  const old = s.run();
+  assert.equal(old.code, 0, old.err);
+  assert.equal(meterSays(s), "usagemeter 0.2.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+});
+
+test("usagemeter: --uninstall --no-usagemeter keeps even a pack-installed binary", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  const kept = sha(meterBin(s));
+  const u = s.run("--uninstall", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err);
+  assert.match(u.out, /Left .*\/usagemeter \(--no-usagemeter\)\./);
+  assert.equal(sha(meterBin(s)), kept);
+  assert.match(s.run("--help").out, /--uninstall keeps it/);
 });
 
 test("usagemeter: --uninstall removes a pack-installed binary and leaves one the person installed", (t) => {

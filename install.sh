@@ -6,7 +6,7 @@
 #   ... | bash -s -- --version 1.2.3  a given release (v0.3.0 or later) instead of the latest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
-#   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone
+#   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
 # downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
@@ -114,7 +114,8 @@ Automagik Herdr installer
 Herdr to the automagik layout). --version installs that release; it needs v0.3.0 or later.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
---no-usagemeter skips installing usagemeter (the token meter) to ~/.local/bin/usagemeter.
+--no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone: install skips it, and
+--uninstall keeps it even when this installer put it there.
 EOF
 }
 
@@ -281,9 +282,11 @@ uninstall() {
 }
 
 # ---- usagemeter (Group 6c) ----
-# The X.Y.Z a usagemeter binary reports (`usagemeter --version` prints `usagemeter X.Y.Z`), or nothing.
+# The version a usagemeter binary reports (`usagemeter --version` prints `usagemeter X.Y.Z`, a dev
+# build maybe `usagemeter X.Y.Z-dev` or `X.Y.Z+build`), or nothing. Compare its X.Y.Z (${v%%[-+]*}).
 meter_version() {
-  "$1" --version </dev/null 2>/dev/null | sed -n 's/^usagemeter \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | head -n 1
+  "$1" --version </dev/null 2>/dev/null \
+    | sed -n 's/^usagemeter \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\([-+][0-9A-Za-z.+-]*\)\{0,1\}\)$/\1/p' | head -n 1
 }
 # Whether version $1 >= $2, field by field as numbers (0.10.0 >= 0.9.0).
 version_ge() {
@@ -301,7 +304,8 @@ mark_meter() {
 }
 # Puts the pinned release at $METER: the binary for this OS and CPU, checked against the release's
 # SHA256SUMS, written to a temp file beside it, chmod 755, renamed into place. Never over a newer
-# usagemeter (Pocket Link installs the same one), a link or a folder. Returns 1 with $why on a failure; the
+# usagemeter (Pocket Link installs the same one; a pre-release counts by its X.Y.Z, so 0.3.0-dev
+# stays), one that reports no version, a link or a folder. Returns 1 with $why on a failure; the
 # caller only warns. Runs in a || list, where set -e is off: every step checks itself.
 install_meter() {
   why=
@@ -311,11 +315,20 @@ install_meter() {
     mark_meter ""
     return 0
   fi
-  [ -f "$METER" ] && have=$(meter_version "$METER")
-  if [ -n "$have" ] && version_ge "$have" "$METER_VERSION"; then
-    if [ "$have" = "$METER_VERSION" ]; then say "usagemeter $have: already installed ($METER)."
-    else say "usagemeter $have is installed ($METER), newer than $METER_VERSION: not downgrading."; mark_meter ""; fi
-    return 0
+  if [ -f "$METER" ]; then
+    have=$(meter_version "$METER")
+    if [ -z "$have" ]; then
+      say "Warning: $METER reports no usagemeter version; left it as it is (remove it to get usagemeter $METER_VERSION)."
+      mark_meter ""
+      return 0
+    fi
+    if [ "$have" = "$METER_VERSION" ]; then say "usagemeter $have: already installed ($METER)."; return 0; fi
+    # Not older by its X.Y.Z: a newer release, or a dev build of this one or a newer one.
+    if version_ge "${have%%[-+]*}" "$METER_VERSION"; then
+      say "usagemeter $have is installed ($METER), not older than $METER_VERSION: not replacing it."
+      mark_meter ""
+      return 0
+    fi
   fi
   case $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) in
     Darwin-arm64) asset=usagemeter-darwin-arm64 ;;
@@ -353,11 +366,14 @@ meter_step() {
   install_meter || say "Warning: usagemeter was not installed: $why. The pack is installed; run this again later to retry."
 }
 # --uninstall: the binary goes only when the marker says this installer put it there, it still
-# reports that version (a newer one is Pocket Link's or the person's), and Pocket Link is not here.
+# reports that version (a newer one is Pocket Link's or the person's), Pocket Link is not here, and
+# --no-usagemeter was not given.
 uninstall_meter() {
   um=$(mark_get usagemeter)
   [ -n "$um" ] || return 0
-  if [ ! -f "$METER" ] || [ -L "$METER" ] || [ "$(meter_version "$METER")" != "$um" ]; then
+  if [ "$METER_OK" = 0 ]; then
+    say "Left $METER (--no-usagemeter)."
+  elif [ ! -f "$METER" ] || [ -L "$METER" ] || [ "$(meter_version "$METER")" != "$um" ]; then
     say "Left $METER: it is not the usagemeter $um this installer put there."
   elif [ -e "$MODS/pocket-link" ]; then
     say "Left $METER: Pocket Link ($MODS/pocket-link) runs it too."

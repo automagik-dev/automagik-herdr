@@ -47,7 +47,9 @@ meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked 
 `SHA256SUMS`, written atomically. It skips the download when that version is already there and
 never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
-time; there is no LaunchAgent and no daemon. `--no-usagemeter` skips the install; a failed one is
+time; there is no LaunchAgent and no daemon. A dev build counts by its version number, so
+`0.3.0-dev` stays, and a file there that reports no version is left with a warning.
+`--no-usagemeter` leaves the binary alone, on install and on `--uninstall`; a failed install is
 only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
 that version and Pocket Link is not installed; usagemeter's data is kept.
 
