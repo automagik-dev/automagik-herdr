@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const RELEASE_YML = join(ROOT, ".github", "workflows", "release.yml");
-const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, V020_LAYOUT_SHA256, tarballName } = await import("../mods/spaces-agents/release.js");
+const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, tarballName } = await import("../mods/spaces-agents/release.js");
 /** The release this branch becomes; release.yml sets VERSION to it in the commit it tags. */
 const RELEASE = "0.5.0";
 /** The latest sidebar-only release (v0.2-v0.4.x: automagik-herdr-<v>.tgz, spaces-agents only). */
@@ -148,7 +148,7 @@ function machine(t, { launcher } = {}) {
   const log = join(root, "herdr-app.log"), shown = join(root, "herdr-shown"), brew = join(root, "brew.log");
   writeFileSync(log, "");
   writeFileSync(brew, "");
-  exe(join(bin, "uname"), "#!/bin/sh\necho Darwin\n");
+  exe(join(bin, "uname"), "#!/bin/sh\ncase $1 in -m) echo arm64 ;; *) echo Darwin ;; esac\n");
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brew}"\nexit 1\n`);
   // herdr-app: logs its arguments; `status` prints the layout show() set, or fails with none.
   exe(join(bin, "herdr-app"), `#!/bin/sh
@@ -165,6 +165,14 @@ fi
   const body = readFileSync(tgz);
   writeFileSync(join(dl, tarballName(RELEASE)), body);
   writeFileSync(join(dl, "SHA256SUMS"), `${sha(body)}  ${tarballName(RELEASE)}\n`);
+  // usagemeter's pinned release, which install.sh reads from <release>/usagemeter/ for file://:
+  // each build a script answering --version.
+  const meter = join(rel, "usagemeter", "download", `v${USAGEMETER.version}`);
+  mkdirSync(meter, { recursive: true });
+  writeFileSync(join(meter, "SHA256SUMS"), Object.values(USAGEMETER.assets).map((name) => {
+    exe(join(meter, name), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${USAGEMETER.version}"\nexit 0\n`);
+    return `${sha(readFileSync(join(meter, name)))}  ${name}\n`;
+  }).join(""));
 
   const appHome = join(home, ".config", "herdr-app");
   const env = {
@@ -238,6 +246,9 @@ function assertFullPack(m, r) {
   // the .mjs), and it runs.
   const entry = existsSync(join(x, "spaces-agents", "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs";
   assert.equal(readlinkSync(m.link), join(m.mods, "spaces-agents", "bin", entry));
+  // usagemeter, the token meter the sidebar runs, in place beside it.
+  const meter = spawnSync(join(m.home, ".local", "bin", "usagemeter"), ["--version"], { encoding: "utf8" });
+  assert.equal(meter.stdout, `usagemeter ${USAGEMETER.version}\n`, "usagemeter is installed");
   const v = m.cli("--version");
   assert.equal(v.code, 0, `automagik-herdr --version: ${v.out}${v.err}`);
   assert.equal(v.out, `automagik-herdr ${RELEASE}\n`);

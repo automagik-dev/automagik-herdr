@@ -6,6 +6,7 @@
 #   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
+#   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
 # downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
@@ -16,7 +17,9 @@
 # alone, or with --adopt moved to automagik-herdr/backup/ first. Pocket Link is never touched.
 # It merges the pack's free keys, points the mod manager at the catalog, adds the `automagik`
 # layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
-# the `automagik-herdr` command into ~/.local/bin. Safe to run again. It never touches a
+# the `automagik-herdr` command into ~/.local/bin. It installs the pinned usagemeter release (the
+# token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
+# over a newer one; a failure there is only a warning. Safe to run again. It never touches a
 # project's .herdr/bots.json or Herdr's settings. Apache-2.0.
 #
 # The whole script is one function, called on its last line: a download cut short by the
@@ -25,7 +28,8 @@
 # For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/latest/download/<file>
 # and <url>/download/v<version>/<file>) or a page of this repository on github.com; with a
 # file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty) and AUTOMAGIK_HERDR_APPS (default
-# /Applications). HERDR_APP_HOME as Herdr reads it.
+# /Applications). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
+# releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
 
 main() {
   set -eu
@@ -49,6 +53,11 @@ main() {
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
   CASK=penso/tap/herdr-gpui
+  # usagemeter (Group 6c): release.js USAGEMETER.version, kept equal by a test. One shared path.
+  METER_VERSION=0.2.0
+  METER_RELEASES=https://github.com/automagik-dev/usagemeter/releases
+  METER=$BIN_DIR/usagemeter
+  METER_OK=1
 
   YES=0
   ADOPT=0
@@ -59,6 +68,7 @@ main() {
       --yes|-y) YES=1 ;;
       --uninstall) UNINSTALL=1 ;;
       --adopt) ADOPT=1 ;;
+      --no-usagemeter) METER_OK=0 ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -80,7 +90,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS} ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter ;;
     esac
   fi
 
@@ -95,7 +105,8 @@ usage() {
   cat <<'EOF'
 Automagik Herdr installer
 
-  install.sh [--yes] [--version <v>] [--adopt]   install or update the pack and the automagik-herdr command
+  install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter]
+                                       install or update the pack and the automagik-herdr command
   install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
   install.sh --help
 
@@ -103,6 +114,8 @@ Automagik Herdr installer
 Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
+--no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone: install skips it, and
+--uninstall keeps it even when this installer put it there.
 EOF
 }
 
@@ -292,8 +305,110 @@ uninstall() {
   set +f
   if link_ours; then rm -f "$LINK"; say "Removed $LINK."
   elif [ -L "$LINK" ]; then say "Left $LINK: it points at $(readlink "$LINK"), not this install."; fi
+  uninstall_meter
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
+}
+
+# ---- usagemeter (Group 6c) ----
+# The version a usagemeter binary reports (`usagemeter --version` prints `usagemeter X.Y.Z`, a dev
+# build maybe `usagemeter X.Y.Z-dev` or `X.Y.Z+build`), or nothing. Compare its X.Y.Z (${v%%[-+]*}).
+meter_version() {
+  "$1" --version </dev/null 2>/dev/null \
+    | sed -n 's/^usagemeter \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\([-+][0-9A-Za-z.+-]*\)\{0,1\}\)$/\1/p' | head -n 1
+}
+# Whether version $1 >= $2, field by field as numbers (0.10.0 >= 0.9.0).
+version_ge() {
+  awk -v a="$1" -v b="$2" 'BEGIN { split(a, x, "."); split(b, y, ".")
+    for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+    exit 0 }' </dev/null
+}
+# The marker's usagemeter= line: set to $1, or dropped when $1 is empty (a v2 marker only).
+mark_meter() {
+  grep -q '^mods=' "$MARK" 2>/dev/null || return 0
+  m=$(mktemp "$STATE/.marker.XXXXXX") || return 1
+  if { sed '/^usagemeter=/d' "$MARK" && if [ -n "$1" ]; then printf 'usagemeter=%s\n' "$1"; fi; } >"$m" && mv "$m" "$MARK"; then return 0; fi
+  rm -f "$m"
+  return 1
+}
+# Puts the pinned release at $METER: the binary for this OS and CPU, checked against the release's
+# SHA256SUMS, written to a temp file beside it, chmod 755, renamed into place. Never over a newer
+# usagemeter (Pocket Link installs the same one; a pre-release counts by its X.Y.Z, so 0.3.0-dev
+# stays), one that reports no version, a link or a folder. Returns 1 with $why on a failure; the
+# caller only warns. Runs in a || list, where set -e is off: every step checks itself.
+install_meter() {
+  why=
+  have=
+  if [ -L "$METER" ] || { [ -e "$METER" ] && [ ! -f "$METER" ]; }; then
+    say "usagemeter: left $METER, a link or a folder, as it is."
+    mark_meter ""
+    return 0
+  fi
+  if [ -f "$METER" ]; then
+    have=$(meter_version "$METER")
+    if [ -z "$have" ]; then
+      say "Warning: $METER reports no usagemeter version; left it as it is (remove it to get usagemeter $METER_VERSION)."
+      mark_meter ""
+      return 0
+    fi
+    if [ "$have" = "$METER_VERSION" ]; then say "usagemeter $have: already installed ($METER)."; return 0; fi
+    # Not older by its X.Y.Z: a newer release, or a dev build of this one or a newer one.
+    if version_ge "${have%%[-+]*}" "$METER_VERSION"; then
+      say "usagemeter $have is installed ($METER), not older than $METER_VERSION: not replacing it."
+      mark_meter ""
+      return 0
+    fi
+  fi
+  case $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) in
+    Darwin-arm64) asset=usagemeter-darwin-arm64 ;;
+    Darwin-x86_64) asset=usagemeter-darwin-x86_64 ;;
+    Linux-x86_64|Linux-amd64) asset=usagemeter-linux-x86_64 ;;
+    Linux-aarch64|Linux-arm64) asset=usagemeter-linux-aarch64 ;;
+    *) why="no usagemeter build for $(uname -s 2>/dev/null) $(uname -m 2>/dev/null)"; return 1 ;;
+  esac
+  ubase=$METER_RELEASES/download/v$METER_VERSION
+  udir=$TMP/usagemeter
+  mkdir -p "$udir" || { why="could not make $udir"; return 1; }
+  say "Downloading usagemeter $METER_VERSION..."
+  curl -fsSL --path-as-is "$ubase/SHA256SUMS" -o "$udir/SHA256SUMS" </dev/null 2>/dev/null \
+    || { why="could not download $ubase/SHA256SUMS"; return 1; }
+  curl -fsSL --path-as-is "$ubase/$asset" -o "$udir/$asset" </dev/null 2>/dev/null \
+    || { why="could not download $ubase/$asset"; return 1; }
+  usum=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$asset\$/\1/p" "$udir/SHA256SUMS" | head -n 1 | tr 'A-F' 'a-f')
+  [ -n "$usum" ] || { why="$ubase/SHA256SUMS does not list $asset"; return 1; }
+  if command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$udir/$asset" </dev/null); else got=$(sha256sum "$udir/$asset" </dev/null); fi
+  got=${got%% *}
+  [ "$got" = "$usum" ] || { why="$asset does not match SHA256SUMS (sha256 $got, expected $usum): nothing was installed"; return 1; }
+  mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
+  part=$(mktemp "$BIN_DIR/.usagemeter.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
+  if cp "$udir/$asset" "$part" && chmod 755 "$part" && mv -f "$part" "$METER"; then
+    say "Installed usagemeter $METER_VERSION ($METER, checksum ok)."
+    mark_meter "$METER_VERSION" || say "usagemeter: the ownership record could not note it; --uninstall will leave it."
+    return 0
+  fi
+  rm -f "$part"
+  why="could not write $METER"
+  return 1
+}
+meter_step() {
+  if [ "$METER_OK" = 0 ]; then say "usagemeter: skipped (--no-usagemeter)."; return 0; fi
+  install_meter || say "Warning: usagemeter was not installed: $why. The pack is installed; run this again later to retry."
+}
+# --uninstall: the binary goes only when the marker says this installer put it there, it still
+# reports that version (a newer one is Pocket Link's or the person's), Pocket Link is not here, and
+# --no-usagemeter was not given.
+uninstall_meter() {
+  um=$(mark_get usagemeter)
+  [ -n "$um" ] || return 0
+  if [ "$METER_OK" = 0 ]; then
+    say "Left $METER (--no-usagemeter)."
+  elif [ ! -f "$METER" ] || [ -L "$METER" ] || [ "$(meter_version "$METER")" != "$um" ]; then
+    say "Left $METER: it is not the usagemeter $um this installer put there."
+  elif [ -e "$MODS/pocket-link" ]; then
+    say "Left $METER: Pocket Link ($MODS/pocket-link) runs it too."
+  else
+    rm -f "$METER" && say "Removed $METER (usagemeter $um). Its store is kept."
+  fi
 }
 
 node_ok() {
@@ -358,6 +473,7 @@ install() {
   if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null && [ -n "$target" ] && [ -x "$target" ] \
     && { [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] || { [ -L "$LINK" ] && ! link_ours; }; }; then
     say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK)."
+    meter_step
     offer_switch
     switch_hint
     exit 0
@@ -394,6 +510,7 @@ install() {
   if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
     say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
   fi
+  meter_step
   offer_switch
   layout_notes
 
