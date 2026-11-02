@@ -149,3 +149,57 @@ test("applyInstall whose key write fails puts the mods and layouts back, writing
   assert.equal(existsSync(join(s.appHome, "layouts", "demo.json")), false);
   assert.deepEqual(readdirSync(join(s.appHome, "automagik-herdr", "backup")), []);
 });
+
+/** Every file under `dir`, path → bytes, links as their target: equal means byte-identical. */
+const snapshot = (dir) => {
+  const out = {};
+  const walk = (at, rel) => {
+    for (const name of readdirSync(at).sort()) {
+      const path = join(at, name), st = lstatSync(path);
+      if (st.isSymbolicLink()) out[`${rel}${name}`] = `-> ${readlinkSync(path)}`;
+      else if (st.isDirectory()) walk(path, `${rel}${name}/`);
+      else out[`${rel}${name}`] = readFileSync(path, "utf8");
+    }
+  };
+  walk(dir, "");
+  return out;
+};
+
+test("names differing only in case: Pocket-Link, Demo and Main.json never touch the person's folders", async (t) => {
+  const s = installed(scratch(t));
+  const pocket = join(s.appHome, "mods", "pocket-link");
+  mkdirSync(join(pocket, ".state"), { recursive: true });
+  writeFileSync(join(pocket, ".state", "pairing.key"), "secret\n");
+  mkdirSync(join(s.appHome, "layouts"));
+  writeFileSync(join(s.appHome, "layouts", "main.json"), "{\"mine\":true}\n");
+  writeFileSync(join(s.appHome, "keys.json"), "{}\n");
+  for (const m of ["Pocket-Link", "Demo", "fresh"]) {
+    mkdirSync(join(s.base, "mods", m), { recursive: true });
+    writeFileSync(join(s.base, "mods", m, "main.js"), `// ${m} from the package\n`);
+  }
+  mkdirSync(join(s.base, "layouts"));
+  writeFileSync(join(s.base, "layouts", "Main.json"), "{\"theirs\":true}\n");
+  const before = snapshot(s.appHome);
+  // The plan flags them before anything runs.
+  const plan = await core.planInstall(ioOf(), { appHome: s.appHome, dir: s.base, pkg: { prefix: "", mods: ["Demo", "Pocket-Link"], layouts: ["layouts/Main.json"], keys: false, files: [] },
+    record: null, existingMods: ["demo", "pocket-link"], existingLayouts: ["main.json"] });
+  assert.deepEqual(plan.clashes, ["mods/Demo", "mods/Pocket-Link", "layouts/Main.json"]);
+  // And applyInstall refuses them even when handed a plan that missed them.
+  const args = { appHome: s.appHome, source: "x", prefix: "", sha: "0", record: null };
+  const bare = { clashes: [], layouts: [], base: s.base, keyAdds: [], keyConflicts: [], risks: [] };
+  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["Pocket-Link"] } }), /automagik-pocket/);
+  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["Demo"] } }), /nome recusado: Demo/);
+  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["demo"] } }), /já existe: mods\/demo/);
+  // A layout that clashes (on macOS's disk) after a mod was placed: the undo removes only that mod.
+  await core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["fresh"], layouts: ["Main.json"] } }).catch(() => {});
+  const caseless = existsSync(join(s.appHome, "layouts", "MAIN.JSON"));
+  if (caseless) assert.equal(existsSync(join(s.appHome, "mods", "fresh")), false, "the undo took back the mod it placed");
+  rmSync(join(s.appHome, "mods", "fresh"), { recursive: true, force: true });
+  // Created only on a case-sensitive disk (Linux); on macOS's that name is the person's main.json.
+  if (readdirSync(join(s.appHome, "layouts")).includes("Main.json")) rmSync(join(s.appHome, "layouts", "Main.json"));
+  assert.equal(readFileSync(join(s.appHome, "layouts", "main.json"), "utf8"), "{\"mine\":true}\n");
+  const after = snapshot(s.appHome);
+  for (const k of Object.keys(after)) if (k.startsWith("automagik-herdr/")) delete after[k];
+  for (const k of Object.keys(before)) if (k.startsWith("automagik-herdr/")) delete before[k];
+  assert.deepEqual(after, before, "the person's mods and layouts are byte-identical");
+});

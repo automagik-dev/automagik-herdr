@@ -7,6 +7,13 @@ export const MARKET_TOPIC = "herdr-mod";
 // reads its row and links to that repo's installer; it never installs, updates or removes it —
 // a delete here would destroy the pairing key in .state/.
 export const POCKET_LINK = "pocket-link";
+/** Pocket Link under any spelling: macOS's disk is case-insensitive, so `Pocket-Link` is its folder too. */
+export const isPocketLink = (name) => String(name ?? "").toLowerCase() === POCKET_LINK;
+/** A mod folder a package may bring: lowercase words and dashes, as update.mjs's packFolder. */
+export const MOD_NAME = /^[a-z0-9][a-z0-9-]*$/;
+/** A layout file a package may bring. */
+const LAYOUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
+const lower = (names) => new Set([...names].map((n) => String(n).toLowerCase()));
 export const POCKET_LINK_REFUSAL =
   "Pocket Link pertence a automagik-dev/automagik-pocket: instale ou remova pelo instalador de lá. Esta linha é só leitura.";
 
@@ -168,12 +175,15 @@ function parseKeys(text) {
 // a clash and blocks the install, as AGENTS.md never overwrites.
 export async function planInstall(io, { appHome, dir, pkg, record, existingMods, existingLayouts }) {
   const base = pkg.prefix ? `${dir}/${pkg.prefix}` : dir;
-  const ownMods = new Set(record?.mods ?? []);
-  const ownLayouts = new Set(record?.layouts ?? []);
+  // Names compare case-insensitively (macOS's disk does): `Demo` is the person's `demo`.
+  const ownMods = lower(record?.mods ?? []);
+  const ownLayouts = lower(record?.layouts ?? []);
+  const haveMods = lower(existingMods);
+  const haveLayouts = lower(existingLayouts);
   const layouts = pkg.layouts.map((f) => f.split("/").at(-1));
   const clashes = [
-    ...pkg.mods.filter((m) => existingMods.includes(m) && !ownMods.has(m)).map((m) => `mods/${m}`),
-    ...layouts.filter((l) => existingLayouts.includes(l) && !ownLayouts.has(l)).map((l) => `layouts/${l}`),
+    ...pkg.mods.filter((m) => !MOD_NAME.test(m) || (haveMods.has(m.toLowerCase()) && !ownMods.has(m.toLowerCase()))).map((m) => `mods/${m}`),
+    ...layouts.filter((l) => !LAYOUT_NAME.test(l) || (haveLayouts.has(l.toLowerCase()) && !ownLayouts.has(l.toLowerCase()))).map((l) => `layouts/${l}`),
   ];
   const theirs = pkg.keys ? parseKeys(await io.readText(`${base}/keys.json`)) : {};
   const mine = parseKeys(await io.readText(`${appHome}/keys.json`));
@@ -208,7 +218,9 @@ async function writeKeys(io, appHome, change) {
 // renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
   if (plan.clashes.length) throw new Error(`já existe: ${plan.clashes.join(", ")}`);
-  if (plan.mods.includes(POCKET_LINK) || (record?.mods ?? []).includes(POCKET_LINK)) throw new Error(POCKET_LINK_REFUSAL);
+  if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
+  const badName = plan.mods.find((m) => !MOD_NAME.test(m)) ?? plan.layouts.find((l) => !LAYOUT_NAME.test(l));
+  if (badName) throw new Error(`nome recusado: ${badName} (pastas de mod em minúsculas, a-z 0-9 -)`);
   await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
   const staged = [];
   try {
@@ -240,8 +252,12 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
       if (await present(io, live)) aside.push([live, await moveAside(io, appHome, live, m)]);
     }
     for (const [m, stage] of staged) {
-      await run(io, "mv", [stage, `${appHome}/mods/${m}`]);
-      placed.push([`${appHome}/mods/${m}`, stage]);
+      // Only into a free name: `mv` onto an existing folder (any case) would land inside it, and
+      // the undo below must reverse only what this run created.
+      const dest = `${appHome}/mods/${m}`;
+      if (await present(io, dest)) throw new Error(`já existe: mods/${m}`);
+      await run(io, "mv", [stage, dest]);
+      placed.push([dest, stage]);
     }
     for (const l of record?.layouts ?? []) {
       const p = `${appHome}/layouts/${l}`;
@@ -290,7 +306,7 @@ export async function checkMods(io, appHome, mods) {
 // Removes what the record says the manager installed. A key is removed only while it still runs
 // the action the package added: one the person rebound since then stays.
 export async function uninstall(io, { appHome, record }) {
-  if (record.mods.includes(POCKET_LINK)) throw new Error(POCKET_LINK_REFUSAL);
+  if (record.mods.some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
   for (const m of record.mods) {
     const p = `${appHome}/mods/${m}`;
     if (await present(io, p)) await moveAside(io, appHome, p, m);
@@ -310,7 +326,7 @@ export async function uninstall(io, { appHome, record }) {
 
 // A mod the manager did not install: a symlink is only unlinked, the folder it points to stays.
 export async function removeLocal(io, { appHome, name, symlink, path }) {
-  if (name === POCKET_LINK) throw new Error(POCKET_LINK_REFUSAL);
+  if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
   const where = `${appHome}/${path ?? `mods/${name}`}`;
   if (symlink) return void (await run(io, "rm", [where]));   // only the link; the folder it points to stays
   if (await present(io, where)) await moveAside(io, appHome, where, name);
@@ -378,7 +394,7 @@ export async function listMods(io, { appHome, records }) {
 export async function setEnabled(io, { appHome, name, enabled }) {
   if (!name || /\//.test(name)) throw new Error(`not a mod name: ${name}`);
   // Off means "moved to mods-disabled/", which would strand a pairing key that lives in .state/.
-  if (name === POCKET_LINK) throw new Error(POCKET_LINK_REFUSAL);
+  if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
   const to = enabled ? "mods" : OFF_DIR;
   await run(io, "mkdir", ["-p", `${appHome}/${to}`]);
   await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);

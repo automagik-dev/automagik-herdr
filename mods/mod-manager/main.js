@@ -159,7 +159,7 @@ export default class ModManager extends View {
         throw new Error(`${source} não tem nenhuma pasta mods/<nome>/main.js`);
       }
       // Pocket Link belongs to automagik-pocket: refuse it before anything is planned or written.
-      if (packages.some((p) => p.mods.includes(core.POCKET_LINK))) throw new Error(core.POCKET_LINK_REFUSAL);
+      if (packages.some((p) => p.mods.some(core.isPocketLink))) throw new Error(core.POCKET_LINK_REFUSAL);
       this.review = { source, fetched, packages, at: 0, plan: null, pkg: null };
       if (packages.length === 1) await this.planFor(packages[0]);
       else this.mode = "packages";
