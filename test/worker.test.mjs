@@ -194,6 +194,31 @@ test("worker --branch with an origin: fetched, and the new branch starts from or
   assert.equal(git(remote.json().worktree, "log", "-1", "--format=%s").trim(), "remote branch work");
 });
 
+test("worker --branch --base origin/dev: the new branch has no upstream, so pull and push never hit dev", (t) => {
+  const s = scene(t);
+  git(s.project, "branch", "dev");
+  const origin = join(s.root, "origin.git");
+  git(s.root, "clone", "-q", "--bare", s.project, origin);
+  git(s.project, "remote", "add", "origin", origin);
+  git(s.project, "fetch", "-q", "origin");
+  // The default (true) already tracks a remote-tracking start; "always" makes the test hold
+  // whatever the machine's global git config says.
+  git(s.project, "config", "branch.autoSetupMerge", "always");
+  const r = s.cli(["worker", "x", "--branch", "docs/drafts", "--base", "origin/dev", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().base, "origin/dev");
+  const up = spawnSync("git", ["rev-parse", "--abbrev-ref", "docs/drafts@{upstream}"], { cwd: r.json().worktree, encoding: "utf8" });
+  assert.notEqual(up.status, 0, `docs/drafts has an upstream: ${up.stdout.trim()}`);
+  const conf = spawnSync("git", ["config", "--get-regexp", "^branch\\.docs/drafts\\."], { cwd: s.project, encoding: "utf8" });
+  assert.equal(conf.stdout, "", "no branch.docs/drafts.remote or .merge");
+  // Continuing origin's own branch of that name keeps it as the upstream.
+  git(origin, "branch", "feat/remote", "dev");
+  git(s.project, "fetch", "-q", "origin");
+  const remote = s.cli(["worker", "y", "--branch", "feat/remote", "--json"]);
+  assert.equal(remote.code, 0, remote.err);
+  assert.equal(git(remote.json().worktree, "rev-parse", "--abbrev-ref", "feat/remote@{upstream}").trim(), "origin/feat/remote");
+});
+
 test("worker --worktree uses an existing worktree of the project, on its branch; the main checkout is refused", (t) => {
   const s = scene(t);
   const wt = join(s.root, "side");
