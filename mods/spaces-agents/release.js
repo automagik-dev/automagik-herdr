@@ -36,6 +36,9 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt. A v1
  * marker (v0.2.x: no `mods=`) installed only spaces-agents.
  */
+/** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
+export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export function parseMarker(text) {
   if (typeof text !== "string") return null;
   const get = (key) => (new RegExp(`^${key}=(.*)$`, "m").exec(text)?.[1] ?? "").trim();
@@ -47,7 +50,8 @@ export function parseMarker(text) {
     mods: v1 ? [PACK_NAME] : list(get("mods")),
     layout: get("layout") || null,
     before: get("before") || "none",
-    adopted: list(get("adopted")).map((e) => ({ mod: e.slice(0, e.indexOf(":")), path: e.slice(e.indexOf(":") + 1) })).filter((a) => a.mod && a.path),
+    adopted: list(get("adopted")).map((e) => ({ mod: e.slice(0, e.indexOf(":")), path: e.slice(e.indexOf(":") + 1) }))
+      .filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a.mod) && a.mod !== POCKET_LINK && ADOPTED_PATH.test(a.path)),
   };
 }
 

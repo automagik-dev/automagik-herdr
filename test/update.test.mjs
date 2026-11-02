@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -457,4 +457,65 @@ test("release.js's PACK_KEYS and CATALOG_URL equal the repository's keys.json an
   const core = await import("../mods/mod-manager/core.js");
   assert.deepEqual(JSON.parse(JSON.stringify(PACK_KEYS)), JSON.parse(readFileSync(new URL("../keys.json", import.meta.url), "utf8")));
   assert.equal(CATALOG_URL, core.CATALOG_URL);
+});
+
+test("rollback then reinstall: a folder only the newer set had comes back with its .state", async () => {
+  const { home, mods } = appHome("0.1.0", ["spaces-agents"]);
+  const t = tarball("0.2.0");
+  try {
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    mkdirSync(join(mods, "auto-tabs", ".state"));
+    writeFileSync(join(mods, "auto-tabs", ".state", "cred"), "SECRET\n");
+    rollback({ modsDir: mods });
+    assert.equal(existsSync(join(mods, "auto-tabs")), false);
+    assert.equal(readFileSync(join(kept(mods, "auto-tabs"), ".state", "cred"), "utf8"), "SECRET\n");
+    const again = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.deepEqual(again.installed, ["auto-tabs"]);
+    assert.equal(readFileSync(join(mods, "auto-tabs", ".state", "cred"), "utf8"), "SECRET\n");
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a failure after the swap never deletes the replaced folders, and says where they are", async () => {
+  const { home, mods } = appHome("0.1.0");
+  const t = tarball("0.2.0");
+  try {
+    // The kept set cannot take its new place: the install stands, the record names it, and the
+    // replaced 0.1.0 folders wait in .prev-next-<pid> with the old set back in .prev.
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    const rename = (a, b) => { if (b === prevSetOf(mods)) throw new Error("EPERM"); renameSync(a, b); };
+    const t3 = tarball("0.3.0");
+    const r = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: mods, rename });
+    rmSync(t3.src, { recursive: true, force: true });
+    assert.equal(readVersion(join(mods, "spaces-agents")), "0.3.0");
+    assert.equal(readMarker(mods).version, "0.3.0");
+    assert.equal(r.prev, null);
+    const next = join(stateDirOf(mods), `.prev-next-${process.pid}`);
+    assert.match(r.warnings[0], new RegExp(`could not become the kept set .*they are in ${next}`));
+    assert.equal(readVersion(join(next, "spaces-agents")), "0.2.0", "the replaced folders are kept");
+    assert.equal(readVersion(kept(mods)), "0.1.0", "the older set is back in .prev, still a rollback point");
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("an older kept set that cannot be removed is reported, and the new set is still kept", { skip: process.getuid?.() === 0 }, async () => {
+  const { home, mods } = appHome("0.1.0");
+  const t = tarball("0.2.0");
+  const t3 = tarball("0.3.0");
+  const locked = () => join(stateDirOf(mods), readdirSync(stateDirOf(mods), { encoding: "utf8" }).find((n) => n.startsWith(".prev-old-")) ?? ".prev", "auto-tabs");
+  try {
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    chmodSync(join(prevSetOf(mods), "auto-tabs"), 0o555);
+    const r = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: mods });
+    assert.match(r.warnings[0], /older kept set could not be removed .*\.prev-old-/);
+    assert.equal(readVersion(join(mods, "spaces-agents")), "0.3.0");
+    assert.equal(readVersion(kept(mods)), "0.2.0", "the set just replaced is the kept one");
+    chmodSync(locked(), 0o755);
+  } finally {
+    for (const d of [t.src, t3.src, home]) rmSync(d, { recursive: true, force: true });
+  }
 });

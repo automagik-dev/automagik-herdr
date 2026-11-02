@@ -14,7 +14,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const PACK_SRC = join(ROOT, "mods", "spaces-agents");
 const LAYOUT_SRC = join(ROOT, "layouts", "automagik.json");
-const { PACK_MODS, V020_LAYOUT_SHA256 } = await import("../mods/spaces-agents/release.js");
+const { PACK_MODS, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/spaces-agents/release.js");
 const CASK = "penso/tap/herdr-gpui";
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
@@ -77,16 +77,18 @@ fi
   };
   /**
    * Publishes a release as release.yml packs it: every PACK_MODS folder of the repo plus
-   * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. Each folder gets a
-   * VERSION here (only spaces-agents' ships) so a test can tell which release a folder is from.
+   * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. As in a real release
+   * only spaces-agents carries VERSION; each main.js ends in a `// release <v>` line, the code
+   * change a release brings, so a test can tell which release a folder is from.
    */
   const publish = (version, { edit, sums, latest = true } = {}) => {
     const src = join(root, `src-${version}`);
     rmSync(src, { recursive: true, force: true });
     for (const m of PACK_MODS) {
       cpSync(join(ROOT, "mods", m), join(src, m), { recursive: true });
-      writeFileSync(join(src, m, "VERSION"), `${version}\n`);
+      writeFileSync(join(src, m, "main.js"), `${readFileSync(join(src, m, "main.js"), "utf8")}\n// release ${version}\n`);
     }
+    writeFileSync(join(src, "spaces-agents", "VERSION"), `${version}\n`);
     mkdirSync(join(src, "layouts"));
     cpSync(LAYOUT_SRC, join(src, "layouts", "automagik.json"));
     edit?.(src);
@@ -105,7 +107,7 @@ fi
   const mark = () => readFileSync(join(appHome, "automagik-herdr", "installed-by-install.sh"), "utf8");
   const mods = join(appHome, "mods"), state = join(appHome, "automagik-herdr");
   /** Every pack folder's release (its VERSION), by name. */
-  const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, readFileSync(join(mods, m, "VERSION"), "utf8").trim()]));
+  const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(mods, m, "main.js"), "utf8"))?.[1]]));
   const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
   return { root, bin, home, apps, appHome, mods, state, pack, link, run, piped, publish, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
@@ -632,4 +634,41 @@ test("every pack mod docks nowhere by itself; the shipped layout names only pack
   assert.deepEqual(readdirSync(join(ROOT, "layouts")), ["automagik.json"]);
   assert.equal(existsSync(join(PACK_SRC, "layouts")), false, "one layout: the root one (D8)");
   assert.deepEqual(readdirSync(join(ROOT, "mods")).filter((m) => m !== "pocket-link").sort(), [...PACK_MODS].sort());
+});
+
+test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from the kept set", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  for (const m of ["am-quota", "auto-tabs"]) {
+    mkdirSync(join(s.mods, m, ".state"));
+    writeFileSync(join(s.mods, m, ".state", "cred"), `${m} secret\n`);
+  }
+  assert.equal(s.run("--uninstall").code, 0);
+  assert.equal(existsSync(join(s.mods, "am-quota")), false);
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  for (const m of ["am-quota", "auto-tabs"]) assert.equal(readFileSync(join(s.mods, m, ".state", "cred"), "utf8"), `${m} secret\n`, m);
+});
+
+test("--uninstall never glob-expands the record, and moves only backup/<name> paths it adopted", (t) => {
+  const s = scratch(t);
+  mkdirSync(join(s.state, "backup", "keep"), { recursive: true });
+  writeFileSync(join(s.state, "backup", "keep", "main.js"), "// mine\n");
+  mkdirSync(join(s.mods, "pocket-link"), { recursive: true });
+  writeFileSync(join(s.mods, "pocket-link", "main.js"), "// pocket\n");
+  writeFileSync(join(s.root, "auto-tabs"), "a file in the cwd a glob would find\n");
+  mkdirSync(join(s.mods, "auto-tabs"));
+  writeFileSync(join(s.mods, "auto-tabs", "main.js"), "// not the record's\n");
+  const stateBefore = treeSum(s.state);
+  writeFileSync(join(s.state, "installed-by-install.sh"),
+    "version=9.9.0\nmods=*,auto-*\nbefore=none\nadopted=am-quota:,auto-tabs:.,md-menu:backup/,mod-manager:backup/../..,new-menu-tui:/etc,automations:backup/*,sidebar-chrome:backup/.hidden\n");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(readdirSync(s.mods), ["auto-tabs", "pocket-link"], "nothing put back; `auto-*` matched nothing");
+  assert.equal(readFileSync(join(s.mods, "auto-tabs", "main.js"), "utf8"), "// not the record's\n");
+  assert.equal(readFileSync(join(s.mods, "pocket-link", "main.js"), "utf8"), "// pocket\n");
+  rmSync(join(s.state, "installed-by-install.sh"), { force: true });
+  assert.equal(treeSum(s.state), stateBefore, "the state folder is whole");
+  assert.deepEqual(parseMarker("mods=a\nadopted=a:,b:.,c:backup/,d:backup/../x,e:backup/ok,pocket-link:backup/p\n").adopted, [{ mod: "e", path: "backup/ok" }]);
 });

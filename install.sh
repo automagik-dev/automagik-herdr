@@ -175,7 +175,7 @@ uninstall() {
     # v1 (v0.2.x): spaces-agents only, the layout's reference inside it, its first pack in $BEFORE.
     mods=spaces-agents
     ref=$PACK/layouts/automagik.json
-    if [ "$(mark_get before)" = kept ] && [ -d "$BEFORE" ]; then adopted=spaces-agents:${BEFORE#"$STATE"/}; fi
+    if [ "$(mark_get before)" = kept ] && [ -d "$BEFORE" ]; then adopted=spaces-agents:v1; fi
   fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
@@ -189,6 +189,8 @@ uninstall() {
   rm -rf "$next"
   mkdir -p "$next"
   moved=
+  # The record's values are split on commas only, never glob-expanded (set -f).
+  set -f
   IFS=,
   for m in $mods; do
     case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
@@ -197,28 +199,50 @@ uninstall() {
     mv "$MODS/$m" "$next/$m"
     moved=${moved:+$moved,}$m
   done
+  # A folder already kept (one a rollback moved out, with its state) stays kept beside them.
+  if [ -n "$moved" ] && [ -f "$STATE/.prev/.pack" ]; then
+    for m in $(sed -n 's/^mods=//p' "$STATE/.prev/.pack" | head -n 1); do
+      case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+      if [ -d "$STATE/.prev/$m" ] && [ ! -L "$STATE/.prev/$m" ] && [ ! -e "$next/$m" ]; then
+        mv "$STATE/.prev/$m" "$next/$m"
+        moved=$moved,$m
+      fi
+    done
+  fi
   unset IFS
+  set +f
   if [ -n "$moved" ]; then
     printf 'version=%s\nmods=%s\nbefore=none\n' "$(mark_get version)" "$moved" >"$next/.pack"
-    rm -rf "$STATE/.prev"
+    # The old set is set aside first and removed last: a failure never loses the folders just moved.
+    rm -rf "$STATE/.prev-old"
+    if [ -e "$STATE/.prev" ]; then mv "$STATE/.prev" "$STATE/.prev-old"; fi
     mv "$next" "$STATE/.prev"
+    rm -rf "$STATE/.prev-old" 2>/dev/null || say "Could not remove the older kept set; it is in $STATE/.prev-old."
     say "Moved the pack out of $MODS ($moved); it is kept in $STATE/.prev."
   else
     rm -rf "$next"
   fi
   # What the person had before: each adopted folder comes back, unless something is in its place.
+  # Only backup/<name> (release.js parseMarker's rule), or v0.2's before-install copy.
+  set -f
   IFS=,
   for e in $adopted; do
     m=${e%%:*}
     p=${e#*:}
     case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
-    case $p in *..*|/*) continue ;; esac
-    if [ -d "$STATE/$p" ] && [ ! -e "$MODS/$m" ]; then
+    case $e in
+      spaces-agents:v1) p=${BEFORE#"$STATE"/} ;;
+      *:backup/*) n=${p#backup/}
+        case $n in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac ;;
+      *) continue ;;
+    esac
+    if [ -d "$STATE/$p" ] && [ ! -L "$STATE/$p" ] && [ ! -e "$MODS/$m" ]; then
       mv "$STATE/$p" "$MODS/$m"
       say "Put back $MODS/$m, the one that was there before the install."
     fi
   done
   unset IFS
+  set +f
   if [ -L "$LINK" ]; then rm -f "$LINK"; say "Removed $LINK."; fi
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
@@ -309,7 +333,7 @@ install() {
   if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
   rc=0
   out=$(node "$TMP/x/spaces-agents/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
-  if [ "$rc" != 0 ] && [ "$rc" != 3 ]; then
+  if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
     why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
     fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"
   fi
@@ -340,6 +364,7 @@ install() {
   say "Done: Automagik Herdr $VERSION. Open Herdr (or reload its mods), or in a project folder run:"
   say "  automagik-herdr create --kind=main --name=<name> --agent=claude && automagik-herdr start <name>"
   switch_hint
+  if [ "$rc" = 4 ]; then fail "the pack is installed, but a step after it did not finish (the warning above says what, and where the folders are)."; fi
   if [ "$rc" = 3 ]; then fail "herdr-app check failed for a mod (above); the pack is installed, and 'automagik-herdr update --rollback' swaps the kept set back."; fi
 }
 

@@ -14,7 +14,8 @@
 //   node update.mjs install --from <tgz> --version <v> [--mods <dir>] [--adopt] [--setup]
 //       a tarball already checked against SHA256SUMS (install.sh); one JSON line. --setup also
 //       merges free keys, writes the mod manager's catalog.json, places the layout (D8) and runs
-//       `herdr-app check` on every installed mod (exit 3 when one fails).
+//       `herdr-app check` on every installed mod (exit 3 when one fails). Exit 4: installed, but a
+//       step after the swap (the record, the kept set) did not finish; its warning says where things are.
 //
 // <dir> defaults to $HERDR_APP_HOME/mods (~/.config/herdr-app/mods), never this file's own
 // folder, so running it from a checkout never replaces the checkout. Everything else lives in
@@ -196,12 +197,39 @@ function swapAll(moves, rename) {
   }
 }
 
-/** The new kept set: `moved` (name → folder now under `next`) recorded in `.pack`, replacing the old set. */
-function keepSet(modsDir, next, moved, record) {
-  if (moved.length === 0) return void rmSync(next, { recursive: true, force: true });
-  writeFileSync(join(next, ".pack"), formatMarker({ version: record?.version ?? UNRELEASED, mods: moved }));
-  rmSync(prevSetOf(modsDir), { recursive: true, force: true });
-  renameSync(next, prevSetOf(modsDir));
+/**
+ * Moves the old kept set out of the way before a swap that replaces it: to `.prev-old-<pid>`,
+ * renamed back by `restoreSet` when the swap fails. Null when nothing is kept yet.
+ */
+function setAside(modsDir) {
+  if (!exists(prevSetOf(modsDir))) return null;
+  const old = join(stateDirOf(modsDir), `.prev-old-${process.pid}`);
+  rmSync(old, { recursive: true, force: true });
+  renameSync(prevSetOf(modsDir), old);
+  return old;
+}
+const restoreSet = (modsDir, old) => { if (old) renameSync(old, prevSetOf(modsDir)); };
+
+/**
+ * After a swap: `next` (holding the folders it moved out of mods/) becomes the kept set, then the
+ * old set is removed. Never deletes `next`; a step that fails is reported in `warnings` with where
+ * the folders are, so a caller never says "nothing was installed" about an install that happened.
+ */
+function keepSet(modsDir, next, moved, record, old, rename, warnings) {
+  if (moved.length > 0) {
+    try {
+      writeFileSync(join(next, ".pack"), formatMarker({ version: record?.version ?? UNRELEASED, mods: moved }));
+      rename(next, prevSetOf(modsDir));
+    } catch (error) {
+      warnings.push(`the replaced folders could not become the kept set (${error.message}): they are in ${next}`);
+      try { restoreSet(modsDir, old); } catch {}
+      return;
+    }
+  }
+  if (!old) return;
+  try { rmSync(old, { recursive: true, force: true }); } catch (error) {
+    warnings.push(`the older kept set could not be removed (${error.message}): it is in ${old}`);
+  }
 }
 
 const writeMarker = (modsDir, record) => {
@@ -245,6 +273,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
   const staging = mkdtempSync(join(state, "staging-"));
   const next = join(state, `.prev-next-${process.pid}`);
   rmSync(next, { recursive: true, force: true });
+  let swapped = false;
   try {
     await run("tar", ["-xzf", resolve(tgzPath), "-C", staging]);
     const irregular = irregularPaths(staging);
@@ -265,6 +294,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     const before = readMarker(modsDir);
     const record = { version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])] };
     const owned = new Set(before?.mods ?? []);
+    const kept = readSet(modsDir);
     const plan = { installed: [], replaced: [], left: [], adopted: [], retired: [] };
     const moves = [];
     for (const m of folders) {
@@ -274,8 +304,11 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
         plan.left.push(m);
         continue;
       }
-      if (!exists(live)) plan.installed.push(m);
-      else if (owned.has(m)) {
+      if (!exists(live)) {
+        // A folder a rollback or --uninstall moved into the kept set comes back with its state.
+        if (kept?.mods.includes(m)) carryPrivate(join(prevSetOf(modsDir), m), fresh);
+        plan.installed.push(m);
+      } else if (owned.has(m)) {
         carryPrivate(live, fresh);
         moves.push([live, join(next, m)]);
         plan.replaced.push(m);
@@ -299,16 +332,28 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
       plan.retired.push(m);
     }
     mkdirSync(modsDir, { recursive: true });
-    swapAll(moves, rename);
-    if (before?.v1) carryV1(modsDir, record, log);
-    keepSet(modsDir, next, [...plan.replaced, ...plan.retired], before);
-    writeMarker(modsDir, record);
+    const keep = [...plan.replaced, ...plan.retired];
+    const old = keep.length ? setAside(modsDir) : null;
+    try {
+      swapAll(moves, rename);
+    } catch (error) {
+      restoreSet(modsDir, old);
+      throw error;
+    }
+    swapped = true;
+    // From here the new folders are live: nothing below undoes them or deletes `next`, and the
+    // record is written first so it always names what mods/ holds.
+    const warnings = [];
+    try { writeMarker(modsDir, record); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+    if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
+    keepSet(modsDir, next, keep, before, old, rename, warnings);
     for (const m of plan.left) log(`left alone: mods/${m} (not installed by automagik-herdr; --adopt moves it to backup/ and installs the pack's)`);
     for (const a of plan.adopted) log(`adopted mods/${a.mod}: the original is kept in ${a.backup}`);
-    return { version, mods: record.mods, ...plan, prev: plan.replaced.length + plan.retired.length ? prevSetOf(modsDir) : null };
+    for (const w of warnings) log(`warning: ${w}`);
+    return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, warnings };
   } finally {
     rmSync(staging, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
+    if (!swapped) rmSync(next, { recursive: true, force: true });
   }
 }
 
@@ -347,15 +392,21 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync } = {
     moves.push([join(modsDir, m), join(next, m)]);
     out.push(m);
   }
+  // The kept set's folders come back out of `prev`, which then holds only what stays behind
+  // (.pack and anything unlisted): it is set aside, and removed only once the swap stands.
   try {
     swapAll(moves, rename);
   } catch (error) {
     rmSync(next, { recursive: true, force: true });
     throw error;
   }
-  keepSet(modsDir, next, out, record);
-  writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods });
-  return { pack: modsDir, prev, mods: set.mods, version: set.version };
+  const warnings = [];
+  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+  let old = null;
+  try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
+  if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings);
+  else warnings.push(`the folders rolled out are in ${next}`);
+  return { pack: modsDir, prev, mods: set.mods, version: set.version, warnings };
 }
 
 /** A keys.json that will not parse stops the run before any folder moves. */
@@ -486,17 +537,23 @@ async function main(argv) {
     if (command === "apply" || opts.json) return r;
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };
   }
-  if (command === "rollback") return rollback({ modsDir });
+  if (command === "rollback") {
+    const r = rollback({ modsDir });
+    if (r.warnings.length) process.exitCode = 4;
+    return r;
+  }
   // install.sh: the tarball it downloaded and checked with shasum, through applyUpdate's checks.
   const appHome = dirname(resolve(modsDir));
   if (opts.setup) preflightKeys(appHome);
   const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, modsDir, adopt: Boolean(opts.adopt), log });
+  // Exit 4: installed, but a step after the swap did not finish (its warning says what and where).
+  if (installed.warnings.length) process.exitCode = 4;
   if (!opts.setup) return { installed };
   const tgzDir = mkdtempSync(join(tmpdir(), "automagik-herdr-layout-"));
   try {
     await run("tar", ["-xzf", resolve(opts.from), "-C", tgzDir, PACK_LAYOUT]).catch(() => {});
     const failed = setupHome({ modsDir, tgzDir, record: readMarker(modsDir), log });
-    if (failed.length) process.exitCode = 3;
+    if (failed.length && !process.exitCode) process.exitCode = 3;
     return { installed, checkFailed: failed };
   } finally {
     rmSync(tgzDir, { recursive: true, force: true });

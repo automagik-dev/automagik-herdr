@@ -850,7 +850,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   if (opts.rollback) {
     let r;
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}) }); } catch (e) { throw failed("Nothing rolled back", e); }
-    return opts.json ? { rolledBack: r } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.`;
+    return opts.json ? { rolledBack: r } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : ""}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
