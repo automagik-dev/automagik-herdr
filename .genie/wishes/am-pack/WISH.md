@@ -130,6 +130,7 @@ Group 8 (release v0.3.0) also waits for sidebar-rules Groups 2–5, which land i
 | 5b | engineer | Medium: moves a dialog into the sidebar mod | inherit | space-icon inside the sidebar |
 | 6a | engineer | High: rewrites the person's layouts, keys and shared state, with backups | inherit | Rename migration: layouts, keys, shared state, app-home paths |
 | 6b | engineer | High: touches each project's Claude settings | inherit | The briefing hook survives renames |
+| 6c | engineer | Medium: installs a third-party binary (checksum-pinned) and runs it on a timer | inherit | usagemeter: installed by install.sh, synced while Herdr is open |
 | 7 | engineer | Medium: wide mechanical rename, three PRs | inherit | Rename: folders, ids, commands, docs |
 | 8 | engineer + qa | High: end-to-end on scratch homes | inherit | Integrate, verify, merge to dev, v0.3.0 |
 
@@ -420,6 +421,37 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 
 ---
 
+### Group 6c: usagemeter installed and synced by the pack
+
+**Goal:** One install gives the desktop the usage meter: install.sh installs a pinned usagemeter release, and the sidebar runs `usagemeter sync` every 10 minutes while Herdr is open (owner, 2026-11-02).
+
+**Deliverables:**
+1. `mods/spaces-agents/release.js`: `USAGEMETER = { version, assets: {"darwin-arm64", "darwin-x86_64", "linux-x86_64", "linux-aarch64"} }`, pinned to a released usagemeter version (v0.1.0 or later).
+2. install.sh: after the pack is installed, download the pinned `usagemeter-<os>-<arch>` and that release's `SHA256SUMS` from `github.com/automagik-dev/usagemeter/releases/download/v<version>/`, check the hash, and install to `~/.local/bin/usagemeter` atomically (temp file in the same folder, `chmod 755`, rename). Skip it when `usagemeter --version` already prints the pinned version. `--no-usagemeter` skips the step. Any failure is a warning; the pack install still succeeds. usagemeter's own `install.sh` is not piped into a shell.
+3. The sidebar (spaces-agents) runs `usagemeter sync` through exec every 10 minutes while Herdr is open, plus once 30 seconds after load. Only one run at a time, never more often than the 10-minute freshness check. A missing binary is silent. It runs with no arguments beyond `sync`. No LaunchAgent and no daemon.
+4. `--uninstall` removes `~/.local/bin/usagemeter` only when the marker says the pack installed it (`usagemeter=<version>` line). Its store is kept.
+5. Tests: install with a local fake release (good hash, bad hash, already current, `--no-usagemeter`, offline); the timer's single-flight and interval with a fake exec; uninstall removes only a pack-installed binary.
+
+**Interfaces:**
+- Consumes: Group 3's install.sh, marker v2 and `release.js`; usagemeter's release contract (binary names, `SHA256SUMS`, `usagemeter --version`, `usagemeter sync`) as in its README.
+- Produces: marker line `usagemeter=<version>`; `USAGEMETER` in `release.js`; `syncMeter({exec, now})` in the sidebar.
+
+**Acceptance Criteria:**
+- [ ] A scratch install puts a hash-checked usagemeter in a scratch `~/.local/bin`; a bad hash installs nothing and the pack install still exits 0 with a warning.
+- [ ] A rerun with the pinned version installed makes no download.
+- [ ] With Herdr open, `usagemeter sync` runs at most once per 10 minutes and never twice at once (fake exec).
+- [ ] `--uninstall` removes a pack-installed binary and leaves one the person installed.
+- [ ] No LaunchAgent is written.
+
+**Validation:**
+```bash
+node --test 'test/*.test.mjs' && sh -n install.sh && shellcheck -s sh install.sh && node scripts/version.mjs check
+```
+
+**depends-on:** Group 3; a released usagemeter v0.1.0 (automagik-dev/usagemeter)
+
+---
+
 ### Group 7: Rename migrate — per surface, three PRs
 
 **Goal:** Every folder, mod id, mod command, title and doc uses the D4 names.
@@ -471,7 +503,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check && sh -n install.sh && shellcheck -s sh install.sh && actionlint && node scripts/catalog.mjs --check
 ```
 
-**depends-on:** Group 7, Group 4, Group 6b, sidebar-rules Groups 2–5
+**depends-on:** Group 7, Group 4, Group 6b, Group 6c, sidebar-rules Groups 2–5
 
 ---
 
