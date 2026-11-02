@@ -14,7 +14,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const PACK_SRC = join(ROOT, "mods", "spaces-agents");
 const LAYOUT_SRC = join(ROOT, "layouts", "automagik.json");
-const { PACK_MODS, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/spaces-agents/release.js");
+const { PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/spaces-agents/release.js");
 const CASK = "penso/tap/herdr-gpui";
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
@@ -35,7 +35,7 @@ const treeSum = (dir) => {
   return h.digest("hex");
 };
 
-function scratch(t, { herdr = true, os = "Darwin" } = {}) {
+function scratch(t, { herdr = true, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-install-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
@@ -43,7 +43,11 @@ function scratch(t, { herdr = true, os = "Darwin" } = {}) {
   if (herdr) mkdirSync(join(apps, "Herdr.app"));
   const brewLog = join(root, "brew.log");
   writeFileSync(brewLog, "");
-  exe(join(bin, "uname"), `#!/bin/sh\necho ${os}\n`);
+  exe(join(bin, "uname"), `#!/bin/sh\ncase "$1" in -m) echo ${arch} ;; *) echo ${os} ;; esac\n`);
+  // curl: logs each URL, then the real curl (file:// only: the release URL is a folder here).
+  const curlLog = join(root, "curl.log");
+  writeFileSync(curlLog, "");
+  exe(join(bin, "curl"), `#!/bin/sh\nfor a; do case $a in file://*) echo "$a" >> "${curlLog}" ;; esac; done\nexec /usr/bin/curl "$@"\n`);
   // Homebrew: logs its arguments; the cask "installs" Herdr into the fake Applications.
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brewLog}"\ncase "$*" in *--cask*) mkdir -p "${apps}/Herdr.app" ;; esac\n`);
   // herdr-app, when a test puts it on PATH: logs its arguments; `status` prints the layout
@@ -100,6 +104,20 @@ fi
       writeFileSync(join(dir, "SHA256SUMS"), `${sums ?? sha(join(dir, name))}  ${name}\n`);
     }
   };
+  /**
+   * Publishes usagemeter release `version` under <release>/usagemeter/download/v<version>/: each
+   * asset a script answering `--version` with `usagemeter <reports>`, and SHA256SUMS (or `sums`).
+   */
+  const publishMeter = ({ version = USAGEMETER.version, reports = version, sums } = {}) => {
+    const dir = join(rel, "usagemeter", "download", `v${version}`);
+    mkdirSync(dir, { recursive: true });
+    const lines = Object.values(USAGEMETER.assets).map((name) => {
+      exe(join(dir, name), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${reports}"\nexit 0\n`);
+      return `${sums ?? sha(join(dir, name))}  ${name}\n`;
+    });
+    writeFileSync(join(dir, "SHA256SUMS"), lines.join(""));
+  };
+  const meterCalls = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => l.includes("/usagemeter/"));
   const brewCalls = () => readFileSync(brewLog, "utf8").split("\n").filter(Boolean);
   /** herdr-app's calls other than `status` and `check`. */
   const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l && l !== "status" && l !== "ls" && !l.startsWith("check "));
@@ -109,7 +127,7 @@ fi
   /** Every pack folder's release (its VERSION), by name. */
   const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(mods, m, "main.js"), "utf8"))?.[1]]));
   const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
-  return { root, bin, home, apps, appHome, mods, state, pack, link, run, piped, publish, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
+  return { root, bin, home, apps, appHome, mods, state, pack, link, run, piped, publish, publishMeter, meterCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -119,10 +137,11 @@ test("install.sh is POSIX sh", () => {
 test("a fresh install puts the pack and the command in place; a second run changes nothing", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
+  s.publishMeter();
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
-  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\n$`));
+  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:mod-manager" } });
@@ -436,6 +455,7 @@ test("install, update, rollback, uninstall: a planted pocket-link stays byte-ide
   const sum = treeSum(pocket);
   s.addHerdrApp();
   s.publish("9.9.0");
+  s.publishMeter();
   assert.equal(s.run("--yes").code, 0);
   assert.equal(s.checks().length, PACK_MODS.length, "herdr-app check on every pack mod");
   assert.equal(s.checks().some((c) => c.includes("pocket-link")), false);
@@ -448,6 +468,8 @@ test("install, update, rollback, uninstall: a planted pocket-link stays byte-ide
   assert.equal(back.status, 0, back.stderr);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.match(s.mark(), /^version=9\.9\.0$/m);
+  // The record's usagemeter line survives update.mjs's update and rollback (Group 6c).
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
   assert.equal(treeSum(pocket), sum, "after rollback");
   assert.equal(s.run("--uninstall").code, 0);
   assert.deepEqual(readdirSync(s.mods), ["pocket-link"]);
@@ -619,10 +641,10 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
   assert.equal(existsSync(s.pack), false);
 });
 
-test("both downloads keep the path as written (curl --path-as-is)", () => {
+test("every download keeps the path as written (curl --path-as-is): the pack's two, usagemeter's two", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
-  assert.equal(calls.length, 2);
-  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "\$base\//);
+  assert.equal(calls.length, 4);
+  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "\$u?base\//);
 });
 
 test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {
@@ -704,4 +726,224 @@ test("--uninstall never glob-expands the record, and moves only backup/<name> pa
   rmSync(join(s.state, "installed-by-install.sh"), { force: true });
   assert.equal(treeSum(s.state), stateBefore, "the state folder is whole");
   assert.deepEqual(parseMarker("mods=a\nadopted=a:,b:.,c:backup/,d:backup/../x,e:backup/ok,pocket-link:backup/p\n").adopted, [{ mod: "e", path: "backup/ok" }]);
+});
+
+// ---- usagemeter (Group 6c) ----
+
+const meterBin = (s) => join(s.home, ".local", "bin", "usagemeter");
+const meterSays = (s) => spawnSync(meterBin(s), ["--version"], { encoding: "utf8" }).stdout.trim();
+/** A usagemeter the person (or Pocket Link) put there: answers `usagemeter <version>`. */
+const plantMeter = (s, version) => {
+  mkdirSync(dirname(meterBin(s)), { recursive: true });
+  exe(meterBin(s), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${version}"\nexit 0\n`);
+};
+const leftovers = (s) => readdirSync(dirname(meterBin(s))).filter((n) => n.startsWith(".usagemeter"));
+
+test("usagemeter: install.sh pins release.js's version and knows its four builds", () => {
+  assert.equal(/^\s+METER_VERSION=(\S+)$/m.exec(readFileSync(INSTALL, "utf8"))?.[1], USAGEMETER.version);
+  assert.equal(USAGEMETER.version, "0.2.0");
+  assert.deepEqual(Object.values(USAGEMETER.assets).sort(),
+    ["usagemeter-darwin-arm64", "usagemeter-darwin-x86_64", "usagemeter-linux-aarch64", "usagemeter-linux-x86_64"]);
+  for (const name of Object.values(USAGEMETER.assets)) assert.ok(readFileSync(INSTALL, "utf8").includes(`asset=${name} ;;`), name);
+});
+
+test("usagemeter: a scratch install puts the hash-checked binary in ~/.local/bin; a rerun downloads nothing", (t) => {
+  for (const arch of ["arm64", "x86_64"]) {
+    const s = scratch(t, { arch });
+    s.publish("9.9.0");
+    s.publishMeter();
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Installed usagemeter 0\.2\.0 \(.*\/\.local\/bin\/usagemeter, checksum ok\)/);
+    assert.equal(meterSays(s), "usagemeter 0.2.0");
+    assert.equal(lstatSync(meterBin(s)).mode & 0o777, 0o755);
+    assert.equal(sha(meterBin(s)), sha(join(s.root, "release", "usagemeter", "download", "v0.2.0", `usagemeter-darwin-${arch}`)));
+    assert.deepEqual(leftovers(s), []);
+    assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+    assert.deepEqual(s.meterCalls().map((u) => u.replace(/.*\/download\//, "")), ["v0.2.0/SHA256SUMS", `v0.2.0/usagemeter-darwin-${arch}`]);
+    // No LaunchAgent and no daemon: the sidebar runs `usagemeter sync`, nothing else does.
+    assert.equal(existsSync(join(s.home, "Library", "LaunchAgents")), false);
+    const before = s.meterCalls().length;
+    const again = s.run();
+    assert.equal(again.code, 0, again.err);
+    assert.match(again.out, /usagemeter 0\.2\.0: already installed/);
+    assert.equal(s.meterCalls().length, before);
+    // A newer pack (update.mjs rewrites the record) keeps the usagemeter line, and still no download.
+    s.publish("9.9.1");
+    const update = s.run();
+    assert.equal(update.code, 0, update.err);
+    assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+    assert.equal(s.meterCalls().length, before);
+  }
+  assert.doesNotMatch(readFileSync(INSTALL, "utf8"), /LaunchAgent|launchctl/);
+});
+
+test("usagemeter: a bad hash installs nothing; the pack install still exits 0 with a warning", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter({ sums: "0".repeat(64) });
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  assert.match(r.out, /Warning: usagemeter was not installed: usagemeter-darwin-arm64 does not match SHA256SUMS/);
+  assert.equal(existsSync(meterBin(s)), false);
+  assert.deepEqual(leftovers(s), []);
+  assert.equal(parseMarker(s.mark()).usagemeter, null);
+});
+
+test("usagemeter: offline, or no build for this machine: a warning, and the pack is installed", (t) => {
+  const offline = scratch(t);
+  offline.publish("9.9.0");
+  const r = offline.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Warning: usagemeter was not installed: could not download file:.*\/usagemeter\/download\/v0\.2\.0\/SHA256SUMS/);
+  assert.equal(existsSync(meterBin(offline)), false);
+  assert.deepEqual(offline.versions(), offline.all("9.9.0"));
+  // Offline at first, then online: the rerun (pack already current) installs it.
+  offline.publishMeter();
+  const later = offline.run();
+  assert.equal(later.code, 0, later.err);
+  assert.equal(meterSays(offline), "usagemeter 0.2.0");
+  assert.equal(parseMarker(offline.mark()).usagemeter, "0.2.0");
+  const odd = scratch(t, { arch: "ppc" });
+  odd.publish("9.9.0");
+  odd.publishMeter();
+  const o = odd.run("--yes");
+  assert.equal(o.code, 0, o.err);
+  assert.match(o.out, /Warning: usagemeter was not installed: no usagemeter build for Darwin ppc/);
+  assert.deepEqual(odd.meterCalls(), []);
+});
+
+test("usagemeter: --no-usagemeter skips the step, with no download", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /usagemeter: skipped \(--no-usagemeter\)/);
+  assert.deepEqual(s.meterCalls(), []);
+  assert.equal(existsSync(meterBin(s)), false);
+  assert.match(s.run("--help").out, /--no-usagemeter/);
+});
+
+test("usagemeter: never a downgrade (0.10.0 is newer than 0.2.0); an older one is replaced; a link or folder stays", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  plantMeter(s, "0.10.0");
+  const kept = sha(meterBin(s));
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /usagemeter 0\.10\.0 is installed .*not older than 0\.2\.0: not replacing it/);
+  assert.equal(sha(meterBin(s)), kept);
+  assert.deepEqual(s.meterCalls(), []);
+  assert.equal(parseMarker(s.mark()).usagemeter, null);
+  // An older one is replaced.
+  plantMeter(s, "0.1.9");
+  const up = s.run();
+  assert.equal(up.code, 0, up.err);
+  assert.equal(meterSays(s), "usagemeter 0.2.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  // A link (a build the person points at) is left, and no longer recorded as the pack's.
+  rmSync(meterBin(s));
+  symlinkSync("/usr/bin/true", meterBin(s));
+  const linked = s.run();
+  assert.equal(linked.code, 0, linked.err);
+  assert.match(linked.out, /usagemeter: left .*, a link or a folder, as it is/);
+  assert.equal(readlinkSync(meterBin(s)), "/usr/bin/true");
+  assert.equal(parseMarker(s.mark()).usagemeter, null);
+  rmSync(meterBin(s));
+  mkdirSync(join(meterBin(s), "inside"), { recursive: true });
+  const folder = s.run();
+  assert.equal(folder.code, 0, folder.err);
+  assert.deepEqual(readdirSync(meterBin(s)), ["inside"]);
+});
+
+test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left with a warning", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  // A pre-release of a newer version, or of the pinned one: kept, no download.
+  for (const dev of ["0.3.0-dev", "0.2.0-dev", "0.2.1+abc"]) {
+    plantMeter(s, dev);
+    const kept = sha(meterBin(s));
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`usagemeter ${dev.replace(/[.+]/g, "\\$&")} is installed .*not replacing it`));
+    assert.equal(sha(meterBin(s)), kept, dev);
+    assert.deepEqual(s.meterCalls(), [], dev);
+    assert.equal(parseMarker(s.mark()).usagemeter, null);
+  }
+  // No version at all (not a usagemeter answer): left, with exactly one warning.
+  exe(meterBin(s), "#!/bin/sh\necho 'something else 1.0'\n");
+  const kept = sha(meterBin(s));
+  const none = s.run();
+  assert.equal(none.code, 0, none.err);
+  assert.equal(none.out.split("\n").filter((l) => /^Warning:/.test(l)).length, 1, none.out);
+  assert.match(none.out, /Warning: .*\/usagemeter reports no usagemeter version; left it as it is/);
+  assert.equal(sha(meterBin(s)), kept);
+  assert.deepEqual(s.meterCalls(), []);
+  // A pre-release of an older version is older: replaced by the pinned release.
+  plantMeter(s, "0.1.0-dev");
+  const old = s.run();
+  assert.equal(old.code, 0, old.err);
+  assert.equal(meterSays(s), "usagemeter 0.2.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+});
+
+test("usagemeter: --uninstall --no-usagemeter keeps even a pack-installed binary", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  const kept = sha(meterBin(s));
+  const u = s.run("--uninstall", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err);
+  assert.match(u.out, /Left .*\/usagemeter \(--no-usagemeter\)\./);
+  assert.equal(sha(meterBin(s)), kept);
+  assert.match(s.run("--help").out, /--uninstall keeps it/);
+});
+
+test("usagemeter: --uninstall removes a pack-installed binary and leaves one the person installed", (t) => {
+  // Installed by the pack: removed.
+  const ours = scratch(t);
+  ours.publish("9.9.0");
+  ours.publishMeter();
+  assert.equal(ours.run("--yes").code, 0);
+  const u = ours.run("--uninstall");
+  assert.equal(u.code, 0, u.err);
+  assert.match(u.out, /Removed .*\/usagemeter \(usagemeter 0\.2\.0\)\. Its store is kept\./);
+  assert.equal(existsSync(meterBin(ours)), false);
+  // The person's own (the pinned version, there first): never recorded, never removed.
+  const theirs = scratch(t);
+  theirs.publish("9.9.0");
+  theirs.publishMeter();
+  plantMeter(theirs, "0.2.0");
+  const planted = sha(meterBin(theirs));
+  assert.equal(theirs.run("--yes").code, 0);
+  assert.equal(parseMarker(theirs.mark()).usagemeter, null);
+  assert.equal(theirs.run("--uninstall").code, 0);
+  assert.equal(sha(meterBin(theirs)), planted);
+  // Ours, then replaced by a newer one (Pocket Link's): left.
+  const newer = scratch(t);
+  newer.publish("9.9.0");
+  newer.publishMeter();
+  assert.equal(newer.run("--yes").code, 0);
+  plantMeter(newer, "0.3.0");
+  const n = newer.run("--uninstall");
+  assert.match(n.out, /Left .*usagemeter: it is not the usagemeter 0\.2\.0 this installer put there/);
+  assert.equal(meterSays(newer), "usagemeter 0.3.0");
+  // Ours, with Pocket Link installed beside the pack: left, and Pocket Link untouched.
+  const pocket = scratch(t);
+  pocket.publish("9.9.0");
+  pocket.publishMeter();
+  assert.equal(pocket.run("--yes").code, 0);
+  mkdirSync(join(pocket.mods, "pocket-link"));
+  writeFileSync(join(pocket.mods, "pocket-link", "main.js"), "// pocket\n");
+  const pl = treeSum(join(pocket.mods, "pocket-link"));
+  const p = pocket.run("--uninstall");
+  assert.match(p.out, /Left .*usagemeter: Pocket Link .* runs it too/);
+  assert.equal(meterSays(pocket), "usagemeter 0.2.0");
+  assert.equal(treeSum(join(pocket.mods, "pocket-link")), pl);
 });
