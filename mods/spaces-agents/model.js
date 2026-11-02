@@ -68,12 +68,16 @@ const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x)
 const isText = (x) => typeof x === "string" && x.trim() !== "";
 const isWave = (x) => Number.isInteger(x) && x > 0;
 
-/** The worker fields a bot may set (`worker: { agent?, model?, effort? }`), each optional text. */
-export const WORKER_FIELDS = ["agent", "model", "effort"];
+/** An hc template name (a file in herdr-core's templates folder): no dash first, no spaces. */
+export const TEMPLATE_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** The worker fields a bot may set (`worker: { agent?, model?, effort?, template? }`), each optional text. */
+export const WORKER_FIELDS = ["agent", "model", "effort", "template"];
 
 /**
  * Why a bot's `worker` (its workers' defaults) can't be used, or null when it is absent or
- * fine: an object whose agent, model and effort, where given, are non-empty text. Other keys
+ * fine: an object whose agent, model, effort and template, where given, are non-empty text,
+ * none starting with a dash, and whose template is an hc template name (TEMPLATE_SHAPE). Other keys
  * in it are kept as they are.
  */
 export function workerProblem(worker) {
@@ -82,7 +86,9 @@ export function workerProblem(worker) {
   const bad = WORKER_FIELDS.filter((k) => worker[k] !== undefined && !isText(worker[k]));
   if (bad.length) return `worker ${bad.join(", ")} not text`;
   const dashed = WORKER_FIELDS.filter((k) => typeof worker[k] === "string" && worker[k].trimStart().startsWith("-"));
-  return dashed.length ? `worker ${dashed.join(", ")} starts with a dash (an agent would read it as an option)` : null;
+  if (dashed.length) return `worker ${dashed.join(", ")} starts with a dash (an agent would read it as an option)`;
+  return worker.template !== undefined && !TEMPLATE_SHAPE.test(worker.template)
+    ? `worker template "${worker.template}" isn't an hc template name (letters, digits, ".", "_" and "-")` : null;
 }
 
 /**

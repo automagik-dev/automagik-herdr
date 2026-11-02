@@ -508,6 +508,14 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 - `--uninstall` doesn't revert rewritten references.
 - Group 7 must switch `PROJECTS_FILE` to `am-sidebar-projects.json` in the same release, update install.sh's hard-coded `spaces-agents` updater path, fix the RECIPE mentions of `mod-manager.installed`, and add `migrate.js` to the AGENTS.md pure list.
 
+**Carried from the Group 6b review:**
+- **Must fix before release:** a project rooted at `$HOME` makes the hook scan walk `~/Desktop`, `~/Documents`, `~/Downloads` and `~/Library`. That can trigger macOS privacy prompts. Skip the scan, or limit it, when the root is the home folder.
+- LOW: `botPaneFolders` reads `cwd` before `foreground.cwd`, but Attach writes to `foreground.cwd`. Swap the order.
+- LOW: a scan that hits the 5,000-folder cap is silent. Log "scan stopped at N in <root>".
+- LOW: open spaces outside the remembered lists don't get a worktree or subfolder scan. Confirm this is intended.
+- Release notes: an update run by v0.3.x's own updater doesn't migrate hooks or references (6a/6b). Rerun install.sh, or Start/Attach a bot.
+- Group 7: `briefingPath`, `entryCommand`'s fallback and install.sh's extraction list still hardcode `spaces-agents`.
+
 **Interfaces:**
 - Consumes: every group.
 - Produces: GitHub release v0.4.0.
@@ -645,6 +653,27 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - `migrated=` is recorded before the first rewrite;
   - the newest personal catalog URL wins.
 - **LOW items left open:** carried to Group 8.
+
+### Group 6b — the briefing hook survives renames — 2026-11-02 (merged into wish/am-pack, #36)
+
+- **Review:** FIX-FIRST, then SHIP.
+  - **Round 1:**
+    - hooks that Attach wrote into a subfolder were never found (MEDIUM);
+    - another app home's hooks were moved;
+    - a repo root that isn't a known project was edited;
+    - a first-occurrence replace re-serialised the whole file.
+  - **Fixed in 9e64a69:**
+    - discovery now uses a bounded scan, the ledger's folders and live bot panes;
+    - only this app home's hooks move;
+    - worktree roots must be known projects;
+    - the edit is made in place, keeping the file's bytes.
+  - **Probes:** the shim fails open, still runs after the rename and takes about 0.04 s. Revert edits only forward values. The CLI link moves only when it's ours.
+- **Gate:** 517 tests (516 pass, 1 skipped). CI is green.
+- **Rulings accepted:**
+  - a fixed entry point at `<app home>/automagik-herdr/briefing.mjs`;
+  - one hooks journal;
+  - numbered `.am-backup` files;
+  - revert moves a byte-equal stable command back, so v0.3 never adds a duplicate.
 
 ### Group 5a — am-markdown — 2026-11-02 (merged, #19)
 

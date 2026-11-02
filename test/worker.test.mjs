@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
 import { effortArgs } from "../mods/spaces-agents/models.js";
-import { baseCandidates, branchSlug, parseWorktrees, readLedger, sessionChange, startRow, workerArgs, workerPlan }
+import { baseCandidates, branchSlug, parseWorktrees, readLedger, sessionChange, startRow, templateAgent, workerArgs, workerPlan }
   from "../mods/spaces-agents/workers.js";
 
 const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -34,7 +34,7 @@ const term = (address, { bot: b, cwd }) => ({ address, name: address, cwd, state
   labels: b ? { bot: b } : {}, foreground: { argv: ["claude"], cwd, pid: 4000 }, status: { app: "claude-code", state: "idle" } });
 
 /** A scratch world: a git project on main with its bots, a fake hc whose t1..t3 are panes in it. */
-function scene(t, { file = team(), branch = "main", briefing = true } = {}) {
+function scene(t, { file = team(), branch = "main", briefing = true, templates = TEMPLATES } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-worker-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
@@ -56,7 +56,7 @@ function scene(t, { file = team(), branch = "main", briefing = true } = {}) {
   const logPath = join(root, "hc.log");
   const terminals = [term("t1", { bot: ID.dev, cwd: project }), term("t2", { cwd: project }), term("t3", { bot: ID.stray, cwd: project }),
     term("t4", { bot: ID.cap, cwd: project })];
-  writeFileSync(statePath, JSON.stringify({ terminals, next: 100 }));
+  writeFileSync(statePath, JSON.stringify({ terminals, next: 100, templates }));
   writeFileSync(logPath, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
   delete env.HC_TERMINAL_ID;
@@ -78,9 +78,28 @@ function scene(t, { file = team(), branch = "main", briefing = true } = {}) {
     st.terminals.find((x) => x.address === address).state = "finished";
     writeFileSync(statePath, JSON.stringify(st));
   };
-  return { root, project, app, cli, cliAsync, calls, runs, hcState, ledger, bots, finish };
+  return { root, project, app, path: env.PATH, cli, cliAsync, calls, runs, hcState, ledger, bots, finish };
 }
-const after = (args) => args.slice(args.indexOf("--") + 1);
+/** hc's templates in the scenes: one Codex seat with its own provider, one hc can't place. */
+const TEMPLATES = [
+  { name: "dev-sol", command: 'env PATH="$HOME/.bun/bin:$PATH" codex -c model_provider=juice -m gpt-6.1-sol -c model_reasoning_effort=high' },
+  { name: "opus-rev", command: "claude --dangerously-skip-permissions --model claude-opus-5-5" },
+  { name: "mystery", command: "./run-something.sh" },
+];
+/** What `hc run` runs after `--`, as raw words. */
+const runArgv = (args) => args.slice(args.indexOf("--") + 1);
+/** A template run: no `--`; the template and the task follow the last option (`--parent P`). */
+const templateArgv = (args) => {
+  assert.equal(args.includes("--"), false, `hc's template form has no --: ${JSON.stringify(args)}`);
+  return args.slice(args.indexOf("--parent") + 2);
+};
+/** The agent's argv: after `--`, past the `env PATH=…` every agent worker starts with. */
+const after = (args) => {
+  const argv = runArgv(args);
+  assert.equal(argv[0], "/usr/bin/env", `an agent worker runs under /usr/bin/env PATH=…: ${JSON.stringify(argv)}`);
+  assert.match(argv[1], /^PATH=/);
+  return argv.slice(2);
+};
 const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
 
 // ---- the worker's program: defaults, overrides, fallback ----
@@ -200,6 +219,9 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   assert.equal(run[run.indexOf("--cwd") + 1], wt);
   assert.equal(run[run.indexOf("--name") + 1], "feat-login");
   assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.model=gpt-5.5", "worker.effort=medium"]);
+  // The agent gets the calling pane's PATH (herdr-core's lacks ~/.bun/bin, where omp lives),
+  // as argv words, never a shell string.
+  assert.deepEqual(runArgv(run).slice(0, 3), ["/usr/bin/env", `PATH=${s.path}`, "codex"]);
   const made = s.hcState().terminals.find((x) => x.address === "t100");
   assert.equal(made.parent, "t1");
   assert.equal(made.cwd, wt);
@@ -213,7 +235,7 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   // The ledger row usagemeter joins on, with the worker's foreground pid.
   const [row] = s.ledger();
   assert.deepEqual({ ...row, at: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: 5100, botId: ID.dev,
-    task: "feat/login", worktree: wt, agent: "codex", model: "gpt-5.5", effort: "medium", at: undefined });
+    task: "feat/login", worktree: wt, agent: "codex", model: "gpt-5.5", effort: "medium", template: null, at: undefined });
   assert.ok(!Number.isNaN(Date.parse(row.at)));
 });
 
@@ -225,6 +247,98 @@ test("start and attach append a seat row to the ledger", (t) => {
   assert.equal(s.cli(["attach", "Captain", "t2"], { from: null }).code, 0);
   const attached = s.ledger().filter((r) => r.kind === "seat")[1];
   assert.deepEqual([attached.terminal, attached.botId, attached.agent, attached.pid], ["t2", ID.cap, "claude", 4000]);
+  assert.equal(seat.template, null, "a seat runs no template");
+});
+
+// ---- hc templates ----
+
+test("worker --template: hc's template form, a child of the bot's pane in the worktree, labelled; ledger names it", (t) => {
+  const s = scene(t);
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--template", "dev-sol", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const wt = join(s.project, ".claude/worktrees/feat-login");
+  assert.deepEqual(run.slice(0, 3), ["run", "--bg", "--json"]);
+  assert.equal(run[run.indexOf("--parent") + 1], "t1");
+  assert.equal(run[run.indexOf("--cwd") + 1], wt);
+  assert.equal(run[run.indexOf("--name") + 1], "feat-login");
+  assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.template=dev-sol"]);
+  assert.deepEqual(templateArgv(run), ["dev-sol", "fix the login form"], "the template sets its own command: no env, no agent argv");
+  const out = r.json();
+  assert.deepEqual([out.template, out.agent, out.model, out.effort, out.argv], ["dev-sol", null, null, null, null]);
+  assert.doesNotMatch(r.err, /ignored/, "a per-task template sets the bot's defaults aside without a word");
+  const [row] = s.ledger();
+  assert.deepEqual({ ...row, at: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: 5100, botId: ID.dev,
+    task: "feat/login", worktree: wt, agent: null, model: null, effort: null, template: "dev-sol", at: undefined });
+  // A codex template: no Claude hook in the worktree, and no warning about one.
+  assert.equal(existsSync(join(wt, ".claude/settings.local.json")), false);
+  assert.doesNotMatch(r.err, /session hook/);
+  // Text output names the template and the agent it runs.
+  const text = s.cli(["worker", "review it", "--branch", "feat/review", "--template", "opus-rev"]);
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /template  opus-rev \(runs claude\)/);
+  assert.ok(existsSync(join(s.project, ".claude/worktrees/feat-review/.claude/settings.local.json")), "a Claude template gets the hook");
+});
+
+test("worker --template with --agent, --model or --effort is refused; an unknown template too, before any worktree", (t) => {
+  const s = scene(t);
+  for (const extra of [["--model", "gpt-6.1-sol"], ["--agent", "codex"], ["--effort", "high"]]) {
+    const r = s.cli(["worker", "x", "--branch", "feat/x", "--template", "dev-sol", ...extra]);
+    assert.equal(r.code, 2, extra.join(" "));
+    assert.match(r.err, /A template owns its command: --template goes alone/);
+  }
+  const unknown = s.cli(["worker", "x", "--branch", "feat/x", "--template", "nope"]);
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.err, /hc has no template nope\. Its templates: dev-sol, opus-rev, mystery/);
+  assert.equal(s.cli(["worker", "x", "--branch", "feat/x", "--template", "-x"]).code, 2, "not a template name");
+  const empty = s.cli(["worker", "x", "--branch", "feat/x", "--template="]);
+  assert.equal(empty.code, 2, "an empty --template is refused, never the default template");
+  assert.match(empty.err, /--template needs a name/);
+  assert.equal(s.runs().length, 0);
+  assert.equal(existsSync(join(s.project, ".claude/worktrees/feat-x")), false);
+});
+
+test("worker: a bots.json template default is used; a per-task --agent sets it aside", (t) => {
+  const file = team();
+  file.bots[1].worker = { template: "dev-sol" };
+  file.bots[2].worker = { ...file.bots[2].worker, template: "dev-sol" };
+  const s = scene(t, { file });
+  const r = s.cli(["worker", "build it", "--branch", "feat/build", "--json"], { from: "t4" });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(templateArgv(s.runs()[0]), ["dev-sol", "build it"]);
+  assert.equal(r.json().template, "dev-sol");
+  assert.doesNotMatch(r.err, /ignored/, "no agent, model or effort default to set aside");
+  // The captain picks Claude for a reviewer: the template default steps aside.
+  const o = s.cli(["worker", "review it", "--branch", "review/x", "--agent", "claude", "--json"], { from: "t4" });
+  assert.equal(o.code, 0, o.err);
+  assert.deepEqual(after(s.runs()[1]), ["claude", "review it"]);
+  assert.deepEqual([o.json().template, o.json().agent], [null, "claude"]);
+  assert.equal(labelsOf(s.runs()[1]).some((l) => l.startsWith("worker.template=")), false);
+  assert.deepEqual(s.ledger().map((row) => row.template), ["dev-sol", null]);
+  // Template and agent, model and effort all as defaults: the template wins, with a warning.
+  const both = s.cli(["worker", "dev it", "--branch", "feat/dev", "--json"]);
+  assert.equal(both.code, 0, both.err);
+  assert.deepEqual(templateArgv(s.runs()[2]), ["dev-sol", "dev it"]);
+  assert.match(both.err, /Dev's worker template dev-sol owns its command; its worker agent, model, effort defaults are ignored/);
+  // --model alone is a per-task pick too: the default template steps aside for the default agent.
+  const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
+  assert.equal(m.code, 0, m.err);
+  assert.deepEqual(after(s.runs()[3]), ["codex", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+});
+
+test("worker --template: an agent the command doesn't name skips the hook with a warning; no template list refuses", (t) => {
+  const s = scene(t);
+  const r = s.cli(["worker", "x", "--branch", "feat/x", "--template", "mystery"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /Can't tell which agent template mystery runs, so no session hook was written/);
+  assert.equal(existsSync(join(s.project, ".claude/worktrees/feat-x/.claude/settings.local.json")), false);
+  const old = scene(t, { templates: null });
+  // No list: an unlisted name would run as a program (`--template rm`), so nothing starts.
+  const o = old.cli(["worker", "x", "--branch", "feat/x", "--template", "rm"]);
+  assert.equal(o.code, 1, o.err);
+  assert.match(o.err, /hc templates gave no list .*rm can't be checked as a template.*Not started/);
+  assert.equal(old.runs().length, 0);
+  assert.equal(existsSync(join(old.project, ".claude/worktrees/feat-x")), false);
 });
 
 // ---- refusals ----
@@ -273,6 +387,20 @@ test("bots.json worker: kept through parse, a form save and checkBots; an invali
   const saved = applyBotEdit(raw, formEntry);
   assert.deepEqual(checkBots(saved, raw), []);
   assert.deepEqual(parseBots(JSON.stringify(saved)).file.bots[2].worker, { agent: "codex", model: "gpt-5.5", effort: "medium" });
+  // A template default survives the same round-trip.
+  const withTemplate = team();
+  withTemplate.bots[1].worker = { template: "dev-sol", effort: "high" };
+  const tp = parseBots(JSON.stringify(withTemplate));
+  assert.deepEqual(tp.warnings, []);
+  const resaved = applyBotEdit(tp.raw, { ...formEntry, id: ID.cap, name: "Captain", agent: "codex" });
+  assert.deepEqual(checkBots(resaved, tp.raw), []);
+  assert.deepEqual(parseBots(JSON.stringify(resaved)).file.bots[1].worker, { template: "dev-sol", effort: "high" });
+  withTemplate.bots[1].worker = { template: "--x" };
+  assert.match(parseBots(JSON.stringify(withTemplate)).warnings.join("\n"), /worker template starts with a dash/);
+  withTemplate.bots[1].worker = { template: "dev sol; rm" };
+  const odd = parseBots(JSON.stringify(withTemplate));
+  assert.equal(odd.file.bots[1].worker, undefined, "not an hc template name: dropped");
+  assert.match(odd.warnings.join("\n"), /b-bbbbbbbbbb: worker template "dev sol; rm" isn't an hc template name.*; ignored/);
   // An entry naming it empty removes it.
   assert.equal(applyBotEdit(raw, { ...formEntry, worker: {} }).bots[2].worker, undefined);
   const bad = team();
@@ -299,6 +427,11 @@ test("create and edit --worker-agent/--worker-model/--worker-effort write the fi
   const c = s.cli(["create", "--name", "Tester", "--agent", "claude", "--worker-agent", "codex", "--worker-model", "gpt-5.5", "--json"], { from: null });
   assert.equal(c.code, 0, c.err);
   assert.deepEqual(c.json().bot.worker, { agent: "codex", model: "gpt-5.5" }, "codex lists no models here: any model is taken");
+  assert.equal(s.cli(["edit", "Tester", "--worker-template", "dev-sol"], { from: null }).code, 0);
+  assert.deepEqual(s.bots().bots.find((b) => b.name === "Tester").worker, { agent: "codex", model: "gpt-5.5", template: "dev-sol" });
+  assert.equal(s.cli(["edit", "Tester", "--worker-template", "-x"], { from: null }).code, 2);
+  assert.equal(s.cli(["edit", "Tester", "--worker-template="], { from: null }).code, 0);
+  assert.deepEqual(s.bots().bots.find((b) => b.name === "Tester").worker, { agent: "codex", model: "gpt-5.5" });
 });
 
 // ---- the pure parts ----
@@ -341,6 +474,17 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(sessionChange(get, JSON.stringify({ session_id: "s1" })), null, "same session: nothing");
   assert.deepEqual(sessionChange(get, JSON.stringify({ session_id: "s2", transcript_path: "/x.jsonl" })), { session: "s2", transcript: "/x.jsonl" });
   assert.equal(sessionChange(get, "not json"), null);
+  // The template form: `<template> <task>` after the options, no `--`, the template label, no env and no model labels.
+  assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: null, cwd: "/p/wt", parent: "t1", model: null, effort: null,
+    argv: null, task: "do it", template: "dev-sol", path: "/x/bin" }),
+  ["run", "--bg", "--json", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "task=feat/a",
+    "--label", "worker.template=dev-sol", "--parent", "t1", "dev-sol", "do it"]);
+  assert.deepEqual(runArgv(workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", argv: ["omp"], task: "t", path: "/a:/b" })),
+    ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
+  assert.deepEqual(TEMPLATES.map((x) => templateAgent(x.command)), ["codex", "claude", null]);
+  assert.equal(templateAgent("claude-wrapper --model x"), null, "a word of its own, not a prefix");
+  assert.equal(startRow({ kind: "worker", terminal: "t9", botId: ID.dev, template: "dev-sol" }).template, "dev-sol");
+  assert.match(workerPlan({ name: "G", agent: "claude" }, { template: "x", model: "m" }).error, /--template goes alone, without --model/);
   assert.equal(sessionChange(null, JSON.stringify({ session_id: "s2" })), null);
 });
 

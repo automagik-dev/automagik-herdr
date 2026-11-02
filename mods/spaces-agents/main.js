@@ -20,6 +20,7 @@ import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./up
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
+import { workerClick, workerTabName, openWorkerTab } from "./workerTab.js";
 import { liveFrom, buildTree, placeTrees, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
@@ -210,6 +211,8 @@ export default class Spaces extends View {
     // didn't carry it.
     this.modelTexts = {};
     this.argvOf = new Map();
+    // Workers whose tab is on its way (openHelper): a second click waits for it.
+    this.opening = new Set();
     this.loadModelTexts(cx);
     // Hermes's own icon from the program table (its process shows as Python).
     this.hermes = { key: "hermes", name: "Hermes", icon: "icons/hermes.svg", tint: true };
@@ -541,13 +544,27 @@ export default class Spaces extends View {
       .children(this.guides(r.guides, t))
       .child(h_flex().id(`row-${r.id}`).flex_1().min_w(0).h(26).px(6).gap(8).items_center().rounded(8).text_size(12).cursor_pointer()
         .when(shown, (el) => el.bg(t.raised)).hover((s) => s.bg(t.hover))
-        .on_click(() => focusOrPeek(h.terminal))
+        .on_click((_e, cx) => this.openHelper(r, cx))
         .child(pic)
         .child(div().flex_1().min_w(0).truncate().text_color(shown ? t.foreground : t.muted).child(h.name))
-        .when(Boolean(h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10).text_color(t.dim)
-          .child([h.model, h.effort].filter(Boolean).join(" · "))))
+        .when(Boolean(h.template || h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10)
+          .text_color(t.dim).child([h.template, h.model, h.effort].filter(Boolean).join(" · "))))
         .when(h.terminal.includes("/"), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(h.terminal.split("/")[0])))
         .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) })));
+  }
+
+  // A helper or worker row's click (workerTab.js): its pane; else a tab after its bot's tab,
+  // once per worker while that tab is on its way; else a peek.
+  openHelper(r, cx) {
+    const h = r.helper;
+    const plan = workerClick({ terminal: h.terminal, botTerminal: r.ownerTerminal, name: workerTabName(h), panes: panes(), spaces: spaces() });
+    if (plan.kind !== "open") return focusOrPeek(h.terminal);
+    if (this.opening.has(h.terminal)) return;
+    this.opening.add(h.terminal);
+    cx.spawn(async (cx) => {
+      const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify }); } finally { this.opening.delete(h.terminal); }
+    });
   }
 
   // A bot row (A4): fold slot, character, name in its ink over `role · model`, the agent's
