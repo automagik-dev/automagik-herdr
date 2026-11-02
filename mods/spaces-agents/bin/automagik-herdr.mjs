@@ -976,7 +976,8 @@ async function givenWorktree(path, key, bot) {
  * --branch: the worktree already on that branch, or a new one in
  * `<main checkout>/.claude/worktrees/<slug>`. A new branch starts from --base, else
  * origin's own branch of that name, else origin/HEAD's branch, else dev, else main, after a
- * fetch. Only `git worktree add` runs: the main checkout's HEAD is never touched.
+ * fetch. Only `git worktree add` runs: the main checkout's HEAD is never touched. The new
+ * branch tracks nothing unless it continues origin's branch of the same name.
  */
 async function branchWorktree(branch, base, key, warnings) {
   const ok = !branch.startsWith("-") && (await runProgram("git", ["check-ref-format", "--branch", branch], { cwd: key })).code === 0;
@@ -1013,7 +1014,11 @@ async function branchWorktree(branch, base, key, warnings) {
     const candidates = base ? [base] : [`origin/${branch}`, ...baseCandidates(null, originHead)];
     for (const ref of candidates) if (await has(ref)) { from = ref; break; }
     if (!from) throw new CliError(base ? `--base: ${base} isn't a commit in ${key}.` : `${key} has no origin/HEAD, dev or main to start ${branch} from; pass --base.`);
-    args = ["worktree", "add", "-b", branch, path, from];
+    // Only origin's own branch of that name becomes the upstream. Any other start (origin/dev)
+    // would, by git's branch.autoSetupMerge, make a plain `git pull` merge it and a plain
+    // `git push` (push.default=upstream) push to it; the worker's first push sets its own.
+    const track = from === `origin/${branch}` ? "--track" : "--no-track";
+    args = ["worktree", "add", track, "-b", branch, path, from];
   }
   const r = await runProgram("git", args, { cwd: key, timeout: 60_000 });
   if (r.code !== 0) throw new CliError(`git ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);

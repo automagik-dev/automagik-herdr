@@ -132,7 +132,9 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
 - **Where:** `--worktree DIR` uses an existing worktree of the bot's project. `--branch B`
   reuses the worktree already on `B`, or makes `<main checkout>/.claude/worktrees/<slug>`
   with `git worktree add -b B`. After a fetch, a new branch starts from `--base`, else
-  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`, else `master`. The main
+  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`, else `master`. It tracks
+  `origin/B` when it starts there and nothing otherwise, so the first push is
+  `git push -u origin B` and a plain `git push` never lands on the base. The main
   checkout is never a worker's folder, and its HEAD is never moved. `/.claude/worktrees/` goes
   into the clone's own git exclude, so `git add -A` in the main checkout never picks a
   worktree up.
