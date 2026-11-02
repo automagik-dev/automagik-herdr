@@ -209,7 +209,7 @@ offer_switch() {
 layout_notes() {
   [ -f "$REF" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
-    [ -f "$f" ] && [ "$f" != "$LAYOUT" ] || continue
+    if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
     grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$f" || continue
     lacks=
     for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
