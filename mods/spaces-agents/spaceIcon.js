@@ -2,23 +2,29 @@
 // PNG, SVG or ICO. Kept under the app home in space-icons/, mapped by full space id in
 // shared "spaces-agents.icons" (the spaces-agents sidebar draws it). An ICO is converted
 // to PNG on import with sips, which is what the sidebar can draw.
-import { View, div, image } from "gpui-kit";
+// Part of the sidebar mod: a space's tile opens this mod as a dialog with props
+// {spaceIcon: <space id>}, and main.js's init hands it to this class (as it does BotForm).
+import { div, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { props, closeOverlay, theme, spaces, shared, setShared, appHome, home, exec } from "herdr";
+import { closeOverlay, theme, spaces, shared, setShared, appHome, home, exec } from "herdr";
 import * as fs from "fs/promises";
 import { chars, names } from "./emoji-data.js";
-import { KEY, emojiError, iconFile, kindOf, pngError, readIcon, svgError } from "./icon.js";
+import { COLORS, COLORS_KEY, KEY, MAX_BYTES, colorError, emojiError, emojiHits, iconFile, isHex, kindOf, pngError, readIcon, svgError,
+  tileFill, withColor, withIcon, withoutIcon } from "./spaceIconModel.js";
 
 // The picker: a grid of cells per page, narrow enough for a 440 px dialog.
 const COLS = 12;
 const PER_PAGE = COLS * 7;
 
-// The sidebar's palette for a space's tile, and a hex of your own; it reads either.
-const COLORS = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
-const isHex = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v);
+// The overlay a space's tile opens: this mod again, as the icon dialog for that space.
+export function spaceIconOverlay(spaceId) {
+  return { mod: "spaces-agents", kind: "dialog", width: 440, height: 520, props: { spaceIcon: spaceId } };
+}
 
-export default class SpaceIcon extends View {
-  init(_props, cx) {
+export class SpaceIconDialog {
+  // p: the overlay's props, {spaceIcon: <space id>, overlay: <its id, to close>}.
+  constructor(p, cx) {
+    this.p = p ?? {};
     this.error = null;
     this.busy = false;
     this.tab = "emoji";
@@ -44,15 +50,13 @@ export default class SpaceIcon extends View {
 
   // What the sidebar draws behind the tile now: a palette name or a hex.
   color() {
-    const held = (shared("space.colors") ?? {})[props()?.space];
+    const held = (shared(COLORS_KEY) ?? {})[this.p.spaceIcon];
     return typeof held === "string" ? held : null;
   }
 
   // The tile's fill, in this theme: the palette's color, the hex as typed, or none at all.
   fill(t) {
-    const color = this.color() ?? "ansi6";
-    if (color === "transparent") return null;
-    return color.startsWith("#") ? color : t[color] ?? t.accent;
+    return tileFill(this.color(), t);
   }
 
   // Saves the color and stays open: it's the icon's backdrop, not the whole dialog's job.
@@ -60,29 +64,26 @@ export default class SpaceIcon extends View {
     const { id } = this.target();
     const value = String(raw ?? "").trim();
     if (!id) return void (this.error = "No space chosen.");
-    if (!value) { this.error = "Pick a color, or type a hex like #5b8def."; cx.notify(); return; }
-    if (!COLORS.includes(value) && value !== "transparent" && !isHex(value)) { this.error = "Pick a swatch, transparent, or a hex like #5b8def."; cx.notify(); return; }
+    const wrong = colorError(value);
+    if (wrong) { this.error = wrong; cx.notify(); return; }
     this.error = null;
-    setShared("space.colors", { ...(shared("space.colors") ?? {}), [id]: value });
+    setShared(COLORS_KEY, withColor(shared(COLORS_KEY), id, value));
     if (isHex(value)) this.hex.set_value(value);
     cx.notify();
   }
 
   // What the dialog acts on: the space in props, its overlay to close.
   target() {
-    return { id: props()?.space, overlay: props()?.overlay };
+    return { id: this.p.spaceIcon, overlay: this.p.overlay };
   }
 
   // Writes the new value, drops the file it replaces, and closes.
   async commit(value, cx) {
     const { id } = this.target();
-    const map = { ...(shared(KEY) ?? {}) };
-    const old = readIcon(map[id]);
-    map[id] = value;
+    const { map, drop } = withIcon(shared(KEY), id, value);
     setShared(KEY, map);
-    if (old?.kind === "image" && old.file.startsWith("space-icons/") && old.file !== value.file)
-      await fs.unlink(`${appHome()}/${old.file}`).catch(() => {});
-    closeOverlay(props().overlay);
+    if (drop) await fs.unlink(`${appHome()}/${drop}`).catch(() => {});
+    closeOverlay(this.p.overlay);
   }
 
   applyEmoji(raw, cx) {
@@ -122,6 +123,12 @@ export default class SpaceIcon extends View {
       try {
         let bytes, ext = kind;
         const unreadable = "Can't read that file (it must exist, in your home folder).";
+        // Size first, so a huge drop is refused before it is read (or converted) at all.
+        let size;
+        // Herdr's fs has no stat: wc -c counts the bytes without reading them into this mod.
+        try { const r = await exec("wc", ["-c", path]); size = r.code === 0 ? Number(r.stdout.trim().split(/\s+/)[0]) : NaN; } catch { size = NaN; }
+        if (!Number.isFinite(size)) throw new Error(unreadable);
+        if (size > MAX_BYTES) throw new Error(`Too large: ${(size / 1048576).toFixed(1)} MB (at most 5 MB).`);
         if (kind === "svg") {
           let text;
           try { text = await fs.readFile(path, "utf8"); } catch { throw new Error(unreadable); }
@@ -178,12 +185,10 @@ export default class SpaceIcon extends View {
     this.busy = false;
     this.error = null;
     cx.spawn(async () => {
-      const map = { ...(shared(KEY) ?? {}) };
-      const old = readIcon(map[id]);
-      delete map[id];
+      const { map, drop } = withoutIcon(shared(KEY), id);
       setShared(KEY, map);
-      if (old?.kind === "image" && old.file.startsWith("space-icons/")) await fs.unlink(`${appHome()}/${old.file}`).catch(() => {});
-      closeOverlay(props().overlay);
+      if (drop) await fs.unlink(`${appHome()}/${drop}`).catch(() => {});
+      closeOverlay(this.p.overlay);
     });
   }
 
@@ -208,9 +213,7 @@ export default class SpaceIcon extends View {
       .when(enabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => action(cx)))
       .when(!enabled, (el) => el.opacity(0.4))
       .child(text);
-    const query = this.query.trim().toLowerCase();
-    const hits = [];
-    for (let i = 0; i < chars.length; i++) if (!query || names[i].includes(query) || chars[i] === query) hits.push(i);
+    const hits = emojiHits(this.query, chars, names);
     const pages = Math.max(1, Math.ceil(hits.length / PER_PAGE));
     if (this.page > pages - 1) this.page = pages - 1;
     const shown = hits.slice(this.page * PER_PAGE, this.page * PER_PAGE + PER_PAGE);
@@ -279,9 +282,9 @@ export default class SpaceIcon extends View {
 
   render() {
     const t = theme();
-    const p = props() ?? {};
-    const space = spaces().find((s) => s.id === p.space);
-    const current = readIcon((shared(KEY) ?? {})[p.space]);
+    const p = this.p;
+    const space = spaces().find((s) => s.id === p.spaceIcon);
+    const current = readIcon((shared(KEY) ?? {})[p.spaceIcon]);
     const fill = this.fill(t);
     const chosen = this.color() ?? "ansi6";
     const button = (id, text, primary, action, enabled = true) => h_flex().id(id).h(32).px(14).items_center().rounded(8)

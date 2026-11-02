@@ -8,7 +8,7 @@ Derived from Herdr's shipped mods (Herdr, Apache-2.0; the app's LICENSE is copie
 mods/*/LICENSE where a mod derives from one):
   mods/spaces-agents    from Herdr's `spaces` 0.1.7 — modified throughout; see its own NOTICE,
                         LICENSE-automagik and LICENSE-herdr (the bot view, characters, form,
-                        Start/Attach and briefing are this pack's). Its layout is the root
+                        Start/Attach, briefing and the space icon dialog are this pack's). Its layout is the root
                         layouts/automagik.json, so Herdr does not dock a second sidebar.
   mods/sidebar-chrome   from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg, bot.svg and layers.svg (Lucide, ISC; bot.svg as Herdr ships it in frame/welcome)
   mods/md-menu          from Herdr's `menu` 0.1.10, with the Markdown renderer merged in from
@@ -105,5 +105,5 @@ panel that reads each account's quota and switches the local credential — come
 redistributed here, and no non-trivial line of it is reused (measured by line-diff). Credit for the
 idea, not the code. Ask upstream for a licence before any reuse.
 
-Emoji data in mods/space-icon/emoji-data.js is generated from Unicode's character database
+Emoji data in mods/spaces-agents/emoji-data.js (the space icon dialog) is generated from Unicode's character database
 (Python's `unicodedata`), not copied from any font or table.
