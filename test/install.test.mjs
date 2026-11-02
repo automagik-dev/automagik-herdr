@@ -293,7 +293,7 @@ test("not macOS: explains and exits 1; Node too old with no brew: says where to 
 test("--help and an unknown option", (t) => {
   const s = scratch(t);
   assert.match(s.run("--help").out, /install\.sh --uninstall/);
-  assert.match(s.run("--help").out, /needs v0\.3\.0 or later/);
+  assert.match(s.run("--help").out, /needs v0\.5\.0 or later/);
   assert.match(s.run("--help").out, /--adopt replaces a pack-named mod/);
   assert.equal(s.run("--nope").code, 2);
 });

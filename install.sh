@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.3.0 or later) instead of the latest
+#   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
 #
@@ -100,7 +100,7 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.3.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
 EOF
@@ -177,6 +177,26 @@ offer_switch() {
     say "Herdr didn't switch."
   fi
   HINT=yes
+}
+
+# A layout of the person's own that shows the sidebar (one adapted for a sidebar-only release)
+# doesn't gain the rest of the pack by itself, and this script never edits it: for each such
+# layout, say which pack surfaces it lacks and where to copy them from.
+layout_notes() {
+  [ -f "$REF" ] || return 0
+  for f in "$APP_HOME"/layouts/*.json; do
+    [ -f "$f" ] && [ "$f" != "$LAYOUT" ] || continue
+    grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$f" || continue
+    lacks=
+    for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
+      'md-menu:the Markdown menu (md-menu)' 'automations:the automations panel (automations)' 'am-quota:the quota panel (am-quota)'; do
+      grep -q "\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
+    done
+    [ -n "$lacks" ] || continue
+    name=${f##*/}
+    say "Your layout ${name%.json} ($f) shows the Automagik sidebar, but not the rest of the pack: $lacks."
+    say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"md-menu\") from the pack's layout, $REF, into it; or use the automagik layout instead."
+  done
 }
 
 switch_hint() {
@@ -317,7 +337,7 @@ install() {
   curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
   # The release names its tarball automagik-herdr-pack-<version>.tgz; SHA256SUMS lists it.
   TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-pack-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
-  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a release before v0.3.0?)."
+  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a sidebar-only release before v0.5.0?)."
   VERSION=${TGZ#automagik-herdr-pack-}
   VERSION=${VERSION%.tgz}
   [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-pack-$WANT.tgz."
@@ -366,6 +386,7 @@ install() {
     say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
   fi
   offer_switch
+  layout_notes
 
   # ---- e. the command ----
   mkdir -p "$BIN_DIR"
