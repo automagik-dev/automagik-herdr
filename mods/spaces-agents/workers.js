@@ -6,6 +6,9 @@
 // briefing hook share it. Apache-2.0.
 
 import { AGENTS, effortArgs, hasEffortFlag, modelArgs, resolveAgent } from "./models.js";
+import { TEMPLATE_SHAPE } from "./model.js";
+
+export { TEMPLATE_SHAPE };
 
 // The usage-tagging contract (usagemeter reads these): a worker terminal carries
 // `worker.of=<botId>` and `task=<branch>`, and its cwd is the task worktree.
@@ -23,9 +26,6 @@ export const optionLike = (value) => typeof value === "string" && value.trimStar
 
 /** An effort level as the agents spell them (low, medium, high, xhigh, max, …). */
 export const EFFORT_SHAPE = /^[a-z][a-z0-9-]{0,31}$/;
-
-/** An hc template name (a file in herdr-core's templates folder): no dash first, no spaces. */
-export const TEMPLATE_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
  * What a worker runs: the per-task `pick` ({ template, agent, model, effort }, each optional)
@@ -90,8 +90,9 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * `hc run` arguments for a worker: in the background, a child of the bot's pane, in the
  * task worktree, with the usage labels and no `bot` label (a worker is never a bot, so the
  * sidebar folds it under its bot as a helper). The task text is the agent's last argument,
- * after `--`, never part of a shell string. An agent runs as `env PATH=<path> <argv>`, so it
- * gets the calling pane's PATH, not herdr-core's (a bun script like omp needs ~/.bun/bin). A
+ * after `--`, never part of a shell string. An agent runs as `/usr/bin/env PATH=<path> <argv>`
+ * (env by its full path, so nothing hangs on core's PATH), so it gets the calling pane's PATH,
+ * not herdr-core's (a bun script like omp needs ~/.bun/bin). A
  * `template` runs in hc's documented template form, `<template> <task>` after the options,
  * with no `--` (neither starts with a dash: both are refused before): it sets its own command.
  */
@@ -102,7 +103,7 @@ export function workerArgs({ botId, branch, name, cwd, parent, model, effort, ar
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
-  const env = path ? ["env", `PATH=${path}`] : [];
+  const env = path ? [ENV, `PATH=${path}`] : [];
   return [...args, "--parent", parent, "--", ...env, ...argv, task];
 }
 
@@ -121,6 +122,9 @@ export function templateAgent(command, agents = AGENTS) {
   }
   return best?.key ?? null;
 }
+
+/** The env program agent workers start under, by its full path (macOS and Linux both have it). */
+export const ENV = "/usr/bin/env";
 
 /** A branch name as a folder name: lowercase, `/` and other marks as `-`. */
 export function branchSlug(branch) {

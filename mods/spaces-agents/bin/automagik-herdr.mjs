@@ -365,7 +365,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   detach <bot>                  take the bot's label off its panes (a removed bot: by its id)
   brief <bot>                   print the bot's per-turn briefing as it would be now
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
-         [--agent A] [--model M] [--effort E | --template T] [--name N]
+         [[--agent A] [--model M] [--effort E] | --template T] [--name N]
                                 from a bot's pane: start one worker for the task, an hc
                                 child of the bot in the task's worktree (prints its terminal);
                                 --template runs an hc template, alone
@@ -1048,16 +1048,17 @@ async function liveWorkers(botId, branch) {
 
 /**
  * The agent an hc template runs, from its command in `hc templates`: an agent key, or
- * undefined when it can't be told (no known agent in the command, or the list failed, with a
- * warning). A template hc doesn't list is refused here, before any worktree is made.
+ * undefined when no known agent is in the command. A template hc doesn't list, or no list at
+ * all, is refused here, before any worktree is made: `hc run` runs an unlisted name as a
+ * program (`--template rm` would run rm).
  */
-async function templateRuns(template, agents, warnings) {
+async function templateRuns(template, agents) {
   const r = await hc(["templates", "--json"]);
   let list = null;
   try { list = r.code === 0 ? JSON.parse(r.stdout).templates : null; } catch { list = null; }
   if (!Array.isArray(list)) {
-    warnings.push(`hc templates gave no list (${(r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}`}); starting ${template} anyway.`);
-    return undefined;
+    throw new CliError(`hc templates gave no list (${(r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}`}), `
+      + `so ${template} can't be checked as a template; hc run would start an unlisted name as a program. Not started.`);
   }
   const hit = list.find((x) => x?.name === template);
   if (!hit) {
@@ -1073,6 +1074,7 @@ async function cmdWorker(opts, rest) {
   if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
   if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
+  if (opts.template === "") throw new CliError("--template needs a name: --template <name> (hc templates lists them).", 2);
   const pick = { template: opts.template, agent: opts.agent, model: opts.model, effort: opts.effort };
   const alongside = ["agent", "model", "effort"].filter((k) => pick[k] !== undefined);
   if (pick.template !== undefined && alongside.length) {
@@ -1085,7 +1087,7 @@ async function cmdWorker(opts, rest) {
   const warnings = [...plan.warnings];
   // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
   let runs = plan.agent;
-  if (plan.template) runs = await templateRuns(plan.template, agents, warnings);
+  if (plan.template) runs = await templateRuns(plan.template, agents);
   else {
     if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
     const list = plan.model ? knownModels(plan.agent, modelIo()) : [];

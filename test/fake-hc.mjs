@@ -67,7 +67,7 @@ switch (words[0]) {
     }
     const argv = words.slice(words[i] === "--" ? i + 1 : i);
     // `env K=V … program …`: the program is the first word after the assignments.
-    const program = argv[0] === "env" ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
+    const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
     const address = `t${state.next ?? 100}`;
     state.next = (state.next ?? 100) + 1;
     state.terminals.push({ address, name, cwd, labels, parent, state: "live", created_ms: Date.now(),

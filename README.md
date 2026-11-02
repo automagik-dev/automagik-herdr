@@ -102,7 +102,7 @@ automagik-herdr attach <bot> <terminal>
 automagik-herdr detach <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
-       [--agent A] [--model M] [--effort E | --template T] [--name N]
+       [[--agent A] [--model M] [--effort E] | --template T] [--name N]
 automagik-herdr update [--check | --rollback]
 ```
 
@@ -151,16 +151,19 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   `worker` agent, model and effort defaults, with a warning; any per-task `--agent`,
   `--model` or `--effort` sets the default template aside, so a captain whose workers run
   `dev-sol` can still start a Claude reviewer. A template hc doesn't list is refused before
-  any worktree is made. A template whose command runs `claude` gets the session hook; when
+  any worktree is made, and so is any template when `hc templates` gives no list (`hc run`
+  would start an unlisted name as a program). An empty `--template=` is refused. A template
+  whose command runs `claude` gets the session hook; when
   the command names no agent Herdr knows, the hook is skipped with a warning.
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled
   `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, then
-  `-- env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the bot's
+  `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the bot's
   pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs on)
   start. A template runs in hc's template form, `<template> <task text>` after the options, labelled
   `worker.template=<name>` and without the PATH: the template sets its own command. The task
   text is always one argument, never part of a shell string. The worker has no `bot` label,
-  so the sidebar folds it under its bot as a helper row showing its model and effort.
+  so the sidebar folds it under its bot as a helper row showing its template, or its model
+  and effort.
 - **Output:** the worker's terminal, then its worktree, branch, and agent, model and effort,
   or its template (`--json`: the same as data, with `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
@@ -278,7 +281,8 @@ newest when there are several.
 - `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high" }` or
   `{ "template": "dev-sol" }`, each key optional, the defaults of the bot's
   [workers](#workers). Without `agent`, workers run the bot's own agent; a `template` (an hc
-  template name) wins over `agent`, `model` and `effort`.
+  template name: letters, digits, `.`, `_`, `-`, no dash first) wins over `agent`, `model`
+  and `effort`.
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
   with a warning.
