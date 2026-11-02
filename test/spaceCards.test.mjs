@@ -112,11 +112,28 @@ test("the bot card: – for null, $0.00 for 0, no bar without parts", () => {
   assert.match(textOf(cap), /b-example-dev \$9\.10 b-example-test \$8\.10 other \$1\.20/);
 });
 
-test("main.js reads the feed with hc on a timer, never per render, and keys projects by path", () => {
+test("main.js reads the feed with hc on a timer, never per render", () => {
   const main = readFileSync(new URL("../mods/spaces-agents/main.js", import.meta.url), "utf8");
   assert.match(main, /cx\.timer\.every\(FEED_EVERY_MS, \(cx\) => this\.feedTick\(cx\)\)/);
   assert.match(main, /fetchFeed\(\{ hc, exec \}\)/);
   const render = main.slice(main.indexOf("  render(cx) {"));
   assert.doesNotMatch(render, /fetchFeed|readFeed/);
-  assert.match(main, /tr\.spaces\.includes\(w\.id\)\);\n    if \(tree\) return tree\.key;/);
+});
+
+test("an empty card draws its \u2013 header and nothing else", () => {
+  const card = { key: "time", icon: "clock", title: "Worktree \u2192 merge", big: DASH, was: null, empty: true, pie: [], foot: null };
+  const el = cardEl(card, "e", T, { lastCard: null, pie: null });
+  assert.equal(textOf(el), `Worktree \u2192 merge ${DASH}`);
+  assert.equal(all(el).some((n) => n.id === "e-pie"), false);
+});
+
+test("the merges detail lists 9 items, then +N", () => {
+  const doc = JSON.parse(JSON.stringify(DOC));
+  const m = doc.space.projects[P].merges;
+  m.items = Array.from({ length: 12 }, (_, i) => ({ task: `gh-${i}`, type: "feat", url: null, lead_min: i }));
+  const card = cardsOf(readFeed(doc), P).merges;
+  const el = cardEl(card, "m9", T, { lastCard: null, pie: { id: "m9-pie", index: 0 } });
+  const text = textOf(el);
+  assert.match(text, /gh-8 8m \+3/);
+  assert.doesNotMatch(text, /gh-9 /);
 });

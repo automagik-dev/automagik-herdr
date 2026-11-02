@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   DASH, readFeed, projectOf, lineTwo, cardsOf, botCard, namesOf, arrowOf, fmtCount, fmtMinutes, fmtShare,
-  fmtUsd, fmtTokens, fmtAsOf, scaleColor, scaleK, colorOf, pieAngles, sliceAt, polar, fetchFeed,
+  fmtUsd, fmtTokens, fmtAsOf, scaleColor, scaleK, colorOf, pieAngles, sliceAt, polar, fetchFeed, bandLabel, DETAIL_ROWS,
+  projectIndex, spaceProject,
 } from "../mods/spaces-agents/spaceRow.js";
 
 const TEXT = readFileSync(new URL("./fixtures/herdr-meter-space.sample.json", import.meta.url), "utf8");
@@ -102,10 +103,57 @@ test("null sections: – with no arrow, no forge chip", () => {
     ["tokens", "10.3M", false, chips[4].arrow],
   ]);
   const cards = cardsOf(readFeed(d), P);
-  assert.equal(cards.merges.big, DASH);
-  assert.equal(cards.merges.was, null);
-  assert.deepEqual(cards.merges.pie, []);
-  assert.equal(cards.spent.sub, `${DASH} of a Codex week`);
+  // A whole null or missing section: the "–" header and nothing else.
+  for (const [key, title] of [["merges", "Merged"], ["spent", "Spent, 24 h"]]) {
+    assert.deepEqual(cards[key], { key, icon: cards[key].icon, title, big: DASH, was: null, empty: true, pie: [], foot: null });
+  }
+  // A section with a null field is not empty: its card still has a body.
+  assert.equal(cards.time.empty, undefined);
+  assert.equal(cards.time.big, DASH);
+  assert.equal(cards.time.stats.length, 3);
+  d.space.projects[P].time = null;
+  const time = cardsOf(readFeed(d), P).time;
+  assert.equal(time.empty, true);
+  assert.equal(time.stats, undefined);
+  assert.equal(time.sub, undefined);
+});
+
+test("a missing band label is \"band N\"; the merges detail cap is 9", () => {
+  assert.equal(bandLabel(["<15m", null, ""], 0), "<15m");
+  assert.deepEqual([1, 2, 5].map((i) => bandLabel(["<15m", null, ""], i)), ["band 2", "band 3", "band 6"]);
+  assert.equal(bandLabel(undefined, 0), "band 1");
+  const d = clone();
+  delete d.space.projects[P].time.bands_labels;
+  const pie = cardsOf(readFeed(d), P).time.pie;
+  assert.deepEqual(pie.map((s) => s.label), ["band 1", "band 2", "band 3", "band 4", "band 5", "band 6"]);
+  assert.equal(pie[1].detail.title, "band 2: 2");
+  assert.equal(DETAIL_ROWS, 9);
+});
+
+test("space to project: bots.json project, else the repo's main checkout; none nested or remote", () => {
+  const index = projectIndex([
+    { key: "/work/a", machine: null, spaces: ["s1", "s2"], file: { bots: [] } },
+    { key: "/work/b", machine: null, spaces: ["s2"], file: null },
+    { key: "/work/a", machine: "vps", spaces: ["s9"], file: null },
+  ]);
+  assert.deepEqual([...index.space], [["s1", "/work/a"], ["s2", "/work/a"]]);
+  assert.deepEqual([...index.file.keys()], ["/work/a", "/work/b"]);
+  const repo = (on, dir) => JSON.stringify([on, dir]);
+  // Listed by a bots.json project: its key, whatever the repo says.
+  assert.equal(spaceProject({ space: { id: "s1" }, repo: repo(null, "/elsewhere/.git"), index }), "/work/a");
+  // Not listed: the parent of git's common dir (a worktree's common dir is its main checkout's).
+  assert.equal(spaceProject({ space: { id: "s3" }, repo: repo(null, "/work/c/.git"), index }), "/work/c");
+  assert.equal(spaceProject({ space: { id: "s3" }, repo: repo(null, "/work/c/.git/"), index }), "/work/c");
+  // A bare repo or submodule common dir, no repo, another machine's look: none.
+  assert.equal(spaceProject({ space: { id: "s3" }, repo: repo(null, "/work/c.git"), index }), null);
+  assert.equal(spaceProject({ space: { id: "s3" }, repo: null, index }), null);
+  assert.equal(spaceProject({ space: { id: "s3" }, repo: repo("vps", "/work/c/.git"), index }), null);
+  assert.equal(spaceProject({ space: { id: "s3" }, repo: "not json", index }), null);
+  // A worktree row nested under its repo's row, and a space on another machine: no line 2.
+  assert.equal(spaceProject({ space: { id: "s1" }, nested: true, repo: repo(null, "/work/a/.git"), index }), null);
+  assert.equal(spaceProject({ space: { id: "s1", machine: "vps" }, index }), null);
+  // The sample's project resolves to line 2 from the repo fallback alone.
+  assert.equal(lineTwo(feed, spaceProject({ space: { id: "x" }, repo: repo(null, `${P}/.git`), index })).length, 6);
 });
 
 test("cards carry feed fields only, formatted", () => {

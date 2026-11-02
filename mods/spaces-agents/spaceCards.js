@@ -6,7 +6,7 @@
 
 import { div, svg, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, HoverCard } from "gpui-base";
-import { DASH, colorOf, pieAngles, polar, sliceAt, PULL } from "./spaceRow.js";
+import { DASH, DETAIL_ROWS, colorOf, pieAngles, polar, sliceAt, PULL } from "./spaceRow.js";
 
 /** The hover cards' timing, from the mock: intent before opening, grace before closing. */
 export const OPEN_MS = 260;
@@ -83,6 +83,7 @@ const foot = (text, t) => div().text_size(10.5).text_color(t.dim).child(text || 
 /** A card, by its kind; `id` keys its elements and its pie. */
 export function cardEl(card, id, t, ui) {
   let el = frame(id, t).child(header(card, t));
+  if (card.empty) return el; // the whole section is null: the "–" header, nothing else
   if (card.sub) el = el.child(div().text_size(11).text_color(t.muted).child(card.sub));
   if (card.big !== DASH || card.pie.some((s) => s.value > 0)) el = el.child(pizza(card.pie, `${id}-pie`, t, ui));
   if (card.stats) el = el.child(h_flex().gap(4).children(card.stats.map((s) => statCell(s, t))));
@@ -154,9 +155,9 @@ function detailEl(d, t) {
   if (d.cells) el = el.child(h_flex().flex_wrap().gap(3).children(d.cells.map(([k, v]) => v_flex().w(88).px(6).py(4).rounded(5).bg(t.hover)
     .child(div().text_size(9.5).text_color(t.dim).child(k.toUpperCase()))
     .child(div().font_family(MONO).text_size(11.5).font_weight(600).text_color(v === DASH ? t.dim : t.foreground).child(v)))));
-  if (d.rows?.length) el = el.child(h_flex().flex_wrap().gap(3).children(d.rows.slice(0, 9).map((r) => h_flex().w(88).px(6).py(3).rounded(5).bg(t.hover).justify_between()
+  if (d.rows?.length) el = el.child(h_flex().flex_wrap().gap(3).children(d.rows.slice(0, DETAIL_ROWS).map((r) => h_flex().w(88).px(6).py(3).rounded(5).bg(t.hover).justify_between()
     .child(link(r.task, r.url, t).text_color(t.foreground)).child(div().font_family(MONO).text_size(10.5).text_color(t.muted).child(r.value)))));
-  if ((d.rows?.length ?? 0) > 9) el = el.child(div().text_size(10.5).text_color(t.dim).child(`+${d.rows.length - 9}`));
+  if ((d.rows?.length ?? 0) > DETAIL_ROWS) el = el.child(div().text_size(10.5).text_color(t.dim).child(`+${d.rows.length - DETAIL_ROWS}`));
   return el;
 }
 

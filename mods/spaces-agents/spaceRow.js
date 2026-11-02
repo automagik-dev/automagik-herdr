@@ -156,6 +156,52 @@ export function projectOf(feed, path) {
   return obj(projects[key]) ?? obj(projects[`${key}/`]);
 }
 
+/**
+ * The sidebar's projects, indexed once per discovery (bots.js discoverProjects' list, which
+ * changes only when a bots.json or the open spaces do): `space` maps a space id to its project
+ * key (the first project listing it), `file` a project key to its parsed bots.json. This
+ * computer's projects only: the feed is this machine's.
+ */
+export function projectIndex(projects) {
+  const space = new Map(), file = new Map();
+  for (const p of arr(projects)) {
+    if (p?.machine || typeof p?.key !== "string") continue;
+    if (!file.has(p.key)) file.set(p.key, p.file ?? null);
+    for (const id of arr(p.spaces)) if (!space.has(id)) space.set(id, p.key);
+  }
+  return { space, file };
+}
+
+/**
+ * A repo's main checkout from the sidebar's git look (`g.repo`: JSON `[machine, common dir]`,
+ * the common dir from `git rev-parse --path-format=absolute --git-common-dir`, which git gives
+ * as a real path): the parent of a common dir named `.git`, no trailing slash. Null for another
+ * machine, a bare repo or a submodule (those are keyed by the bots.json projects only).
+ */
+export function repoMain(repo) {
+  if (mains.has(repo)) return mains.get(repo);
+  let on, dir, main = null;
+  try { [on, dir] = JSON.parse(repo); } catch {}
+  if (!on && typeof dir === "string") {
+    const d = dir.replace(/\/+$/, "");
+    if (d.endsWith("/.git")) main = d.slice(0, -5) || "/";
+  }
+  // One entry per repo the sidebar has looked at: a render parses nothing.
+  mains.set(repo, main);
+  return main;
+}
+const mains = new Map();
+
+/**
+ * The feed's project path for a space row, or null (no line 2): never for a worktree row nested
+ * under its repo's (`nested`) or a space on another machine; else the project a bots.json lists
+ * the space under (`index`: projectIndex), else its repo's main checkout (`repo`: g.repo).
+ */
+export function spaceProject({ space, nested = false, repo = null, index }) {
+  if (!space || nested || space.machine) return null;
+  return index?.space.get(space.id) ?? (repo ? repoMain(repo) : null);
+}
+
 /** Ids to names for the bot card, from a project's bots.json (model.js' parsed file). */
 export function namesOf(file) {
   const bot = new Map(), category = new Map();
@@ -192,6 +238,8 @@ export function lineTwo(feed, path) {
 // ---- cards (section 7)
 
 const head = (title, big, was) => ({ title, big, was: was === DASH ? null : `was ${was}` });
+/** A card whose whole section is null or missing: its header with "–", nothing else. */
+const emptyCard = (key, icon, title) => ({ key, icon, title, big: DASH, was: null, empty: true, pie: [], foot: null });
 const footOf = (feed) => [fmtAsOf(feed.generatedAt), feed.truncated ? "lists trimmed to fit" : null].filter(Boolean).join(" · ");
 
 function typeOrder(byType) {
@@ -208,9 +256,12 @@ function modelTokens(p) {
 }
 
 const link = (x) => ({ task: text(obj(x)?.task) ?? DASH, url: text(obj(x)?.url) });
+/** A pie detail lists at most this many items, then "+N" for the rest. */
+export const DETAIL_ROWS = 9;
 
 function mergesCard(p, feed) {
-  const m = obj(p.merges) ?? {};
+  if (!obj(p.merges)) return emptyCard("merges", "merge", "Merged");
+  const m = p.merges;
   const byType = obj(m.by_type) ?? {};
   const items = arr(m.items).map(obj).filter(Boolean);
   const slices = typeOrder(byType).map(([key, token]) => {
@@ -223,19 +274,21 @@ function mergesCard(p, feed) {
   return { key: "merges", icon: "merge", ...head("Merged", fmtCount(m.n), fmtCount(m.prev_n)), pie: slices, foot: footOf(feed) };
 }
 
-const BAND_LABELS = ["<15m", "15-30m", "30m-1h", "1-2h", "2-6h", ">6h"];
+const TIME_TITLE = "Worktree \u2192 merge";
+/** A band's label: `bands_labels[i]` when it is a non-empty string, else "band {i + 1}". */
+export const bandLabel = (labels, i) => text(arr(labels)[i]) ?? `band ${i + 1}`;
 
 function timeCard(p, feed) {
-  const t = obj(p.time) ?? {};
+  if (!obj(p.time)) return emptyCard("time", "clock", TIME_TITLE);
+  const t = p.time;
   const bands = arr(t.bands);
-  const labels = arr(t.bands_labels).length === bands.length ? arr(t.bands_labels) : BAND_LABELS.slice(0, bands.length);
   const slices = bands.map((b, i) => ({
-    key: String(i), label: String(labels[i] ?? i), value: num(b) ?? 0, inside: fmtCount(b), legend: fmtCount(b),
-    color: { k: scaleK(i, bands.length) }, detail: { title: `${labels[i]}: ${fmtCount(b)}`, rows: [] },
+    key: String(i), label: bandLabel(t.bands_labels, i), value: num(b) ?? 0, inside: fmtCount(b), legend: fmtCount(b),
+    color: { k: scaleK(i, bands.length) }, detail: { title: `${bandLabel(t.bands_labels, i)}: ${fmtCount(b)}`, rows: [] },
   }));
   const ex = (x) => ({ ...link(x), value: fmtMinutes(obj(x)?.min) });
   return {
-    key: "time", icon: "clock", ...head("Worktree → merge", fmtMinutes(t.median_min), fmtMinutes(t.prev_median_min)), pie: slices,
+    key: "time", icon: "clock", ...head(TIME_TITLE, fmtMinutes(t.median_min), fmtMinutes(t.prev_median_min)), pie: slices,
     stats: [
       { label: "fastest", ...ex(t.fastest), color: { token: GOOD } },
       { label: "average", task: null, url: null, value: fmtMinutes(t.avg_min), color: null },
@@ -248,7 +301,8 @@ function timeCard(p, feed) {
 const FIX_LABELS = ["first try", "1 fix", "2 fixes", "3+ fixes"];
 
 function firstPassCard(p, feed) {
-  const fp = obj(p.first_pass) ?? {};
+  if (!obj(p.first_pass)) return emptyCard("first_pass", "first", "First pass");
+  const fp = p.first_pass;
   const fixes = arr(fp.fixes).slice(0, 4);
   const slices = fixes.map((n, i) => ({
     key: String(i), label: FIX_LABELS[i], value: num(n) ?? 0, inside: fmtCount(n), legend: fmtCount(n),
@@ -258,7 +312,8 @@ function firstPassCard(p, feed) {
 }
 
 function spentCard(p, feed, colours) {
-  const s = obj(p.spent) ?? {};
+  if (!obj(p.spent)) return emptyCard("spent", "spent", "Spent, 24 h");
+  const s = p.spent;
   const byModel = obj(s.by_model) ?? {};
   const slices = Object.entries(byModel).map(([id, usd]) => ({
     key: id, label: id, value: num(usd) ?? 0, inside: null, legend: fmtUsd(usd), color: { token: colours.get(id) },
@@ -271,7 +326,8 @@ function spentCard(p, feed, colours) {
 }
 
 function tokensCard(p, feed, colours) {
-  const k = obj(p.tokens) ?? {};
+  if (!obj(p.tokens)) return emptyCard("tokens", "tokens", "Tokens");
+  const k = p.tokens;
   const byModel = obj(k.by_model) ?? {};
   const slices = Object.entries(byModel).map(([id, raw]) => {
     const x = obj(raw) ?? {};

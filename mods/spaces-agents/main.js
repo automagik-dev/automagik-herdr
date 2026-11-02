@@ -21,7 +21,7 @@ import { ensureTheme, themeSettled } from "./theme.js";
 import { carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
-import { FEED_EVERY_MS, fetchFeed, readFeed, lineTwo, cardsOf, botCard, namesOf } from "./spaceRow.js";
+import { FEED_EVERY_MS, fetchFeed, readFeed, lineTwo, cardsOf, botCard, namesOf, projectIndex, spaceProject } from "./spaceRow.js";
 import { lineTwoEl, statsButtonEl } from "./spaceCards.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
@@ -493,15 +493,17 @@ export default class Spaces extends View {
     });
   }
 
-  // A space's project in the feed: the absolute main-checkout path the bot trees are keyed by,
-  // else its repo's (the git common dir's folder). This computer's spaces only.
-  projectPath(w, g) {
-    if (w.machine) return null;
-    const tree = this.trees.find((tr) => !tr.machine && tr.spaces.includes(w.id));
-    if (tree) return tree.key;
-    if (!g?.repo) return null;
-    const [on, repo] = JSON.parse(g.repo);
-    return !on && repo.endsWith("/.git") ? repo.slice(0, -5) : null;
+  // The projects indexed by space and by key (spaceRow.js projectIndex), rebuilt only when a
+  // discovery changes this.bots (refreshBots replaces it on a change only), not per render.
+  projects() {
+    if (this.projIndexOf !== this.bots) { this.projIndexOf = this.bots; this.projIndex = projectIndex(this.bots); }
+    return this.projIndex;
+  }
+
+  // A space row's project in the feed (spaceRow.js spaceProject): none for a nested worktree
+  // row or another machine's space; else its bots.json project, else its repo's main checkout.
+  projectPath(w, g, nested) {
+    return spaceProject({ space: w, nested, repo: g?.repo ?? null, index: this.projects() });
   }
 
   // Line 2's chips and their cards for a project, or null (no feed, or not in it).
@@ -518,7 +520,7 @@ export default class Spaces extends View {
   // changes; null when there's no feed (no button then).
   botStats(tree, b) {
     if (!this.feed || tree.machine) return null;
-    const file = this.bots.find((p) => !p.machine && p.key === tree.key)?.file ?? null;
+    const file = this.projects().file.get(tree.key) ?? null;
     const k = `${tree.key}\n${b.id}`;
     const hit = this.feedViews.get(k);
     if (hit && hit.file === file) return hit.card;
@@ -1101,7 +1103,7 @@ export default class Spaces extends View {
     const color = colors[w.id] ?? "ansi6";
     const fill = color === "transparent" ? null : color.startsWith("#") ? color : (MARK[color] ?? t[color]);
     // Line 2 (the Space Row): a space with its project in the feed, never a nested worktree's.
-    const view = tree ? null : this.feedView(this.projectPath(w, g));
+    const view = this.feedView(this.projectPath(w, g, Boolean(tree)));
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
