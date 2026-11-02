@@ -16,15 +16,17 @@ mods/*/LICENSE where a mod derives from one):
                         mod.json; added: marks.js, open.js, LICENSE-upstream
   mods/auto-tabs        from Herdr's shipped `tabs` (the app's copy, 2026-11-01) — changed: main.js,
                         mod.json; added: names.js
-  mods/new-menu-tui     from Herdr's `new-menu` 0.1.7 — changed: main.js, mod.json; added: target.js
+  mods/new-menu-tui     from Herdr's `new-menu` 0.1.7 — changed: main.js, mod.json; added: target.js,
+                        agents.js
 
 Vendored from other people's repositories (each ships under Apache-2.0 as a derived work; the
 upstream MIT copyright and permission notice are verbatim in mods/<mod>/LICENSE-upstream and
 repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is the upstream one):
   mods/mod-manager      from jacksonpires/herdr-app-mod-manager — changed: main.js, core.js,
                         mod.json; added: RECIPE.md
-  mods/automations      from DnzzL/herdr-automations — changed: main.js (fork header), mod.json
-                        (title "Automagik Automations"); added: RECIPE.md. Code otherwise upstream.
+  mods/automations      from DnzzL/herdr-automations — changed: main.js (fork header; agent list
+                        in agents.js), mod.json (title "Automagik Automations"); added: RECIPE.md,
+                        agents.js (retired agents hidden). Code otherwise upstream.
 
   jacksonpires/herdr-app-mod-manager:
 

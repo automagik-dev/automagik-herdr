@@ -2,6 +2,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, spaces, panes, knownAgents, run, openOverlay, closeOverlay, props, window } from "herdr";
 import { targetSpace, folderOf } from "./target.js";
+import { menuAgents } from "./agents.js";
 
 // Hermes starts as its TUI (like the imported panes); its run is otherwise kept as is.
 const argvOf = (a) => (a.key === "hermes" && !a.run.includes("--tui") ? [...a.run, "--tui"] : a.run);
@@ -14,6 +15,7 @@ export default class NewMenu extends View {
     cx.spawn(async cx => {
       try { this.agents = await knownAgents({ on: targetSpace(spaces(), props()?.space)?.machine }); }
       catch { this.failed = true; }
+      this.loaded = true;
       cx.notify();
     });
   }
@@ -30,8 +32,8 @@ export default class NewMenu extends View {
     const explicit = Boolean(props()?.space);
     const space = targetSpace(spaces(), props()?.space);
     const folder = () => folderOf(space, panes(), explicit);
-    const installed = this.agents.filter(a => a.installed);
-    const choices = [...installed, ...this.agents.filter(a => !a.installed).slice(0, 2)];
+    // Retired agents (agents.js) are dropped before anything is counted or given a key.
+    const { installed, choices } = menuAgents(this.agents);
     const mod = window()?.platform === "macos" ? "⌘" : "Ctrl";
     return v_flex().min_h(0).w_full().h(Math.min(491, 167 + Math.max(1, choices.length) * 31)).bg(t.popover).p(5).text_size(12.8)
       .id("new-menu").track_focus(this.handle)
@@ -49,7 +51,7 @@ export default class NewMenu extends View {
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
         .children(choices.map((a, i) => this.row(a.key, a.tint ? svg(a.icon).size(14).text_color(t.foreground) : image(a.icon).size(14), a.name,
           () => run("tab.new", { name: a.name, space: space?.id, argv: argvOf(a) }), a.installed ? (i < 9 ? `${mod} ${i + 1}` : "") : "not installed", a.installed)))
-        .when(this.agents.length === 0, el => el.child(div().px(9).py(6).text_color(t.dim).child(this.failed ? "Could not load agents" : "Checking installed agents…"))))
+        .when(choices.length === 0, el => el.child(div().px(9).py(6).text_color(t.dim).child(this.failed ? "Could not load agents" : this.loaded ? "No agents found" : "Checking installed agents…"))))
       .child(div().h(1).mx(4).my(5).bg(t.border))
       .child(this.row("space", div().w(14).child("+"), "New space", () => run("space.new"), `${mod} N`))
       .child(this.row("worktree", svg("mods/workspace-chrome/branch.svg").size(14), "New worktree…", () => openOverlay({ mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: space?.id, folder: folder(), action: "new" } }), "", Boolean(space)))

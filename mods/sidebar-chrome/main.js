@@ -1,6 +1,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec, openOverlay, closeOverlay } from "herdr";
+import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec, openOverlay, closeOverlay, watchFolder } from "herdr";
+import { badgeCount, oneAtATime, scanFooter, touchesFooter } from "./contributions.js";
 
 // Where Pocket Link publishes whether a phone is connected (automagik-pocket's "For other mods"
 // contract, schema 1). Resolved as its bridge/state.mjs does: $POCKET_LINK_STATE_DIR, else
@@ -96,6 +97,8 @@ export default class WorkspaceChrome extends View {
     this.phone = false;
     this.statusPath = null;
     this.hovered = null;   // the name of the tab under the pointer, shown dim in the rail
+    this.contributed = []; // buttons other mods declare in their mod.json (contributions.js)
+    const footer = Boolean(props()?.footer);
     const look = (cx) => cx.spawn(async (cx) => {
       let bots = false;
       try { bots = (await readTextFile(`${appHome()}/mods/spaces-agents/mod.json`)) !== null; } catch { bots = false; }
@@ -114,9 +117,27 @@ export default class WorkspaceChrome extends View {
         }
       }
       if (found !== this.pocket || phone !== this.phone) { this.pocket = found; this.phone = phone; cx.notify(); }
+      if (footer) await scan(cx);
+    });
+    // Contributed buttons: every installed mod's mod.json, read only; redrawn only when they change.
+    // One scan at a time: a trigger during a scan waits for it and gets one more run after it.
+    const scan = oneAtATime(async (cx) => {
+      const { buttons, problems } = await scanFooter({ exec, readText: readTextFile }, appHome()).catch(() => ({ buttons: [], problems: [] }));
+      const said = problems.join("\n");
+      if (said && said !== this.problems) console.log(said);
+      this.problems = said;
+      if (JSON.stringify(buttons) !== JSON.stringify(this.contributed)) { this.contributed = buttons; cx.notify(); }
     });
     look(cx);
     cx.timer.every(30000, look);
+    // Between the 30 s looks, a mod.json or a mod folder changing rescans at once. A watch that
+    // fails (Linux, past 4096 folders) leaves the timer alone.
+    if (footer) cx.spawn(async (cx) => {
+      const dir = `${appHome()}/mods`;
+      try {
+        for (;;) if (touchesFooter(await watchFolder(dir), dir)) await scan(cx);
+      } catch (e) { console.log("footer: not watching the mods folder", String(e?.message ?? e)); }
+    });
   }
   button(id, label, action) {
     const t = theme();
@@ -140,7 +161,7 @@ export default class WorkspaceChrome extends View {
       // A rail of tabs, one row however many there are: icon only, so none of them stacks up.
       // Icon only, so none of them stacks up; the name appears in the rail while the pointer is on
       // the tab — discrete, and never moving the icons themselves.
-      const tab = (id, icon, label, active, dim, action) => h_flex().id(id).size(28).flex_none().items_center().justify_center().rounded(7)
+      const tab = (id, icon, label, active, dim, action, path = `mods/sidebar-chrome/${icon}.svg`) => h_flex().id(id).size(28).flex_none().items_center().justify_center().rounded(7)
         .bg(active ? t.selected : t.chrome).text_color(active ? t.foreground : dim ? t.dim : t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
         .on_hover((over, cx) => {
@@ -150,7 +171,15 @@ export default class WorkspaceChrome extends View {
           cx.notify();
         })
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click(action).child(svg(`mods/sidebar-chrome/${icon}.svg`).size(15).flex_none());
+        .on_click(action).child(svg(path).size(15).flex_none());
+      // Another mod's button: its icon (tinted like ours), its command, and a count while its
+      // shared badge key holds a number above 0.
+      const contributed = (b) => {
+        const count = b.badge ? badgeCount(shared(b.badge)) : null;
+        return tab(b.key, null, b.label, false, false, () => run(b.command, b.args), b.glyph)
+          .when(count !== null, el => el.child(div().id(`${b.key}#badge`).h(12).min_w(12).px(3).flex_none().flex().items_center().justify_center()
+            .rounded_full().bg(t.accent).text_color(t.accent_foreground).text_size(8.5).font_semibold().child(count)));
+      };
       const automations = !find(layout(), "automations-panel")?.hidden;
       const quota = !find(layout(), "am-quota-panel")?.hidden;
       // Ours on the left, the app's on the right: a spacer carries the hovered name, then a rule.
@@ -162,6 +191,9 @@ export default class WorkspaceChrome extends View {
           .child(tab("quota", "layers", "Quota", quota, false, () => run("layout.toggle", { id: "am-quota-panel" })))
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
             .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
+          // Their own group, which gives up its width first and clips: the rail's own tabs never do.
+          .when(this.contributed.length > 0, el => el.child(h_flex().id("footer-contributed").gap(3).items_center()
+            .flex_shrink(1).min_w(0).overflow_hidden().children(this.contributed.map(contributed))))
           .child(div().flex_1().min_w(0).pl(6).pr(2).truncate().text_size(10.5).text_color(t.dim).child(this.hovered ?? ""))
           .child(div().w(1).h(16).flex_none().mx(1).bg(t.border))
           .child(tab("settings", "settings", "Settings", false, false, () => run("app.settings"))
