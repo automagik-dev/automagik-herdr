@@ -483,7 +483,7 @@ test("a failure after the swap never deletes the replaced folders, and says wher
   const t = tarball("0.2.0");
   try {
     // The kept set cannot take its new place: the install stands, the record names it, and the
-    // replaced 0.1.0 folders wait in .prev-next-<pid> with the old set back in .prev.
+    // replaced 0.1.0 folders wait in .prev-next-<pid>-<random> with the old set back in .prev.
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     const rename = (a, b) => { if (b === prevSetOf(mods)) throw new Error("EPERM"); renameSync(a, b); };
     const t3 = tarball("0.3.0");
@@ -492,8 +492,8 @@ test("a failure after the swap never deletes the replaced folders, and says wher
     assert.equal(readVersion(join(mods, "spaces-agents")), "0.3.0");
     assert.equal(readMarker(mods).version, "0.3.0");
     assert.equal(r.prev, null);
-    const next = join(stateDirOf(mods), `.prev-next-${process.pid}`);
-    assert.match(r.warnings[0], new RegExp(`could not become the kept set .*they are in ${next}`));
+    const next = /they are in (\S+)$/.exec(r.warnings[0])?.[1];
+    assert.match(r.warnings[0], new RegExp(`could not become the kept set .*they are in ${join(stateDirOf(mods), ".prev-next-")}${process.pid}-[0-9a-f]{8}$`));
     assert.equal(readVersion(join(next, "spaces-agents")), "0.2.0", "the replaced folders are kept");
     assert.equal(readVersion(kept(mods)), "0.1.0", "the older set is back in .prev, still a rollback point");
   } finally {
@@ -517,5 +517,24 @@ test("an older kept set that cannot be removed is reported, and the new set is s
     chmodSync(locked(), 0o755);
   } finally {
     for (const d of [t.src, t3.src, home]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("an earlier run's leftover .prev-next-<pid> or .prev-old-<pid> (a reused pid) is never deleted", async () => {
+  const { home, mods } = appHome("0.1.0");
+  const t = tarball("0.2.0");
+  try {
+    for (const n of [`.prev-next-${process.pid}`, `.prev-old-${process.pid}`]) {
+      mkdirSync(join(stateDirOf(mods), n, "spaces-agents"), { recursive: true });
+      writeFileSync(join(stateDirOf(mods), n, "spaces-agents", "main.js"), "// left by a failed run\n");
+    }
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    rollback({ modsDir: mods });
+    for (const n of [`.prev-next-${process.pid}`, `.prev-old-${process.pid}`]) {
+      assert.equal(readFileSync(join(stateDirOf(mods), n, "spaces-agents", "main.js"), "utf8"), "// left by a failed run\n", n);
+    }
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });

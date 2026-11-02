@@ -185,9 +185,8 @@ uninstall() {
   fi
   # The record's folders leave mods/ together as the kept set (never deleted); only names the
   # pack can own, never Pocket Link, never a link.
-  next=$STATE/.prev-next
-  rm -rf "$next"
-  mkdir -p "$next"
+  # Fresh names (mktemp): an earlier run's leftover is never taken for this run's and deleted.
+  next=$(mktemp -d "$STATE/.prev-next.XXXXXX")
   moved=
   # The record's values are split on commas only, never glob-expanded (set -f).
   set -f
@@ -214,10 +213,10 @@ uninstall() {
   if [ -n "$moved" ]; then
     printf 'version=%s\nmods=%s\nbefore=none\n' "$(mark_get version)" "$moved" >"$next/.pack"
     # The old set is set aside first and removed last: a failure never loses the folders just moved.
-    rm -rf "$STATE/.prev-old"
-    if [ -e "$STATE/.prev" ]; then mv "$STATE/.prev" "$STATE/.prev-old"; fi
+    old=$(mktemp -d "$STATE/.prev-old.XXXXXX")
+    if [ -e "$STATE/.prev" ]; then mv "$STATE/.prev" "$old/set"; fi
     mv "$next" "$STATE/.prev"
-    rm -rf "$STATE/.prev-old" 2>/dev/null || say "Could not remove the older kept set; it is in $STATE/.prev-old."
+    rm -rf "$old" 2>/dev/null || say "Could not remove the older kept set; it is in $old."
     say "Moved the pack out of $MODS ($moved); it is kept in $STATE/.prev."
   else
     rm -rf "$next"

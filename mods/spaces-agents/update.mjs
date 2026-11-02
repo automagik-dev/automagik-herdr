@@ -28,7 +28,7 @@
 // (shared with the mod, whose loader takes .js) as ESM by detecting its syntax.
 
 import { execFile, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
@@ -198,13 +198,23 @@ function swapAll(moves, rename) {
 }
 
 /**
- * Moves the old kept set out of the way before a swap that replaces it: to `.prev-old-<pid>`,
+ * A name under `dir` nothing has: `<prefix><pid>-<random>`. Never an earlier run's leftover (a
+ * reused pid), so nothing here deletes a folder it did not make.
+ */
+function freshPath(dir, prefix) {
+  for (;;) {
+    const path = join(dir, `${prefix}${process.pid}-${randomBytes(4).toString("hex")}`);
+    if (!exists(path)) return path;
+  }
+}
+
+/**
+ * Moves the old kept set out of the way before a swap that replaces it: to `.prev-old-<pid>-<random>`,
  * renamed back by `restoreSet` when the swap fails. Null when nothing is kept yet.
  */
 function setAside(modsDir) {
   if (!exists(prevSetOf(modsDir))) return null;
-  const old = join(stateDirOf(modsDir), `.prev-old-${process.pid}`);
-  rmSync(old, { recursive: true, force: true });
+  const old = freshPath(stateDirOf(modsDir), ".prev-old-");
   renameSync(prevSetOf(modsDir), old);
   return old;
 }
@@ -271,8 +281,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
   const state = stateDirOf(modsDir);
   mkdirSync(state, { recursive: true });
   const staging = mkdtempSync(join(state, "staging-"));
-  const next = join(state, `.prev-next-${process.pid}`);
-  rmSync(next, { recursive: true, force: true });
+  const next = freshPath(state, ".prev-next-");
   let swapped = false;
   try {
     await run("tar", ["-xzf", resolve(tgzPath), "-C", staging]);
@@ -368,8 +377,7 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync } = {
   if (!set || set.mods.length === 0) throw new Error(`no earlier pack kept at ${prev}: nothing to roll back to`);
   const record = readMarker(modsDir) ?? { version: UNRELEASED, mods: [], layout: null, before: "none", adopted: [] };
   const owned = new Set(record.mods);
-  const next = join(stateDirOf(modsDir), `.prev-next-${process.pid}`);
-  rmSync(next, { recursive: true, force: true });
+  const next = freshPath(stateDirOf(modsDir), ".prev-next-");
   const moves = [];
   const out = [];
   for (const m of set.mods) {
