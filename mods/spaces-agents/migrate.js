@@ -124,7 +124,7 @@ const isNode = (n) => n !== null && typeof n === "object" && !Array.isArray(n);
  */
 export function rewriteLayout(parsed, active) {
   if (!isNode(parsed)) return null;
-  const layout = structuredClone(parsed);
+  const layout = JSON.parse(JSON.stringify(parsed));
   const edits = [];
   const left = new Map();
   const visit = (node, pointer) => {
@@ -158,7 +158,7 @@ export function rewriteLayout(parsed, active) {
  */
 export function rewriteKeys(parsed, active) {
   if (!isNode(parsed) || !Object.values(parsed).every(isNode)) return null;
-  const keys = structuredClone(parsed);
+  const keys = JSON.parse(JSON.stringify(parsed));
   const edits = [];
   const left = new Map();
   for (const section of Object.keys(parsed)) {

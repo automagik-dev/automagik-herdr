@@ -23,7 +23,7 @@ const REVERTED = "journal.reverted.json";
 
 /**
  * What the migration would do on app home `home`, from what is on disk and the ownership record:
- * `{ folders, layouts, keys, shared, paths, left }`.
+ * `{ home, folders, layouts, keys, shared, paths, left }`.
  * - folders: [old, new] for record-listed old folders still in mods/ (update.mjs moves them when a
  *   release ships the new name; the migration itself never moves a mod);
  * - layouts: `{file, edits, body}` per layout naming a renamed folder;
@@ -40,7 +40,7 @@ export function plan(home) {
   const owned = new Set(record?.mods ?? []);
   const present = (name) => exists(join(modsDir, name));
   const { active } = activeRenames(owned, present);
-  const out = { folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [] };
+  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [] };
   // A reference is reported only when its folder is someone else's or gone with no successor;
   // one naming a pack folder not renamed yet is simply not due.
   const report = (file) => ({ mod, ref }) => {
@@ -98,7 +98,8 @@ export const pending = (p) => p.layouts.length > 0 || p.keysFile !== null || p.p
  * journal }` (journal: the backup folder when one was written, else null). A second run on the
  * same home finds nothing to do.
  */
-export function apply(p, { home, backupDir }) {
+export function apply(p, { backupDir }) {
+  const { home } = p;
   const done = [];
   const skipped = [...p.left];
   for (const [old, now] of p.paths) {

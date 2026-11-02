@@ -391,7 +391,10 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     try { writeMarker(modsDir, record); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     keepSet(modsDir, next, keep, before, old, rename, warnings);
-    for (const m of plan.left) log(`left alone: mods/${m} (not installed by automagik-herdr; --adopt moves it to backup/ and installs the pack's)`);
+    for (const m of plan.left) {
+      const why = Object.hasOwn(ABSORBED, m) ? "the pack's sidebar or Markdown mod does its job now" : "--adopt moves it to backup/ and installs the pack's";
+      log(`left alone: mods/${m} (not installed by automagik-herdr; ${why})`);
+    }
     for (const a of plan.adopted) log(`adopted mods/${a.mod}: the original is kept in ${a.backup}`);
     for (const w of warnings) log(`warning: ${w}`);
     return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, warnings };
@@ -466,9 +469,9 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
   if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings);
   else warnings.push(`the folders rolled out are in ${next}`);
-  // The migration's edits are reverted from its journals (back across the rename the old names
-  // return), then the references follow the folders now in place (forward again, they move again).
-  const reverted = revertRefs({ modsDir, log, warnings });
+  // Back across the rename the migration's edits are reverted from its journals; then the
+  // references follow the folders now in place (forward again, they move again).
+  const reverted = back ? revertRefs({ modsDir, log, warnings }) : { restored: [] };
   const migration = migrateRefs({ modsDir, log, warnings });
   return { pack: modsDir, prev, mods: set.mods, version: set.version, reverted: reverted.restored, migration, warnings };
 }
@@ -484,7 +487,7 @@ export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
   try {
     const p = migrationPlan(home);
     if (p.shared.length) log(`shared keys move to am.* when their mod next loads: ${p.shared.map(([o]) => o).join(", ")}`);
-    const r = pending(p) ? applyMigration(p, { home, backupDir: join(backupOf(modsDir), backupName(modsDir, "layouts")) }) : { done: [], skipped: p.left, journal: null };
+    const r = pending(p) ? applyMigration(p, { backupDir: join(backupOf(modsDir), backupName(modsDir, "layouts")) }) : { done: [], skipped: p.left, journal: null };
     if (r.journal) {
       const record = readMarker(modsDir);
       if (record) writeMarker(modsDir, { ...record, migrated: [...record.migrated, `backup/${basename(r.journal)}`] });

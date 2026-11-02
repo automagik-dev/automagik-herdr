@@ -302,6 +302,8 @@ test("v0.2.0 home without --adopt: the person's mods and every reference to them
   const s = scratch(t);
   ownerHome(s);
   const pocket = treeSum(join(s.mods, "pocket-link"));
+  const kept = ["sidebar-chrome", "md-menu", "mod-manager", "markdown-browser", "space-icon"];
+  const sums = kept.map((m) => treeSum(join(s.mods, m)));
   const r = s.cli("install", "--from", amPack(s.root, "0.3.0"), "--version", "0.3.0", "--setup");
   assert.equal(r.code, 0, r.log);
   assert.deepEqual(readdirSync(s.mods).sort(),
@@ -316,7 +318,9 @@ test("v0.2.0 home without --adopt: the person's mods and every reference to them
   assert.match(r.log, /left: .*keys\.json: mod\.open:mod-manager \(mods\/mod-manager is not the pack's \(--adopt takes it\)\)/);
   assert.match(r.log, /left alone: mods\/sidebar-chrome/);
   assert.equal(existsSync(join(s.home, "data", "am-mods")), false, "data/ follows am-mods only when mod-manager was the pack's");
+  assert.match(r.log, /left alone: mods\/space-icon \(not installed by automagik-herdr; the pack's sidebar or Markdown mod/);
   assert.equal(treeSum(join(s.mods, "pocket-link")), pocket);
+  assert.deepEqual(kept.map((m) => treeSum(join(s.mods, m))), sums, "every folder the person kept is byte-identical");
 });
 
 test("apply journals before it writes; revert undoes only what still holds the migration's value, once", (t) => {
@@ -327,7 +331,7 @@ test("apply journals before it writes; revert undoes only what still holds the m
   const p = plan(s.home);
   assert.deepEqual(p.keys, [["global cmd-v: spaces-agents.paste", "global cmd-v: am-sidebar.paste"], ["global cmd-x: spaces-agents.close_pane", "global cmd-x: am-sidebar.close_pane"]]);
   const backupDir = join(s.state, "backup", "layouts-x");
-  const r = apply(p, { home: s.home, backupDir });
+  const r = apply(p, { backupDir });
   assert.equal(r.journal, backupDir);
   writeJson(join(s.home, "keys.json"), { global: { "cmd-v": "am-sidebar.paste", "cmd-x": "pane.close" } });
   const back = revert(backupDir);
@@ -372,4 +376,19 @@ test("space-icon and markdown-browser the record lists leave with the kept set, 
   assert.equal(left.code, 0, left.log);
   assert.deepEqual(left.out.installed.left, ["space-icon"]);
   assert.ok(existsSync(join(o.mods, "space-icon", "main.js")));
+});
+
+test("a rollback between two am-* releases reverts nothing and writes no new backup", (t) => {
+  const s = scratch(t);
+  ownerHome(s);
+  assert.equal(s.cli("install", "--from", amPack(s.root, "0.3.0"), "--version", "0.3.0", "--adopt", "--setup").code, 0);
+  assert.equal(s.cli("install", "--from", amPack(s.root, "0.3.1"), "--version", "0.3.1", "--setup").code, 0);
+  const keys = read(join(s.home, "keys.json"));
+  const r = s.cli("rollback");
+  assert.equal(r.code, 0, r.log);
+  assert.deepEqual(r.out.reverted, []);
+  assert.equal(read(join(s.home, "keys.json")), keys);
+  assert.deepEqual(parseMarker(read(join(s.state, "installed-by-install.sh"))).migrated, [`backup/layouts-${today()}`]);
+  assert.deepEqual(readdirSync(join(s.state, "backup")).filter((n) => n.startsWith("layouts-")), [`layouts-${today()}`]);
+  assert.equal(read(join(s.mods, "am-sidebar", "release.txt")), "0.3.0\n");
 });

@@ -336,7 +336,7 @@ install() {
   # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders.
   mkdir "$TMP/x"
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js spaces-agents/migrate.js \
-    spaces-agents/migrateHome.mjs </dev/null 2>/dev/null || fail "$TGZ holds no spaces-agents/update.mjs: nothing was installed."
+    spaces-agents/migrateHome.mjs </dev/null 2>/dev/null || fail "$TGZ lacks spaces-agents' updater files: nothing was installed."
   for f in update.mjs release.js migrate.js migrateHome.mjs; do
     { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
   done
