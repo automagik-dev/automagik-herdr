@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec } from "herdr";
+import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec, openOverlay, closeOverlay } from "herdr";
 
 // Where Pocket Link publishes whether a phone is connected (automagik-pocket's "For other mods"
 // contract, schema 1). Resolved as its bridge/state.mjs does: $POCKET_LINK_STATE_DIR, else
@@ -56,16 +56,42 @@ function openMods() {
   else run("tab.new", { name: "Mods", mod: "mod-manager" });
 }
 
+// The Bots tab's two entries: the sidebar mod's own forms, opened as their own copy of it
+// (spaces-agents' init returns the form when props.form is set), so they work with no sidebar
+// shown. Sizes as the sidebar opens them: the form 1000 × 840, the bot list 560 × 0.85.
+export const BOT_FORMS = {
+  create: { mod: "spaces-agents", kind: "dialog", modal: true, width: 1000, height: 840, props: { form: "create" } },
+  pick: { mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "pick" } },
+};
+
+// The popup's lines. The sidebar publishes `bots.defined` (false: no bot on this computer);
+// then only New bot is offered. Unknown (the sidebar never ran) offers both.
+export function botsMenuItems(defined = shared("bots.defined")) {
+  const items = [{ id: "bots-new", label: "New bot", form: "create" }];
+  if (defined !== false) items.push({ id: "bots-settings", label: "Bot settings", form: "pick" });
+  return items;
+}
+
+function openBotsMenu() {
+  openOverlay({ mod: "sidebar-chrome", kind: "popup", width: 200, height: 90, props: { botsMenu: true } });
+}
+
 export default class WorkspaceChrome extends View {
   // Pocket Link belongs to automagik-pocket, not this pack: its tab shows only while that mod is
   // installed, looked up again every 30 s (a read of its mod.json; nothing of it is written).
   // Its dot shows while a phone is connected, from the status file Pocket Link publishes.
   init(_given, cx) {
+    // The Bots popup is its own copy of this mod: it draws two lines and looks nothing up.
+    if (props()?.botsMenu) return;
     this.pocket = false;
+    this.bots = false;     // the Bots tab: only while the sidebar mod (spaces-agents) is installed
     this.phone = false;
     this.statusPath = null;
     this.hovered = null;   // the name of the tab under the pointer, shown dim in the rail
     const look = (cx) => cx.spawn(async (cx) => {
+      let bots = false;
+      try { bots = (await readTextFile(`${appHome()}/mods/spaces-agents/mod.json`)) !== null; } catch { bots = false; }
+      if (bots !== this.bots) { this.bots = bots; cx.notify(); }
       let found = false;
       try { found = (await readTextFile(`${appHome()}/mods/pocket-link/mod.json`)) !== null; } catch { found = false; }
       let phone = false;
@@ -89,9 +115,19 @@ export default class WorkspaceChrome extends View {
     return div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click(action).child(label);
   }
+  // The Bots popup: New bot, and Bot settings once a bot exists. Esc closes it (Herdr).
+  botsMenu(t) {
+    const close = () => closeOverlay(props()?.overlay);
+    return v_flex().id("bots-menu").size_full().p(4).gap(1).bg(t.popover).text_size(13).text_color(t.foreground)
+      .children(botsMenuItems().map((item) => h_flex().id(item.id).h(30).px(10).items_center().rounded(6).cursor_pointer()
+        .hover(s => s.bg(t.hover))
+        .on_click(() => { openOverlay(BOT_FORMS[item.form]); close(); })
+        .child(item.label)));
+  }
   render() {
     const t = theme();
     const collapsed = narrow();
+    if (props()?.botsMenu) return this.botsMenu(t);
     if (props()?.footer) {
       // A rail of tabs, one row however many there are: icon only, so none of them stacks up.
       // Icon only, so none of them stacks up; the name appears in the rail while the pointer is on
@@ -112,6 +148,7 @@ export default class WorkspaceChrome extends View {
       // Ours on the left, the app's on the right: a spacer carries the hovered name, then a rule.
       return v_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(6).pt(6).pb(7)
         .child(h_flex().gap(3).items_center()
+          .when(this.bots, el => el.child(tab("bots", "bot", "Bots", false, false, openBotsMenu)))
           .child(tab("mods", "puzzle", "Mods", false, false, openMods))
           .child(tab("automations", "clock", "Automations", automations, false, () => run("layout.toggle", { id: "automations-panel" })))
           .child(tab("quota", "layers", "Quota", quota, false, () => run("layout.toggle", { id: "am-quota-panel" })))

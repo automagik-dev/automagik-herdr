@@ -1,7 +1,7 @@
 # sidebar-chrome
 
-The sidebar's footer as a rail of tabs instead of a stack of rows — puzzle **Mods**, clock
-**Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from
+The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle
+**Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from
 Herdr's shipped `workspace-chrome`.
 
 ## What you see
@@ -13,6 +13,12 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 
 ## How it behaves
 
+- **Bots** (tab id `bots`, first in the rail): shown while `<app home>/mods/spaces-agents/mod.json`
+  exists (looked up with Pocket Link's, every 30 s). It opens a popup (this mod, props
+  `{botsMenu: true}`; Esc closes it) with **New bot** and **Bot settings**: `openOverlay` of
+  `spaces-agents` as a modal dialog with `props.form` `"create"` (1000 × 840) or `"pick"` (560 ×
+  0.85). While the sidebar's shared `bots.defined` is `false` (no bot on this computer) the popup
+  shows only New bot. No bot code lives here: the forms are the sidebar mod's own.
 - **Mods**: focuses the tab already showing the mod manager (`panes()` → `mod === "mod-manager"`),
   else `tab.new {name: "Mods", mod: "mod-manager"}`.
 - **Automations**: `layout.toggle {id: "automations-panel"}` — the panel lives in the left sidebar
@@ -26,7 +32,8 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 `mods/sidebar-chrome/main.js`, `mod.json` (`place: none`, `cloned_from` recorded), `puzzle.svg`
 (Lucide's puzzle, `stroke-width 2`, `currentColor`), Herdr's other icons reused from
 `mods/workspace-chrome/`. Herdr API: `theme`, `run`, `props`, `window`, `layout`, `panes`,
-`updates`, `shared`, `setShared`. Layout: the `sidebar-footer` block's `content.mod` is
+`updates`, `shared`, `setShared`, `readTextFile`, `appHome`, `openOverlay`, `closeOverlay`.
+`bot.svg` is Lucide's bot, as Herdr ships it in `frame/welcome/`. Layout: the `sidebar-footer` block's `content.mod` is
 `sidebar-chrome` with `props: {footer: true}`, and its `size.px` is 42.
 
 ## Watch out
@@ -40,5 +47,6 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 
 ## Done when
 
-`herdr-app check mods/sidebar-chrome` passes; the footer shows the four tabs in one row; Mods opens
+`herdr-app check mods/sidebar-chrome` passes; the footer shows Bots first, then the other tabs, in one row; Bots' popup opens the
+Create form and the bot list, and with no bot defined offers New bot alone; Mods opens
 or focuses the Mods tab; the clock toggles the Automations panel in the sidebar.
