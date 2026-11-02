@@ -268,7 +268,7 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
 
 **Acceptance Criteria:**
 - [ ] On a scratch home, install → update → rollback leaves every pack folder at the expected VERSION, and a planted `mods/pocket-link` byte-identical (shasum of every file).
-- [ ] A v0.2.0-shaped scratch home with hand-installed old-named mods: rerunning install.sh installs the pack, leaves the hand-installed folders untouched without `--adopt`, and with `--adopt` moves them to `.prev/` first.
+- [ ] A v0.2.0-shaped scratch home with hand-installed old-named mods: rerunning install.sh installs the pack, leaves the hand-installed folders untouched without `--adopt`, and with `--adopt` moves them to `backup/<mod>-<date>/` first (never `.prev/`, which holds only pack releases).
 - [ ] One installer: `scripts/install.mjs` is gone and the README names only install.sh.
 - [ ] `actionlint` and `shellcheck -s sh` are clean. The full gate passes.
 
