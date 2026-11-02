@@ -1,0 +1,76 @@
+{
+  "recorded": "2026-11-02",
+  "note": "The drift fixed by hand on 2026-11-02, rebuilt with neutral names (sidebar-rules Group 2). It lives outside test/fixtures/sidebar/ because the R3 tests there assume a window the sidebar can draw whole, and this one holds bots no space shows. Folders follow the same anonymised layout, so the deleted folder the request names is project-orchestrator here. `folders` is what readState finds about each local folder: exists, its project key (git main checkout or the folder holding .herdr/bots.json) and git's top level.",
+  "terminals": [
+    {"address":"t1","agent":"claude-code","cwd":"~/workspace/repos/project-alpha","state":"live","status":"idle","status_ms":1793400000000,"turn":40,"where":"Alpha HQ / main","parent":null,"created_ms":1793300000000,"program":{"key":"claude-code","agent":true},"labels":{"bot":"b-alphamaina","role":"main","herdr.space":"sp01alpha","herdr.tab":"tb01main","automagik-herdr.needs-owner":"pick the next release"}},
+    {"address":"t2","agent":"codex","cwd":"~/workspace/repos/project-alpha","state":"live","status":"working","status_ms":1793620000000,"turn":12,"where":"Alpha HQ / captain","parent":"t1","created_ms":1793310000000,"program":{"key":"codex","agent":true},"labels":{"bot":"b-alphacapta","role":"dev","herdr.space":"sp01alpha"}},
+    {"address":"t3","agent":"codex","cwd":"~/workspace/repos/project-alpha.worktrees/branch-1","state":"live","status":"idle","status_ms":1793610000000,"turn":8,"where":"squad-1 / dev","parent":"t2","created_ms":1793320000000,"program":{"key":"codex","agent":true},"labels":{"bot":"b-alphadevvv","role":"dev","category":"eng","squad":"squad-1","herdr.space":"sp06squad"}},
+    {"address":"t5","agent":"claude-code","cwd":"~/workspace/repos/project-beta","state":"live","status":"idle","status_ms":1793600000000,"turn":30,"where":"Beta / main","parent":null,"created_ms":1793330000000,"program":{"key":"claude-code","agent":true},"labels":{"bot":"b-betamainaa","role":"main","herdr.space":"sp02beta"}},
+    {"address":"t6","agent":"claude-code","cwd":"~/workspace/repos/project-delta","state":"live","status":"idle","status_ms":1793600000000,"turn":22,"where":"Delta / main","parent":null,"created_ms":1793340000000,"program":{"key":"claude-code","agent":true},"labels":{"bot":"b-deltamaina","role":"main","herdr.space":"sp03delta"}},
+    {"address":"t7","agent":"claude-code","cwd":"~/workspace/repos/project-gamma","state":"live","status":"idle","status_ms":1793600000000,"turn":18,"where":"Gamma / main","parent":null,"created_ms":1793350000000,"program":{"key":"claude-code","agent":true},"labels":{"bot":"b-gammamaina","role":"main","herdr.space":"sp04gamma"}},
+    {"address":"t8","agent":"codex","cwd":"~/workspace/repos/project-gamma","state":"live","status":"working","status_ms":1793620000000,"turn":9,"where":"Gamma / dev","parent":"t7","created_ms":1793360000000,"program":{"key":"codex","agent":true},"labels":{"bot":"b-gammamembr","role":"dev","herdr.space":"sp04gamma"}},
+    {"address":"t9","agent":"claude-code","cwd":"~/workspace/repos/project-plain","state":"live","status":"idle","status_ms":1793600000000,"turn":51,"where":"Workspace / main","parent":null,"created_ms":1793370000000,"program":{"key":"claude-code","agent":true},"labels":{"bot":"b-plainmaina","role":"main","herdr.space":"sp05work"}},
+    {"address":"t10","agent":"claude-code","cwd":"~/workspace/repos/project-omega","state":"live","status":"idle","status_ms":1793600000000,"turn":4,"where":null,"parent":null,"created_ms":1793380000000,"program":{"key":"claude-code","agent":true},"labels":{"bot":"b-omegamaina","role":"main"}},
+    {"address":"t11","agent":"zsh","cwd":"~/workspace/repos/project-alpha","state":"live","status":"idle","status_ms":1793500000000,"turn":0,"where":"branch-2 / shell","parent":null,"created_ms":1793390000000,"program":{"key":"zsh","agent":false},"labels":{"herdr.space":"sp07wt2"}},
+    {"address":"t12","agent":"codex","cwd":"~/workspace/repos/project-alpha.worktrees/branch-1","state":"live","status":"working","status_ms":1793620000000,"turn":6,"where":"branch-1 / fixer","parent":"t2","created_ms":1793400000000,"program":{"key":"codex","agent":true},"labels":{"herdr.space":"sp08wt1"}},
+    {"address":"t13","agent":"codex","cwd":"~/workspace/repos/project-alpha.worktrees/branch-1","state":"live","status":"idle","status_ms":1793610000000,"turn":3,"where":"Alpha HQ / reviewer","parent":"t99","created_ms":1793410000000,"program":{"key":"codex","agent":true},"labels":{"herdr.space":"sp01alpha"}},
+    {"address":"t20","agent":"claude-code","cwd":"~/workspace/repos/project-beta","state":"live","status":"idle","status_ms":1793600000000,"turn":15,"where":"Alpha HQ / beta","parent":null,"created_ms":1793420000000,"program":{"key":"claude-code","agent":true},"labels":{"herdr.space":"sp01alpha"}}
+  ],
+  "spaces": [
+    {"id":"sp01alpha","name":"Alpha HQ","machine":null,"folder":"~/workspace/repos/project-alpha","selected":true,"tabs":[
+      {"id":"tb01main","name":"main","selected":true,"panes":[{"pane":"pn01","terminal":"t1"},{"pane":"pn02","terminal":"t2"}]},
+      {"id":"tb01beta","name":"beta","selected":false,"panes":[{"pane":"pn03","terminal":"t20"}]}]},
+    {"id":"sp02beta","name":"Beta","machine":null,"folder":"~/workspace/repos/project-alpha","selected":false,"tabs":[
+      {"id":"tb02main","name":"main","selected":true,"panes":[{"pane":"pn04","terminal":"t5"}]}]},
+    {"id":"sp03delta","name":"Delta","machine":null,"folder":"~/workspace/repos/project-alpha","selected":false,"tabs":[
+      {"id":"tb03main","name":"main","selected":true,"panes":[{"pane":"pn05","terminal":"t6"}]}]},
+    {"id":"sp04gamma","name":"Gamma","machine":null,"folder":"~/workspace/repos/project-old","selected":false,"tabs":[
+      {"id":"tb04main","name":"main","selected":true,"panes":[{"pane":"pn06","terminal":"t7"},{"pane":"pn07","terminal":"t8"}]}]},
+    {"id":"sp05work","name":"Workspace","machine":null,"folder":"~/workspace/repos/project-epsilon","selected":false,"tabs":[
+      {"id":"tb05main","name":"main","selected":true,"panes":[{"pane":"pn08","terminal":"t9"}]}]},
+    {"id":"sp06squad","name":"squad-1","machine":null,"folder":"~/workspace/repos/project-alpha","selected":false,"tabs":[
+      {"id":"tb06dev","name":"dev","selected":true,"panes":[{"pane":"pn09","terminal":"t3"}]}]},
+    {"id":"sp07wt2","name":"branch-2","machine":null,"folder":"~/workspace/repos/project-alpha.worktrees/branch-2","selected":false,"tabs":[
+      {"id":"tb07shell","name":"shell","selected":true,"panes":[{"pane":"pn10","terminal":"t11"}]}]},
+    {"id":"sp08wt1","name":"branch-1","machine":null,"folder":"~/workspace/repos/project-alpha.worktrees/branch-1","selected":false,"tabs":[
+      {"id":"tb08fix","name":"fixer","selected":true,"panes":[{"pane":"pn11","terminal":"t12"}]}]},
+    {"id":"sp09empty","name":"scratch","machine":null,"folder":"~/workspace/repos/project-epsilon","selected":false,"tabs":[
+      {"id":"tb09none","name":"none","selected":true,"panes":[]}]}
+  ],
+  "projects": [
+    {"key":"~/workspace/repos/project-alpha","machine":null,"file":{"version":1,"categories":[{"id":"eng","title":"Engineering"}],"bots":[
+      {"id":"b-alphamaina","kind":"main","name":"Alpha Bot 1","role":"role 1","instructions":"","agent":"claude","look":{"character":"star","colour":"blue"}},
+      {"id":"b-alphacapta","kind":"member","name":"Alpha Bot 2","role":"role 2","rank":"captain","category":"eng","instructions":"","agent":"codex","look":{"character":"moon","colour":"green"}},
+      {"id":"b-alphadevvv","kind":"member","name":"Alpha Bot 3","role":"role 3","rank":"dev","lead":"b-alphacapta","instructions":"","agent":"codex","look":{"character":"wave","colour":"red"}}]}},
+    {"key":"~/workspace/repos/project-beta","machine":null,"file":{"version":1,"categories":[],"bots":[
+      {"id":"b-betamainaa","kind":"main","name":"Beta Bot 1","role":"role 1","instructions":"","agent":"claude","look":{"character":"hex","colour":"cyan"}}]}},
+    {"key":"~/workspace/repos/project-delta","machine":null,"file":{"version":1,"categories":[],"bots":[
+      {"id":"b-deltamaina","kind":"main","name":"Delta Bot 1","role":"role 1","instructions":"","agent":"claude","look":{"character":"zed","colour":"orange"}}]}},
+    {"key":"~/workspace/repos/project-gamma","machine":null,"file":{"version":1,"categories":[],"bots":[
+      {"id":"b-gammamaina","kind":"main","name":"Gamma Bot 1","role":"role 1","instructions":"","agent":"claude","look":{"character":"peanut","colour":"violet"}},
+      {"id":"b-gammamembr","kind":"member","name":"Gamma Bot 2","role":"role 2","rank":"dev","instructions":"","agent":"codex","look":{"character":"gumdrop","colour":"yellow"}}]}},
+    {"key":"~/workspace/repos/project-plain","machine":null,"file":{"version":1,"name":"Plain","categories":[],"bots":[
+      {"id":"b-plainmaina","kind":"main","name":"Plain Bot 1","role":"role 1","instructions":"","agent":"claude","look":{"character":"squircle","colour":"magenta"}}]}},
+    {"key":"~/workspace/repos/project-omega","machine":null,"file":{"version":1,"categories":[],"bots":[
+      {"id":"b-omegamaina","kind":"main","name":"Omega Bot 1","role":"role 1","instructions":"","agent":"claude","look":{"character":"whale","colour":"gray"}}]}}
+  ],
+  "registry": [
+    "~/workspace/repos/project-alpha",
+    "~/workspace/repos/project-orchestrator",
+    "~/workspace/repos/project-beta",
+    "~/workspace/repos/project-plain"
+  ],
+  "folders": {
+    "~/workspace/repos/project-alpha": {"exists":true,"key":"~/workspace/repos/project-alpha","top":"~/workspace/repos/project-alpha"},
+    "~/workspace/repos/project-alpha.worktrees/branch-1": {"exists":true,"key":"~/workspace/repos/project-alpha","top":"~/workspace/repos/project-alpha.worktrees/branch-1"},
+    "~/workspace/repos/project-alpha.worktrees/branch-2": {"exists":true,"key":"~/workspace/repos/project-alpha","top":"~/workspace/repos/project-alpha.worktrees/branch-2"},
+    "~/workspace/repos/project-beta": {"exists":true,"key":"~/workspace/repos/project-beta","top":"~/workspace/repos/project-beta"},
+    "~/workspace/repos/project-delta": {"exists":true,"key":"~/workspace/repos/project-delta","top":"~/workspace/repos/project-delta"},
+    "~/workspace/repos/project-gamma": {"exists":true,"key":"~/workspace/repos/project-gamma","top":"~/workspace/repos/project-gamma"},
+    "~/workspace/repos/project-old": {"exists":false,"key":null,"top":null},
+    "~/workspace/repos/project-epsilon": {"exists":true,"key":"~/workspace/repos/project-epsilon","top":"~/workspace/repos/project-epsilon"},
+    "~/workspace/repos/project-plain": {"exists":true,"key":"~/workspace/repos/project-plain","top":null},
+    "~/workspace/repos/project-omega": {"exists":true,"key":"~/workspace/repos/project-omega","top":"~/workspace/repos/project-omega"},
+    "~/workspace/repos/project-orchestrator": {"exists":false,"key":null,"top":null}
+  }
+}
