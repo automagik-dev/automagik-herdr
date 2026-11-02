@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 import { ledgerPath } from "../mods/spaces-agents/workers.js";
 import { OURS, commandFor, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/spaces-agents/briefingText.mjs";
 import {
-  BACKUP_SUFFIX, HOOKS_JOURNAL, foldersOf, knownProjects, migrateHooks, relink, retargetHooks, revertHooks, syncHooks, toStable,
+  BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
+  toStable,
 } from "../mods/spaces-agents/migrateHooks.mjs";
 
 // git here must not read this host's global config.
@@ -76,19 +77,22 @@ test("retargetHooks: only the pack's command shape moves, every other byte stays
   const r = retargetHooks(text, toStable("/h"));
   assert.deepEqual(r.edits, [{ before: legacy, after: hookCommand("/h") }]);
   assert.equal(r.text, text.replace(JSON.stringify(legacy), JSON.stringify(hookCommand("/h"))), "byte for byte but the command");
-  // Already there, or another app home's: no edit, or moved here.
+  // Already there: no edit. Another app home's (or a checkout's) script is not this run's to move.
   assert.deepEqual(retargetHooks(r.text, toStable("/h")).edits, []);
-  assert.equal(retargetHooks(text, toStable("/other")).edits[0].after, hookCommand("/other"));
+  assert.deepEqual(retargetHooks(text, toStable("/other")), { text, edits: [], odd: [] });
+  // The same command under another event first: only the UserPromptSubmit one changes, in place.
+  const twice = `{"hooks": {"SessionStart": [{"hooks": [{"type":"command","command":${JSON.stringify(legacy)}}]}],\n "UserPromptSubmit": [{"hooks": [{"type":"command","command":${JSON.stringify(legacy)}}]}]}}\n`;
+  const at = twice.lastIndexOf(JSON.stringify(legacy));
+  assert.equal(retargetHooks(twice, toStable("/h")).text,
+    twice.slice(0, at) + JSON.stringify(hookCommand("/h")) + twice.slice(at + JSON.stringify(legacy).length));
   // The person's own command around our script: reported, kept.
   const odd = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "node /h/mods/spaces-agents/briefing.mjs | tee /tmp/log" }] }] } });
   assert.deepEqual(retargetHooks(odd, toStable("/h")), { text: odd, edits: [], odd: ["node /h/mods/spaces-agents/briefing.mjs | tee /tmp/log"] });
   assert.match(retargetHooks("{ nope", toStable("/h")).error, /not valid JSON/);
   assert.match(retargetHooks("[]", toStable("/h")).error, /not a JSON object/);
-  // A layout it can't swap in place (an escaped slash) is written back whole, keys in order.
+  // A command the file spells with its own escapes can't be swapped in place: reported, never re-serialised.
   const escaped = text.replace(JSON.stringify(legacy), JSON.stringify(legacy).replaceAll("/", "\\/"));
-  const whole = retargetHooks(escaped, toStable("/h"));
-  assert.deepEqual(Object.keys(JSON.parse(whole.text)), ["permissions", "hooks"]);
-  assert.equal(JSON.parse(whole.text).hooks.UserPromptSubmit[0].hooks[0].command, hookCommand("/h"));
+  assert.match(retargetHooks(escaped, toStable("/h")).error, /can't be changed in place/);
 });
 
 // ---- on scratch projects ----
@@ -194,6 +198,48 @@ test("revertHooks edits only commands still holding the forward value, keeps wha
   assert.ok(existsSync(settings(kept) + BACKUP_SUFFIX), "the backups stay");
   assert.deepEqual(readJson(join(s.app, "automagik-herdr", HOOKS_JOURNAL)).hooks, []);
   assert.deepEqual(revertHooks([kept, changed, fresh], { appHome: s.app }).restored, [], "a second revert does nothing");
+});
+
+test("discovery: an Attach in a subfolder, the ledger's and a pane's folders; never an unknown repo root, a nested repo or a link", (t) => {
+  const s = scratch(t);
+  const hook = { hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: legacyHookCommand(s.app), timeout: 10 }] }] } };
+  // A repository whose bot was attached from a pane in packages/api (the same project key).
+  const repo = project(s.root, "repo", "w1");
+  const sub = join(repo, "packages", "api");
+  writeSettings(sub, hook);
+  // Deeper than the scan goes, but the ledger names it (a seat's folder), and a pane's folder elsewhere.
+  const deep = join(repo, "a", "b", "c", "d", "e");
+  writeSettings(deep, hook);
+  write(join(s.app, "automagik-herdr", "workers.jsonl"), `${JSON.stringify({ event: "start", kind: "seat", worktree: deep })}\n{torn\n`);
+  const pane = project(s.root, "pane-only");
+  writeSettings(pane, hook);
+  // Never entered: node_modules, a nested repository, a linked folder; a monorepo's root when only a subfolder is known.
+  writeSettings(join(repo, "node_modules", "x"), hook);
+  const nested = project(repo, "vendor/lib");
+  writeSettings(nested, hook);
+  writeSettings(join(s.root, "outside"), hook);
+  symlinkSync(join(s.root, "outside"), join(repo, "linked"));
+  const mono = project(s.root, "mono");
+  writeSettings(mono, hook);
+  mkdirSync(join(mono, "pkg", "a"), { recursive: true });
+  const untouched = [join(repo, "node_modules", "x"), nested, join(s.root, "outside"), mono].map((d) => [d, read(settings(d))]);
+
+  assert.deepEqual(ledgerFolders(s.app), [deep]);
+  const r = migrateHooks([repo, join(mono, "pkg", "a")], { appHome: s.app, also: [...ledgerFolders(s.app), pane] });
+  assert.deepEqual(r.rewritten.sort(), [settings(sub), settings(deep), settings(pane)].sort());
+  for (const [dir, text] of untouched) assert.equal(read(settings(dir)), text, `${dir} left alone`);
+  assert.deepEqual(revertHooks([repo, join(mono, "pkg", "a")], { appHome: s.app, also: [deep, pane] }).restored.sort(), r.rewritten.sort());
+});
+
+test("botPaneFolders: the folders of live, bot-labelled local panes; none when hc doesn't answer", () => {
+  const answers = {
+    "ls --json": { terminals: [{ address: "t1", state: "live" }, { address: "t2", state: "live" }, { address: "m1/t3", state: "live" }, { address: "t4", state: "exited" }] },
+    "get t1 --json": { labels: { bot: "b-aaaaaaaaaa" }, cwd: "/p/sub" },
+    "get t2 --json": { labels: {}, cwd: "/p/shell" },
+  };
+  const run = (cmd, args) => { const a = answers[args.join(" ")]; if (cmd !== "hc" || !a) throw new Error("no"); return JSON.stringify(a); };
+  assert.deepEqual(botPaneFolders(run), ["/p/sub"]);
+  assert.deepEqual(botPaneFolders(() => { throw new Error("no hc"); }), []);
 });
 
 test("knownProjects: the sidebar's remembered projects (both keys) and the CLI's lists, this computer's only", (t) => {

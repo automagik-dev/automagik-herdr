@@ -1,12 +1,14 @@
 // The briefing hook across the rename (Group 6b): every hook the pack wrote moves onto the fixed
 // entry point <app home>/automagik-herdr/briefing.mjs (briefingEntry.mjs, which runs whichever
 // sidebar folder is installed), and back to v0.3's path when a rollback lands a release that
-// doesn't know that entry point. It looks at the projects the pack knows (the sidebar's and the
-// CLI's remembered lists, and the open spaces when the caller passes them) and at every git
-// worktree of each, so bot workers' worktrees (<project>/.claude/worktrees/<slug>) are covered.
-// In each .claude/settings.local.json only a UserPromptSubmit command of the pack's own shape is
-// edited; every other key and hook stays, byte for byte where the file allows it. A file that
-// isn't JSON, a link and any other command shape are reported and left. Each rewrite is backed
+// doesn't know that entry point. It looks where the pack writes hooks: the projects it knows (the
+// sidebar's and the CLI's remembered lists), each one's git worktrees (so bot workers'
+// <project>/.claude/worktrees/<slug> are covered) and a bounded scan of their subfolders (Attach
+// writes into the pane's folder, which may be any subfolder of the project), the ledger's start
+// folders, and, when the caller passes them, the open spaces' and bot panes' folders.
+// In each .claude/settings.local.json only a UserPromptSubmit command of the pack's own shape,
+// naming this app home's script, is edited, in place: every other byte stays. A file that isn't
+// JSON, one whose command can't be changed in place, a link and any other shape are reported and left. Each rewrite is backed
 // up beside the file first (settings.local.json.am-backup, then -2, -3…: never over an earlier
 // one) and journalled in <app home>/automagik-herdr/hooks-journal.json before it is written; the
 // revert reads that journal and edits a command back only where it still holds what was written.
@@ -14,7 +16,10 @@
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { ENTRY_SOURCE, OURS, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
@@ -50,9 +55,10 @@ function writeAtomic(path, body, mode) {
 /**
  * A settings.local.json text with each UserPromptSubmit command moved where `choose(command)`
  * says: a string replaces it, `false` marks one of the pack's of another shape (reported, kept),
- * null leaves it. The other bytes stay as they are when the commands can be swapped in place
- * (checked by parsing the result); otherwise the parsed file is written back whole, keys in order.
- * Returns `{ text, edits: {before, after}[], odd: string[] }`, or `{ error }` when it is no JSON object.
+ * null leaves it. Only the command's own JSON string changes, at that hook's place (the same
+ * text elsewhere, under another event, stays); every other byte is kept. Returns
+ * `{ text, edits: {before, after}[], odd: string[] }`, or `{ error }` when it is no JSON object or
+ * a command can't be changed in place (an escape the file spells its own way): then it is left.
  */
 export function retargetHooks(text, choose) {
   let settings;
@@ -61,36 +67,52 @@ export function retargetHooks(text, choose) {
   const list = isObject(settings.hooks) ? settings.hooks.UserPromptSubmit : undefined;
   const edits = [];
   const odd = [];
-  for (const group of Array.isArray(list) ? list : []) {
-    for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
-      if (!isObject(h) || typeof h.command !== "string") continue;
-      const to = choose(h.command);
-      if (to === false) odd.push(h.command);
-      else if (typeof to === "string" && to !== h.command) { edits.push({ before: h.command, after: to }); h.command = to; }
-    }
-  }
+  (Array.isArray(list) ? list : []).forEach((group, g) => (Array.isArray(group?.hooks) ? group.hooks : []).forEach((h, i) => {
+    if (!isObject(h) || typeof h.command !== "string") return;
+    const to = choose(h.command);
+    if (to === false) odd.push(h.command);
+    else if (typeof to === "string" && to !== h.command) edits.push({ before: h.command, after: to, at: [g, i] });
+  }));
   if (!edits.length) return { text, edits, odd };
-  return { text: inPlace(text, settings, edits) ?? json(settings), edits, odd };
+  const out = inPlace(text, edits);
+  if (out === null) return { error: "its briefing hook's command can't be changed in place (the file spells it with escapes of its own)" };
+  return { text: out, edits: edits.map(({ before, after }) => ({ before, after })), odd };
 }
 
-function inPlace(text, settings, edits) {
+/**
+ * Each edit's command swapped at its own hook: of the places its JSON string occurs, the one
+ * whose swap parses to the file with exactly that hook changed. Null when there is none.
+ */
+function inPlace(text, edits) {
+  const expected = JSON.parse(text);
   let out = text;
-  for (const { before, after } of edits) {
+  for (const { before, after, at: [g, i] } of edits) {
+    expected.hooks.UserPromptSubmit[g].hooks[i].command = after;
     const from = JSON.stringify(before);
-    const at = out.indexOf(from);
-    if (at < 0) return null;
-    out = out.slice(0, at) + JSON.stringify(after) + out.slice(at + from.length);
+    let next = null;
+    for (let at = out.indexOf(from); at >= 0 && next === null; at = out.indexOf(from, at + 1)) {
+      const candidate = out.slice(0, at) + JSON.stringify(after) + out.slice(at + from.length);
+      try { if (isDeepStrictEqual(JSON.parse(candidate), expected)) next = candidate; } catch { /* not this one */ }
+    }
+    if (next === null) return null;
+    out = next;
   }
-  try { return isDeepStrictEqual(JSON.parse(out), settings) ? out : null; } catch { return null; }
+  return out;
 }
 
-/** Forward: a command of the pack's shape naming any of its briefing paths → this app home's stable one. */
+/**
+ * Forward: a command of the pack's shape naming this app home's own sidebar script → this app
+ * home's stable one. Another app home's hook (or a checkout's) is not this run's to move: left.
+ */
 export function toStable(appHome) {
-  const target = hookCommand(appHome);
+  const home = appHome.replace(/\/+$/, "");
+  const target = hookCommand(home);
+  const mine = new Set(SIDEBARS.map((m) => `${home}/mods/${m}/briefing.mjs`));
   return (command) => {
     if (!OURS.test(command) || command === target) return null;
     const script = scriptOf(command);
-    return script !== null && OURS.test(script) ? target : false;
+    if (script === null) return false;
+    return mine.has(script) ? target : null;
   };
 }
 
@@ -132,23 +154,98 @@ export function openSpaces(run = execFileSync) {
   } catch { return []; }
 }
 
-/** Each project folder and every git worktree of it (`git worktree list --porcelain`), each once. */
-export function foldersOf(projects, { git = runGit } = {}) {
+/** The folders of this computer's bot panes (live, labelled `bot`), from `hc ls` and `hc get`; none without hc. */
+export function botPaneFolders(run = execFileSync) {
+  const ask = (args) => {
+    try { return JSON.parse(run("hc", [...args, "--json"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] })); } catch { return null; }
+  };
+  const ls = ask(["ls"]);
+  const rows = (Array.isArray(ls?.terminals) ? ls.terminals : []).filter((r) => typeof r?.address === "string" && r.state === "live" && !r.address.includes("/"));
+  const out = [];
+  for (const row of rows.slice(0, 200)) {
+    const get = ask(["get", row.address]);
+    const cwd = get?.cwd ?? row.cwd ?? get?.foreground?.cwd;
+    if (get?.labels?.bot && typeof cwd === "string") out.push(cwd);
+  }
+  return out;
+}
+
+/** The workers ledger (workers.js LEDGER_FILE), read here so the updater needs no more of the pack. */
+const LEDGER = join("automagik-herdr", "workers.jsonl");
+/** The folders the ledger's start rows name (each worker's worktree, each bot seat's folder). */
+export function ledgerFolders(appHome) {
+  let text = "";
+  try { text = readFileSync(join(appHome, LEDGER), "utf8"); } catch { return []; }
+  const out = [];
+  for (const line of text.split("\n")) {
+    try { const row = JSON.parse(line); if (row?.event === "start" && typeof row.worktree === "string") out.push(row.worktree); } catch { /* a torn line */ }
+  }
+  return out;
+}
+
+/** The key git gives a worktree root: its main checkout (model.js projectOf, for folders in git). */
+function keyOf(folder, git) {
+  const common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], folder)?.trim();
+  if (!common) return folder;
+  if (basename(common) === ".git") return dirname(common);
+  return git(["rev-parse", "--show-toplevel"], folder)?.trim() || folder;
+}
+const realOf = (path) => { try { return realpathSync(path); } catch { return null; } };
+
+export const SCAN_DEPTH = 4;
+const SCAN_MAX = 5000;
+const SCAN_SKIP = new Set(["node_modules", ".git", ".claude"]);
+/**
+ * The subfolders of `root`, at most SCAN_DEPTH below it, that hold a .claude folder: no link is
+ * followed, and node_modules, .git, .claude (worker worktrees live there) and any folder with its
+ * own .git (a nested repository or worktree) are not entered. At most SCAN_MAX folders per root.
+ */
+function scan(root) {
+  const found = [];
+  let seen = 0;
+  const walk = (dir, depth) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory() || SCAN_SKIP.has(e.name) || ++seen > SCAN_MAX) continue;
+      const sub = join(dir, e.name);
+      if (lstat(join(sub, ".git"))) continue;
+      if (lstat(join(sub, ".claude"))) found.push(sub);
+      if (depth < SCAN_DEPTH) walk(sub, depth + 1);
+    }
+  };
+  walk(root, 1);
+  return found;
+}
+
+/**
+ * Where hooks may be, each once: every known project, those of its git worktrees whose key is a
+ * known project (a known subfolder of a repository never brings in the repository's root), and a
+ * scan of each of those trees (scan); then the `also` folders as they are (panes', the ledger's).
+ */
+export function foldersOf(projects, { git = runGit, also = [] } = {}) {
   const seen = new Set();
   const out = [];
   const add = (folder) => {
-    if (!usable(folder)) return;
-    let real;
-    try { real = realpathSync(folder); } catch { return; }
-    if (!seen.has(real)) { seen.add(real); out.push(folder); }
+    if (!usable(folder)) return false;
+    const real = realOf(folder);
+    if (real === null || seen.has(real)) return false;
+    seen.add(real);
+    out.push(folder);
+    return true;
   };
-  for (const project of projects) {
-    if (!usable(project)) continue;
-    add(project);
+  const known = projects.filter(usable);
+  const knownReal = new Set(known.map(realOf));
+  const roots = [];
+  for (const project of known) {
+    if (add(project)) roots.push(project);
     for (const line of (git(["worktree", "list", "--porcelain"], project) ?? "").split("\n")) {
-      if (line.startsWith("worktree ")) add(line.slice("worktree ".length));
+      const tree = line.startsWith("worktree ") ? line.slice("worktree ".length) : null;
+      if (tree && usable(tree) && knownReal.has(realOf(keyOf(tree, git))) && add(tree)) roots.push(tree);
     }
   }
+  for (const root of roots) for (const sub of scan(root)) add(sub);
+  for (const folder of also) add(folder);
   return out;
 }
 
@@ -213,13 +310,13 @@ function rewrite(p) {
  * that can't be is left. The journal is written before the first rewrite.
  * Returns `{ rewritten: string[], skipped: {file, reason}[], journal }` (journal: its path, or null).
  */
-export function migrateHooks(projects, { appHome, backup = true, git = runGit } = {}) {
+export function migrateHooks(projects, { appHome, backup = true, git = runGit, also = [] } = {}) {
   appHome = resolve(appHome);
   const rewritten = [];
   const skipped = [];
   const due = [];
   const choose = toStable(appHome);
-  for (const folder of foldersOf(projects, { git })) {
+  for (const folder of foldersOf(projects, { git, also })) {
     const found = settingsOf(folder);
     if (!found) continue;
     let raw;
@@ -253,7 +350,7 @@ export function migrateHooks(projects, { appHome, backup = true, git = runGit } 
  * a command changed since, stays. Entries done, or no longer applicable, leave the journal; the
  * backups stay for manual recovery. Returns `{ restored: string[], skipped: {file, reason}[] }`.
  */
-export function revertHooks(projects, { appHome, git = runGit } = {}) {
+export function revertHooks(projects, { appHome, git = runGit, also = [] } = {}) {
   appHome = resolve(appHome);
   const restored = [];
   const skipped = [];
@@ -261,7 +358,7 @@ export function revertHooks(projects, { appHome, git = runGit } = {}) {
   const byFile = new Map();
   for (const e of entries) { if (!byFile.has(e.file)) byFile.set(e.file, []); byFile.get(e.file).push(e); }
   const files = new Set(byFile.keys());
-  for (const folder of foldersOf(projects, { git })) files.add(resolve(join(folder, ".claude", SETTINGS)));
+  for (const folder of foldersOf(projects, { git, also })) files.add(resolve(join(folder, ".claude", SETTINGS)));
   const stable = hookCommand(appHome);
   const legacy = legacyHookCommand(appHome);
   const keep = [];
@@ -319,18 +416,20 @@ export function placeEntry(appHome, sidebar) {
 /**
  * After an install, update or rollback: when the installed sidebar knows the stable entry point
  * (ships ENTRY_SOURCE), it is put in place and the hooks move onto it; when it doesn't, they move
- * back (revertHooks). `extra`: more project folders (the open spaces). Throws on what stops it.
+ * back (revertHooks). `extra`: more folders to look in as they are (the open spaces', the bot
+ * panes'); the ledger's start folders are always looked in. Throws on what stops it.
  * Returns `{ direction: "forward" | "back" | null, rewritten?, restored?, skipped }`.
  */
 export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit }) {
   const appHome = dirname(resolve(modsDir));
   const sidebar = sidebarOf(modsDir);
   if (!sidebar) return { direction: null, skipped: [] };
-  const projects = knownProjects(appHome, extra);
+  const projects = knownProjects(appHome);
+  const also = [...ledgerFolders(appHome), ...extra];
   const left = (s) => log(`left: ${s.file} (${s.reason})`);
   if (existsSync(join(modsDir, sidebar, ENTRY_SOURCE))) {
     if (placeEntry(appHome, sidebar)) log(`the briefing hook's entry point is ${stableBriefingPath(appHome)}`);
-    const r = migrateHooks(projects, { appHome, git });
+    const r = migrateHooks(projects, { appHome, git, also });
     for (const f of r.rewritten) log(`briefing hook moved to the entry point in ${f} (the original is beside it, ${basename(f)}${BACKUP_SUFFIX}…)`);
     r.skipped.forEach(left);
     if (r.rewritten.length) {
@@ -339,7 +438,7 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit })
     }
     return { direction: "forward", ...r };
   }
-  const r = revertHooks(projects, { appHome, git });
+  const r = revertHooks(projects, { appHome, git, also });
   for (const f of r.restored) log(`briefing hook back on ${sidebar}'s own path in ${f}`);
   r.skipped.forEach(left);
   return { direction: "back", ...r };

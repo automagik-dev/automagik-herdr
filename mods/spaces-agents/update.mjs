@@ -51,7 +51,7 @@ import {
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
-import { CLI_LINK, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
+import { CLI_LINK, botPaneFolders, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
   noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
@@ -557,13 +557,13 @@ export const liveHome = (modsDir) => dirname(resolve(modsDir)) === join(homedir(
 /**
  * The briefing hooks and the CLI link after the folders and references (Group 6b, migrateHooks.mjs
  * syncHooks and relink). `binDir`: the folder holding the CLI link (null: the link is not looked at);
- * `window`: also the projects of the open spaces (`herdr-app ls`). A failure is a warning.
+ * `window`: also the open spaces' and the bot panes' folders (`herdr-app ls`, `hc`). A failure is a warning.
  * Returns `{ hooks, link }` (hooks: syncHooks's result or null; link: the line logged or null).
  */
 export function moveHooks({ modsDir, log = () => {}, warnings = [], binDir = null, window = false }) {
   let hooks = null;
   let link = null;
-  try { hooks = syncHooks({ modsDir, extra: window ? openSpaces() : [], log }); } catch (error) {
+  try { hooks = syncHooks({ modsDir, extra: window ? [...openSpaces(), ...botPaneFolders()] : [], log }); } catch (error) {
     warnings.push(`the briefing hooks were not moved (${error.message}); each rewritten settings.local.json has its backup beside it`);
   }
   if (binDir) {
