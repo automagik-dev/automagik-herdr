@@ -14,7 +14,7 @@ import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Bu
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, applyBotEdit } from "./model.js";
-import { configPaths, detectModel } from "./models.js";
+import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
@@ -543,7 +543,8 @@ export class BotForm {
   runsOn(v) {
     const { t, state, info, model } = v;
     // Installed agents only, plus the bot's own agent when it isn't installed (shown dimmed).
-    const listed = this.agents.filter((a) => a.installed);
+    // Retired agents (LEGACY_AGENTS: gemini) are never offered, though Herdr still lists them.
+    const listed = this.agents.filter((a) => a.installed && !Object.hasOwn(LEGACY_AGENTS, a.key));
     if (state.agent && !listed.some((a) => a.key === state.agent)) {
       listed.push(this.agents.find((a) => a.key === state.agent) ?? { key: state.agent, name: state.agent, installed: false, icon: null });
     }

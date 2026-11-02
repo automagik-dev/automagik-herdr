@@ -46,7 +46,7 @@ function scene(t, { file = team(), branch = "main", briefing = true } = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
-  for (const a of ["claude", "codex", "gemini"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
+  for (const a of ["claude", "codex", "agy"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
@@ -303,17 +303,25 @@ test("create and edit --worker-agent/--worker-model/--worker-effort write the fi
 
 // ---- the pure parts ----
 
-test("effortArgs: claude --effort, codex -c model_reasoning_effort, pi/omp --thinking; others none", () => {
+test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, pi/omp --thinking; others none", () => {
   assert.deepEqual(effortArgs("claude", "high"), ["--effort", "high"]);
   assert.deepEqual(effortArgs("codex", "low"), ["-c", "model_reasoning_effort=low"]);
   assert.deepEqual(effortArgs("pi", "max"), ["--thinking", "max"]);
   assert.deepEqual(effortArgs("omp", "xhigh"), ["--thinking=xhigh"]);
-  assert.deepEqual(effortArgs("gemini", "high"), []);
+  assert.deepEqual(effortArgs("antigravity", "xhigh"), ["--effort", "xhigh"]);
+  assert.deepEqual(effortArgs("grok", "high"), []);
+  assert.deepEqual(effortArgs("gemini", "high"), [], "gemini is retired");
   assert.deepEqual(effortArgs("claude", null), []);
-  const plan = workerPlan({ name: "G", agent: "gemini", worker: { effort: "high" } });
+  const plan = workerPlan({ name: "G", agent: "grok", worker: { effort: "high" } });
   assert.equal(plan.effort, null);
-  assert.deepEqual(plan.argv, ["gemini"]);
-  assert.match(plan.warnings[0], /Gemini has no effort flag; effort high left out/);
+  assert.deepEqual(plan.argv, ["grok"]);
+  assert.match(plan.warnings[0], /Grok has no effort flag; effort high left out/);
+  const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-3.1-pro", effort: "max" } });
+  assert.deepEqual(agy.argv, ["agy", "--model", "gemini-3.1-pro", "--effort", "max"]);
+  assert.deepEqual(agy.warnings, []);
+  const legacy = workerPlan({ name: "L", agent: "claude" }, { agent: "gemini", effort: "low" });
+  assert.equal(legacy.agent, "antigravity", "a typed gemini runs antigravity");
+  assert.deepEqual(legacy.argv, ["agy", "--effort", "low"]);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { agent: "nope" }).error, /isn't a coding agent/);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
 });

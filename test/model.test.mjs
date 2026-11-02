@@ -428,3 +428,27 @@ test("category ids: parseBots warns about a non-slug id; checkBots refuses only 
     assert.match(newCategoryId(title, []), /^[a-z0-9]+(-[a-z0-9]+)*$/, title);
   }
 });
+
+test("schema: a gemini bot (retired agent) is read as antigravity with one warning; raw keeps gemini", () => {
+  const source = sample((f) => {
+    f.bots[1].agent = "gemini";
+    f.bots[2].agent = "gemini";
+    f.bots[2].worker = { agent: "gemini", effort: "high" };
+    f.bots[3].worker = { agent: "gemini" };
+    return f;
+  });
+  const { file, warnings, raw } = parseBots(text(source));
+  assert.equal(file.bots[1].agent, "antigravity");
+  assert.equal(file.bots[2].agent, "antigravity");
+  assert.deepEqual(file.bots[2].worker, { agent: "antigravity", effort: "high" });
+  assert.equal(file.bots[3].agent, "claude");
+  assert.deepEqual(file.bots[3].worker, { agent: "antigravity" });
+  assert.deepEqual(warnings, [
+    `${ID.cap}: agent gemini is retired; it runs on antigravity`,
+    `${ID.dev}: agent gemini is retired; it runs on antigravity`,
+    `${ID.tst}: agent gemini is retired; it runs on antigravity`,
+  ], "one line per bot, even when its worker names gemini too");
+  assert.equal(raw.bots[1].agent, "gemini", "the file on disk is not rewritten by reading it");
+  assert.equal(raw.bots[2].worker.agent, "gemini");
+  assert.deepEqual(checkBots(file), []);
+});

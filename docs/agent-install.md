@@ -12,7 +12,7 @@ Install Automagik Herdr on this Mac and set up my first bot.
    If automagik-herdr is not found, use ~/.local/bin/automagik-herdr and tell me to add
    ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
-   (claude, codex, gemini…). Characters: whale, octopus, star, moon, wave, squircle, zed,
+   (claude, codex, antigravity…). Characters: whale, octopus, star, moon, wave, squircle, zed,
    hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
    ring, gem. If I don't pick a character, use --omni (the octopus); never guess the folder,
    name or agent.

@@ -3,6 +3,8 @@
 // default look. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`, so `node --test` runs it.
 // Apache-2.0.
 
+import { LEGACY_AGENTS } from "./models.js";
+
 /** The hc label key that ties a terminal to a bot; its value is the bot id (A9). */
 export const BOT_LABEL = "bot";
 /** The longest `instructions` a bot may carry. */
@@ -88,7 +90,8 @@ export function workerProblem(worker) {
  * at all (not JSON, no `bots` array, another version). Inside it, an entry with no usable
  * id or name, a repeated id or an unknown kind is left out; anything else is kept and
  * named in `warnings` (a long instructions text, a missing agent, an unknown look name,
- * a second main bot: the first one counts). `raw` is the file exactly as read, a separate
+ * a second main bot: the first one counts). A retired agent (models.js LEGACY_AGENTS, as
+ * `gemini`) is read as its replacement, with a warning. `raw` is the file exactly as read, a separate
  * copy: edit that one to write the file back (bots.js writeBots), so entries left out of
  * `file` survive.
  */
@@ -135,6 +138,13 @@ export function parseBots(text) {
     if (bot.model !== undefined && typeof bot.model !== "string") delete bot.model;
     const workerWhy = workerProblem(bot.worker);
     if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
+    const retired = (k) => (typeof k === "string" && Object.hasOwn(LEGACY_AGENTS, k) ? k : null);
+    const old = retired(bot.agent) ?? retired(bot.worker?.agent);
+    if (old) {
+      warnings.push(`${where}: agent ${old} is retired; it runs on ${LEGACY_AGENTS[old]}`);
+      if (retired(bot.agent)) bot.agent = LEGACY_AGENTS[bot.agent];
+      if (retired(bot.worker?.agent)) bot.worker = { ...bot.worker, agent: LEGACY_AGENTS[bot.worker.agent] };
+    }
     if (bot.rank !== undefined && !RANKS.includes(bot.rank)) {
       warnings.push(`${where}: unknown rank ${JSON.stringify(bot.rank)}; ignored (one of ${RANKS.join(", ")})`);
       delete bot.rank;

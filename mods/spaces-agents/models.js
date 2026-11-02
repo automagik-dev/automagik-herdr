@@ -27,8 +27,15 @@ export const AGENTS = Object.freeze({
   hermes: { name: "Hermes", run: ["hermes"] },
   qoder: { name: "Qoder", run: ["qodercli"], match: ["qodercli"] },
   crush: { name: "Crush", run: ["crush"] },
-  gemini: { name: "Gemini", run: ["gemini"] },
 });
+
+/**
+ * Agents that are gone, mapped to the one that replaces them. Google ended Gemini CLI for
+ * individuals (2026-11-02: "migrate to the Antigravity suite"), so a bot or a typed --agent
+ * naming `gemini` runs Antigravity (`agy`). Herdr's own table still lists gemini; the
+ * bot form leaves these keys out of its picker.
+ */
+export const LEGACY_AGENTS = Object.freeze({ gemini: "antigravity" });
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 
@@ -83,12 +90,12 @@ export function agentKeyOfArgv(argv, agents = AGENTS) {
 }
 
 // Each agent's model flags, read from `<agent> --help` on this host (2026-11-01: Claude Code
-// 2.1.316, codex, gemini, omp, pi). Agents not installed here have none listed, so their
+// 2.1.316, codex, omp, pi; 2026-11-02: agy 1.4.12, whose Go parser takes -model as --model). Agents not installed here have none listed, so their
 // model is never guessed: detectModel and modelArgs give null / [] for them.
 const FLAGS = {
   claude: { long: ["--model"] },
   codex: { long: ["--model"], short: ["-m"], config: ["-c", "--config"] },
-  gemini: { long: ["--model"], short: ["-m"] },
+  antigravity: { long: ["--model", "-model"] },
   pi: { long: ["--model"] },
   omp: { long: ["--model"] },
 };
@@ -149,7 +156,7 @@ export function configPaths(home) {
     claudeSettings: `${home}/.claude/settings.json`,
     codexConfig: `${home}/.codex/config.toml`,
     codexModels: `${home}/.codex/models_cache.json`,
-    geminiSettings: `${home}/.gemini/settings.json`,
+    antigravitySettings: `${home}/.gemini/antigravity-cli/settings.json`,
   };
 }
 
@@ -167,8 +174,8 @@ const parseJson = (t) => { try { return typeof t === "string" && t ? JSON.parse(
 /**
  * The model an agent runs when its command line names none: its own configured default,
  * when that is one cheap local file (Claude Code: `~/.claude/settings.json` `model`; Codex:
- * `~/.codex/config.toml` top-level `model`; Gemini: `~/.gemini/settings.json` `model.name`
- * or `model`). Null for every other agent, or when the file or key is missing.
+ * `~/.codex/config.toml` top-level `model`; Antigravity: `~/.gemini/antigravity-cli/settings.json`
+ * `model`, the label `/model` saved). Null for every other agent, or when the file or key is missing.
  * `texts`: configPaths' names mapped to each file's text (null or absent: no file).
  */
 export function defaultModelFrom(agentKey, texts = {}) {
@@ -177,10 +184,9 @@ export function defaultModelFrom(agentKey, texts = {}) {
     return typeof m === "string" && m ? m : null;
   }
   if (agentKey === "codex") return typeof texts.codexConfig === "string" ? tomlTopModel(texts.codexConfig) : null;
-  if (agentKey === "gemini") {
-    const m = parseJson(texts.geminiSettings)?.model;
-    const name = typeof m === "string" ? m : m?.name;
-    return typeof name === "string" && name ? name : null;
+  if (agentKey === "antigravity") {
+    const m = parseJson(texts.antigravitySettings)?.model;
+    return typeof m === "string" && m ? m : null;
   }
   return null;
 }
@@ -198,7 +204,8 @@ const CLAUDE_MODELS = ["opus", "sonnet", "haiku", "claude-fable-5-1", "claude-op
  * The models a bot running `agentKey` may be pinned to (A12: picked from a list, never
  * typed). Claude Code: CLAUDE_MODELS above. Codex: the slugs in its own model cache,
  * `~/.codex/models_cache.json` `.models[].slug`, which Codex refreshes itself. Any agent:
- * plus its configured default (defaultModelFrom). Others: empty (no pin offered).
+ * plus its configured default (defaultModelFrom), except Antigravity, whose settings keep a
+ * label that `--model` may not take (`agy models` names those). Others: empty (no pin offered).
  * `texts` as for defaultModelFrom.
  */
 export function knownModelsFrom(agentKey, texts = {}) {
@@ -209,7 +216,7 @@ export function knownModelsFrom(agentKey, texts = {}) {
     const cache = parseJson(texts.codexModels);
     for (const m of Array.isArray(cache?.models) ? cache.models : []) add(m?.slug ?? m?.id);
   }
-  add(defaultModelFrom(agentKey, texts));
+  if (agentKey !== "antigravity") add(defaultModelFrom(agentKey, texts));
   return out;
 }
 
@@ -244,21 +251,28 @@ export function shownModel({ argv, agentKey, pinned, fallback }) {
 
 /**
  * The agent key a name stands for in `agents` (a key, an executable or a `match` name, so
- * `claude-code` is `claude`), or null. What a person types for --agent goes through this.
+ * `claude-code` is `claude`), or null. What a person types for --agent goes through this. A
+ * retired name (LEGACY_AGENTS) that `agents` doesn't list stands for its replacement.
  */
 export function resolveAgent(name, agents = AGENTS) {
   if (typeof name !== "string" || !name.trim()) return null;
-  return agents[name] ? name : agentKeyOfArgv([name], agents);
+  if (agents[name]) return name;
+  const found = agentKeyOfArgv([name], agents);
+  if (found) return found;
+  const next = LEGACY_AGENTS[name.trim()];
+  return next && agents[next] ? next : null;
 }
 
 // Each agent's reasoning-effort flag, read from `<agent> --help` on this host (2026-11-02):
 // Claude Code 2.1.316 `--effort <level>`; codex's config key `model_reasoning_effort`
-// through `-c`; pi `--thinking <level>`; omp `--thinking=<value>`. gemini has none.
+// through `-c`; pi `--thinking <level>`; omp `--thinking=<value>`; agy 1.4.12
+// `--effort` (low|medium|high|xhigh|max).
 const EFFORT = {
   claude: (level) => ["--effort", level],
   codex: (level) => ["-c", `model_reasoning_effort=${level}`],
   pi: (level) => ["--thinking", level],
   omp: (level) => [`--thinking=${level}`],
+  antigravity: (level) => ["--effort", level],
 };
 
 /** True when `agentKey` has an effort flag effortArgs knows. */

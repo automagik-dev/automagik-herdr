@@ -6,7 +6,7 @@
 // so `node --test` runs it. Apache-2.0.
 
 import { MAX_INSTRUCTIONS, OMNI_LOOK, RANKS, defaultLook, descendantsOf, effectiveLead, mainBotOf, newCategoryId, plannedOf } from "./model.js";
-import { defaultModelFrom, knownModelsFrom } from "./models.js";
+import { LEGACY_AGENTS, defaultModelFrom, knownModelsFrom } from "./models.js";
 
 /** Waves the stepper offers (the mockup's 1..9); a stored later wave stays reachable. */
 export const MAX_WAVE = 9;
@@ -39,11 +39,15 @@ export function thousands(n) {
   return String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+// A retired agent's replacement (LEGACY_AGENTS), else the key as given.
+const currentAgent = (key) => (Object.hasOwn(LEGACY_AGENTS, key) ? LEGACY_AGENTS[key] : key);
+
 /**
  * The form's state. Create: a new bot (`id`), its default look, the project's main bot when
  * it has none yet, else a member reporting to the main bot. Edit: every field from the
  * stored entry (`bot`, as parseBots' raw copy holds it), so a field left alone is written
  * back as it was (a pin the list no longer has, a lead that fell back, planned's other keys).
+ * A retired agent (LEGACY_AGENTS) opens as its replacement, as parseBots reads it.
  */
 export function formFrom({ mode = "create", bot = null, file = null, id = null, agent = "" } = {}) {
   if (mode === "edit" && bot) {
@@ -54,7 +58,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
     return {
       mode, id: bot.id, name: str(bot.name), kind: bot.kind === "main" ? "main" : "member",
       character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
-      role: str(bot.role), instructions: str(bot.instructions), agent: str(bot.agent), pin: str(bot.model),
+      role: str(bot.role), instructions: str(bot.instructions), agent: currentAgent(str(bot.agent)), pin: str(bot.model),
       lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
       rank: str(bot.rank), planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
       storedPlanned: planned,
@@ -139,7 +143,7 @@ export function placeOf(state, file) {
 }
 
 /** Where an agent's own default model is read from, as the model line names it. */
-const SOURCES = { claude: "your Claude settings", codex: "your Codex config", gemini: "your Gemini settings" };
+const SOURCES = { claude: "your Claude settings", codex: "your Codex config", antigravity: "your Antigravity settings" };
 
 /**
  * An agent's model facts for the form: its own default (A12, from its config) and where that
