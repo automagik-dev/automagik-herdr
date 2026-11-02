@@ -118,20 +118,20 @@ test("the measured suffix: CLAUDE_CONFIG_DIR=/tmp/cc-scratch is Claude Code-cred
 test("a CLAUDE_CONFIG_DIR profile reads its own suffixed item, never the default profile's", async () => {
   const kc = keychain();
   const dir = mkdtempSync(join(tmpdir(), "am-quota-profile-"));   // a real scratch profile folder
-  const env = { ...kc.env, CLAUDE_CONFIG_DIR: dir };
+  const exec = kc.exec({ CLAUDE_CONFIG_DIR: dir });
   const plan = credentialTarget("claude", { home: "/Users/ada", env: { CLAUDE_CONFIG_DIR: dir }, keychainWritten: true });
   assert.equal(plan.keychain, TARGETS.claude.keychain, "the base name is all the plan carries");
   assert.equal(plan.keychainSuffix, true);
 
-  const service = await keychainService(plan, { exec: execWith(env) });
+  const service = await keychainService(plan, { exec });
   assert.equal(service, `${TARGETS.claude.keychain}-${createHash("sha256").update(dir).digest("hex").slice(0, 8)}`);
   assert.notEqual(service, TARGETS.claude.keychain, "the default profile's login is not the target");
 
   // The read the panel does for the badge goes to that item — and only to it.
-  const absent = await execWith(env)("sh", ["-c", keychainReadScript(), "sh", service]);
+  const absent = await kc.exec({ CLAUDE_CONFIG_DIR: dir })("sh", ["-c", keychainReadScript(), "sh", service]);
   assert.equal(absent.code, 44, "no item yet");
   kc.seed(service, JSON.stringify({ claudeAiOauth: { refreshToken: "rt-profile-0123456789abcdef" } }));
-  const got = await execWith(env)("sh", ["-c", keychainReadScript(), "sh", service]);
+  const got = await kc.exec({ CLAUDE_CONFIG_DIR: dir })("sh", ["-c", keychainReadScript(), "sh", service]);
   assert.equal(got.code, 0);
   assert.equal(tokenIdentity("claude", got.stdout), fingerprint("rt-profile-0123456789abcdef"), "the profile's own login");
   assert.deepEqual(kc.services(), [service, service]);

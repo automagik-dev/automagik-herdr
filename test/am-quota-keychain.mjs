@@ -7,6 +7,7 @@
 // The stand-in records every command it receives (argv calls, and each `-i` line read from
 // stdin) with the value redacted: a log line carries the service, account and flags, and the
 // value's length, never its bytes. Items live in one JSON file, as hex, in the test's temp dir.
+import { after } from "node:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
@@ -129,7 +130,34 @@ process.exit(r.status);
 /** A logged word as `lines()` prints it: quoted only when it holds more than [\w.@:+/-]. */
 export const word = (w) => (/^<\d+ bytes>$/.test(w) || /^[\w.@:+/-]+$/.test(w) ? w : JSON.stringify(w));
 
-/** The PATH every Keychain test runs with: the stand-in's folder, then the system's, nothing else. */
+/**
+ * The trap, set up once per test process by importing this module: a `security` that exits 99
+ * and writes a marker goes FIRST on this process's PATH, so every child a test starts without
+ * the stand-in's env (a plain `sh`, a bare spawn) finds the trap before the system binary. Only
+ * `kc.env` puts the recording stand-in ahead of it. An after() hook fails the file's run if
+ * anything reached the trap. Only the first argument is noted: never a value.
+ */
+export const trap = (() => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "am-quota-trap-")));
+  const marker = join(dir, "reached");
+  writeFileSync(join(dir, "security"), [
+    "#!/bin/sh",
+    `printf '%s\\n' "\${1:-}" >> '${marker}'`,
+    "echo 'security (am-quota test trap): a test reached security outside the stand-in' >&2",
+    "exit 99",
+    "",
+  ].join("\n"));
+  chmodSync(join(dir, "security"), 0o755);
+  process.env.PATH = `${dir}:${process.env.PATH ?? ""}`;
+  after(() => {
+    if (existsSync(marker)) {
+      throw new Error(`a test ran security outside the stand-in (${readFileSync(marker, "utf8").trim().split("\n").join(", ")})`);
+    }
+  });
+  return { dir, security: join(dir, "security"), marker };
+})();
+
+/** The PATH every Keychain test runs with: the stand-in, the trap, then the system's. */
 const SYSTEM_PATH = "/usr/bin:/bin";
 
 /**
@@ -149,7 +177,7 @@ export function keychain() {
   const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
   writeFileSync(security, `#!/bin/sh\nexec ${q(process.execPath)} ${q(join(root, "shim.cjs"))} "$0" "$@"\n`);
   chmodSync(security, 0o755);
-  const env = { PATH: `${bin}:${SYSTEM_PATH}`, AM_KC_DIR: root };
+  const env = { PATH: `${bin}:${trap.dir}:${SYSTEM_PATH}`, AM_KC_DIR: root };
 
   const resolved = spawnSync("/bin/sh", ["-c", "command -v security"], { encoding: "utf8", env }).stdout.trim();
   if (resolved !== security) throw new Error(`keychain stand-in: command -v security is ${JSON.stringify(resolved)}, not ${security}`);
@@ -163,6 +191,11 @@ export function keychain() {
     account: userInfo().username,
     /** Spawns the stand-in by its absolute path. */
     run: (args, { input } = {}) => spawnSync(security, args, { encoding: "utf8", env, input }),
+    /** The runtime's `exec` shape, with the stand-in's env plus `extra` (PATH stays the stand-in's). */
+    exec: (extra = {}) => async (cmd, args) => {
+      const r = spawnSync(cmd, args, { encoding: "utf8", env: { ...process.env, ...extra, ...env } });
+      return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
+    },
     /** Runs a product shell script with the stand-in's env: `sh -c script sh ...args`. */
     sh: (script, ...args) => spawnSync("/bin/sh", ["-c", script, "sh", ...args], { encoding: "utf8", env }),
     /** Every command the stand-in received, in order, value redacted. */

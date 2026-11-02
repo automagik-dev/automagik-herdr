@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 import { installScript, KEYCHAIN_BYTES, keychainScript, keychainBackupScript, keychainBackupPath, keychainRestoreScript, payload as credentialPayload, payloadDir, payloadPath, prepareScript, sweepScript } from "../mods/am-quota/write.js";
 import { keychainReadScript } from "../mods/am-quota/translate.js";
-import { keychain, word } from "./am-quota-keychain.mjs";
+import { keychain, trap, word } from "./am-quota-keychain.mjs";
 
 const STAMP = "2026-11-01T12-00-00-000Z";
 const SECRET = '{"claudeAiOauth":{"accessToken":"at-SECRET-0123456789abcdef"}}';
@@ -107,11 +107,16 @@ test("keychain: the item is written through `security -i` on stdin, never in arg
 test("guard: in a Keychain test's env `security` is the stand-in, and it fails closed without one", () => {
   const kc = keychain();
   const which = spawnSync("sh", ["-c", "command -v security"], { encoding: "utf8", env: kc.env });
-  assert.equal(which.stdout.trim(), kc.security, "PATH finds the stand-in, never /usr/bin/security");
-  assert.ok(kc.env.PATH.startsWith(`${kc.security.slice(0, -"/security".length)}:`), "its folder is first on PATH");
+  assert.equal(which.stdout.trim(), kc.security, "PATH finds the stand-in, never the system's");
+  assert.equal(kc.env.PATH.split(":")[0], join(kc.root, "bin"), "its folder is first on PATH");
   assert.equal(kc.sh(keychainReadScript(), "am-quota-test-guard").status, 44, "a product script reaches it");
   assert.deepEqual(kc.calls().map((c) => c.bin), [kc.security], "and the call was the stand-in's");
-  const bare = spawnSync(kc.security, ["find-generic-password", "-w", "-s", "x"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
+  // Outside kc's env (the plain `sh` above, any bare spawn) the first `security` is the trap,
+  // which exits 99 and fails this file's run from an after() hook.
+  const plain = spawnSync("sh", ["-c", "command -v security"], { encoding: "utf8" });
+  assert.equal(plain.stdout.trim(), trap.security, "a plain child finds the trap before the system's security");
+  assert.equal(kc.env.PATH.split(":")[1], trap.dir, "and in kc's env the trap sits right behind the stand-in");
+  const bare = spawnSync(kc.security,["find-generic-password", "-w", "-s", "x"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
   assert.equal(bare.status, 70, "without its folder the stand-in stops; it never hands off to anything");
 });
 
