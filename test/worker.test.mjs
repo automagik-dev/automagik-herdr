@@ -88,6 +88,11 @@ const TEMPLATES = [
 ];
 /** What `hc run` runs after `--`, as raw words. */
 const runArgv = (args) => args.slice(args.indexOf("--") + 1);
+/** A template run: no `--`; the template and the task follow the last option (`--parent P`). */
+const templateArgv = (args) => {
+  assert.equal(args.includes("--"), false, `hc's template form has no --: ${JSON.stringify(args)}`);
+  return args.slice(args.indexOf("--parent") + 2);
+};
 /** The agent's argv: after `--`, past the `env PATH=…` every agent worker starts with. */
 const after = (args) => {
   const argv = runArgv(args);
@@ -258,7 +263,7 @@ test("worker --template: hc's template form, a child of the bot's pane in the wo
   assert.equal(run[run.indexOf("--cwd") + 1], wt);
   assert.equal(run[run.indexOf("--name") + 1], "feat-login");
   assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.template=dev-sol"]);
-  assert.deepEqual(runArgv(run), ["dev-sol", "fix the login form"], "the template sets its own command: no env, no agent argv");
+  assert.deepEqual(templateArgv(run), ["dev-sol", "fix the login form"], "the template sets its own command: no env, no agent argv");
   const out = r.json();
   assert.deepEqual([out.template, out.agent, out.model, out.effort, out.argv], ["dev-sol", null, null, null, null]);
   assert.doesNotMatch(r.err, /ignored/, "a per-task template sets the bot's defaults aside without a word");
@@ -297,7 +302,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   const s = scene(t, { file });
   const r = s.cli(["worker", "build it", "--branch", "feat/build", "--json"], { from: "t4" });
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(runArgv(s.runs()[0]), ["dev-sol", "build it"]);
+  assert.deepEqual(templateArgv(s.runs()[0]), ["dev-sol", "build it"]);
   assert.equal(r.json().template, "dev-sol");
   assert.doesNotMatch(r.err, /ignored/, "no agent, model or effort default to set aside");
   // The captain picks Claude for a reviewer: the template default steps aside.
@@ -310,7 +315,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // Template and agent, model and effort all as defaults: the template wins, with a warning.
   const both = s.cli(["worker", "dev it", "--branch", "feat/dev", "--json"]);
   assert.equal(both.code, 0, both.err);
-  assert.deepEqual(runArgv(s.runs()[2]), ["dev-sol", "dev it"]);
+  assert.deepEqual(templateArgv(s.runs()[2]), ["dev-sol", "dev it"]);
   assert.match(both.err, /Dev's worker template dev-sol owns its command; its worker agent, model, effort defaults are ignored/);
   // --model alone is a per-task pick too: the default template steps aside for the default agent.
   const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
@@ -329,7 +334,7 @@ test("worker --template: an agent the command doesn't name, or no template list,
   assert.equal(o.code, 0, o.err);
   assert.match(o.err, /hc templates gave no list .*starting dev-sol anyway/);
   assert.match(o.err, /Can't tell which agent template dev-sol runs/);
-  assert.deepEqual(runArgv(old.runs()[0]), ["dev-sol", "x"]);
+  assert.deepEqual(templateArgv(old.runs()[0]), ["dev-sol", "x"]);
 });
 
 // ---- refusals ----
@@ -453,11 +458,11 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(sessionChange(get, JSON.stringify({ session_id: "s1" })), null, "same session: nothing");
   assert.deepEqual(sessionChange(get, JSON.stringify({ session_id: "s2", transcript_path: "/x.jsonl" })), { session: "s2", transcript: "/x.jsonl" });
   assert.equal(sessionChange(get, "not json"), null);
-  // The template form: `-- <template> <task>`, the template label, no env and no model labels.
+  // The template form: `<template> <task>` after the options, no `--`, the template label, no env and no model labels.
   assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: null, cwd: "/p/wt", parent: "t1", model: null, effort: null,
     argv: null, task: "do it", template: "dev-sol", path: "/x/bin" }),
   ["run", "--bg", "--json", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "task=feat/a",
-    "--label", "worker.template=dev-sol", "--parent", "t1", "--", "dev-sol", "do it"]);
+    "--label", "worker.template=dev-sol", "--parent", "t1", "dev-sol", "do it"]);
   assert.deepEqual(runArgv(workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", argv: ["omp"], task: "t", path: "/a:/b" })),
     ["env", "PATH=/a:/b", "omp", "t"]);
   assert.deepEqual(TEMPLATES.map((x) => templateAgent(x.command)), ["codex", "claude", null]);

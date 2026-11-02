@@ -58,13 +58,14 @@ switch (words[0]) {
     const labels = {};
     let name = null, cwd = null, parent = null;
     let i = 1;
-    for (; i < words.length && words[i] !== "--"; i += 1) {
+    // Options, then argv: after `--`, or from the first word that isn't an option (a template).
+    for (; i < words.length && words[i] !== "--" && words[i].startsWith("--"); i += 1) {
       if (words[i] === "--label") { const kv = words[++i]; labels[kv.slice(0, kv.indexOf("="))] = kv.slice(kv.indexOf("=") + 1); }
       else if (words[i] === "--name") name = words[++i];
       else if (words[i] === "--cwd") cwd = words[++i];
       else if (words[i] === "--parent") parent = words[++i];
     }
-    const argv = words.slice(i + 1);
+    const argv = words.slice(words[i] === "--" ? i + 1 : i);
     // `env K=V … program …`: the program is the first word after the assignments.
     const program = argv[0] === "env" ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
     const address = `t${state.next ?? 100}`;

@@ -92,13 +92,14 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * sidebar folds it under its bot as a helper). The task text is the agent's last argument,
  * after `--`, never part of a shell string. An agent runs as `env PATH=<path> <argv>`, so it
  * gets the calling pane's PATH, not herdr-core's (a bun script like omp needs ~/.bun/bin). A
- * `template` runs in hc's template form, `-- <template> <task>`: it sets its own command.
+ * `template` runs in hc's documented template form, `<template> <task>` after the options,
+ * with no `--` (neither starts with a dash: both are refused before): it sets its own command.
  */
 export function workerArgs({ botId, branch, name, cwd, parent, model, effort, argv, task, template, path }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`);
-  if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, "--", template, task];
+  if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
   const env = path ? ["env", `PATH=${path}`] : [];

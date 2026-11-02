@@ -157,7 +157,7 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, then
   `-- env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the bot's
   pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs on)
-  start. A template runs in hc's template form, `-- <template> <task text>`, labelled
+  start. A template runs in hc's template form, `<template> <task text>` after the options, labelled
   `worker.template=<name>` and without the PATH: the template sets its own command. The task
   text is always one argument, never part of a shell string. The worker has no `bot` label,
   so the sidebar folds it under its bot as a helper row showing its model and effort.
