@@ -730,6 +730,10 @@ export default class Spaces extends View {
       let found;
       try { found = await discoverProjects(); } catch { return; }
       if (run !== this.botsRun) return;
+      // For the footer's Bots tab (sidebar-chrome): whether this computer has a bot, as the
+      // Bot settings list counts them. Set only on a change.
+      const defined = found.some((p) => !p.machine && p.file?.bots?.length > 0);
+      if (shared("bots.defined") !== defined) setShared("bots.defined", defined);
       const local = new Set(found.filter((p) => !p.machine).map((p) => p.key));
       for (const key of this.botWatch.keys()) if (!local.has(key)) this.botWatch.delete(key);
       for (const key of local) {
@@ -1091,12 +1095,6 @@ export default class Spaces extends View {
       // An id keeps the scroll position across renders (hover, live data).
       .child(v_flex().id("space-list").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(list))
-      // A10: "New bot" at the foot of the list (mockup v9).
-      .when(!collapsed, (el) => el.child(h_flex().flex_none().px(8).pb(8)
-        .child(h_flex().id("bot-new").w_full().h(34).px(10).gap(10).items_center().rounded(8).cursor_pointer()
-          .bg(t.raised).text_color(t.foreground).text_size(13).font_semibold().hover((s) => s.bg(t.hover))
-          .on_click(() => openBotForm({ form: "create" }))
-          .child(div().text_size(15).child("+")).child("New bot"))));
+        .children(list));
   }
 }

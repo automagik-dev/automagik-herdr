@@ -217,3 +217,34 @@ test("Rank chips are not offered for the main bot", async () => {
   draw();
   assert.ok(!nodes.has("bot-rank-none"));
 });
+
+test("Bot settings (pick) with no bot: one New bot line that opens the Create form and closes the list", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([]);
+  const { draw, click } = await open({ form: "pick" });
+  draw();
+  assert.ok(nodes.has("pick-new"));
+  assert.equal(textOf(nodes.get("bot-form-body")), "New bot");
+  state.opened = [];
+  await click("pick-new");
+  assert.deepEqual(state.opened, [{ mod: "spaces-agents", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "create" } }]);
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("Bot settings (pick) with bots: the bots with Edit / Start, no New bot line", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([MAIN, OMP]);
+  const { draw } = await open({ form: "pick" });
+  draw();
+  assert.ok(!nodes.has("pick-new"));
+  assert.ok(nodes.has(`pick-${MAIN.id}`) && nodes.has(`edit-${OMP.id}`) && nodes.has(`start-${OMP.id}`));
+});
+
+test("Attach with no bot keeps its message (the New bot line is the pick list's alone)", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([]);
+  const { draw } = await open({ form: "attach", terminal: "t1" });
+  draw();
+  assert.ok(!nodes.has("pick-new"));
+  assert.match(textOf(nodes.get("bot-form-body")), /No bots on this computer yet/);
+});

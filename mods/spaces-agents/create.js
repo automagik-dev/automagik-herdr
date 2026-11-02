@@ -302,6 +302,11 @@ export class BotForm {
   }
 
   // The bot list's and the row menu's actions.
+  create() {
+    openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "create" } });
+    closeOverlay(this.p.overlay);
+  }
+
   edit(project, bot) {
     openOverlay({ mod: "spaces-agents", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: bot.id, project: project.key } });
     closeOverlay(this.p.overlay);
@@ -379,6 +384,11 @@ export class BotForm {
           .when(pick, (el) => el.child(this.button(`edit-${b.id}`, "Edit", t, () => this.edit(q, b), { h: 22 }))
             .when(!b.planned, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 })))))];
     });
+    if (!rows.length && pick) {
+      // No bot yet: the list offers the one thing to do, the Create form.
+      return v_flex().p(14).gap(2).child(h_flex().id("pick-new").h(30).px(8).items_center().rounded(7).cursor_pointer()
+        .hover((s) => s.bg(t.hover)).on_click(() => this.create()).child("New bot"));
+    }
     return v_flex().p(14).gap(2).children(rows.length ? rows : [div().text_color(t.muted).child("No bots on this computer yet. Create one first.")]);
   }
 

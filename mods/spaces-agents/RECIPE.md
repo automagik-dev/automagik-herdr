@@ -67,8 +67,9 @@ One scrolling column, `chrome` background, 13 px text.
   update it; a theme file the person deletes is copied back on the next load.
 - **Pressing**: a space selects on click and reorders on drag (inside its machine); an agent or bot
   row focuses its pane; a bot row's right-click offers Edit, Start and Attach; an agent's offers
-  "Attach as bot…"; the space's tile opens `space-icon`; **New bot** at the foot opens the form.
-  Commands: `spaces-agents.new-bot`, `edit`, `start`, `attach`, `refresh`.
+  "Attach as bot…"; the space's tile opens `space-icon`. **New bot** and **Bot settings** live in
+  the footer's Bots tab (`sidebar-chrome`), which opens this mod's `create` and `pick` forms; the
+  `pick` list with no bot yet shows one **New bot** line that opens the form. Commands: `spaces-agents.new-bot`, `edit`, `start`, `attach`, `refresh`.
 - **Paste**: `spaces-agents.paste` / `paste_image` put the clipboard into a terminal, sending it as
   a real PNG to another machine (`paste.js`, `clipboard-png.jxa`).
 - **Names** for terminals that report no status come from `${appHome()}/sidebar-agents.json`.
@@ -105,7 +106,8 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
   also names is docked twice; use `layouts/automagik.json` (`layout.switch {"name":"automagik"}`
   after it is copied to `<app home>/layouts/`).
 - **State**: shared `spaces-agents.icons`, `spaces-agents.projects`, `spaces-agents.update-shown`,
-  `spaces-agents.theme-selected`, `space.colors`, `sidebar.collapsed`; outside the mod folder,
+  `spaces-agents.theme-selected`, `space.colors`, `sidebar.collapsed`, `bots.defined` (whether this
+  computer has a bot, for the footer's Bots popup); outside the mod folder,
   so replacing it loses nothing: the rename map (`${appHome()}/sidebar-agents.json`), the CLI's
   project list (`spaces-agents-projects.json`), the copied themes, and the replaced pack kept for
   rollback (`<app home>/automagik-herdr/`).
