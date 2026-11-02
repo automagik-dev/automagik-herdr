@@ -52,7 +52,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| D1 | **Release split.** Before am-pack's v0.3.0 lands, `dev` takes only `fix` commits. R3 (row order) ships first as ONE `fix` PR to `dev` (Group 1). Everything else is `feat` and lands in `wish/am-pack` AFTER am-pack Group 7 (the am-* rename). Those groups are written against the final names: `am-sidebar`, `am-sidebar-projects.json`, `am.*` keys. Their depends-on includes "am-pack Group 7". | A `feat` on `dev` cuts v0.3.0 (`scripts/version.mjs:108`), which am-pack reserves. Writing tidy against the final names means am-pack Group 6a never has to migrate tidy's data. The owner may override this to "ship as v0.4.0 after am-pack" (see Risks). |
+| D1 | **Release split.** Before am-pack's v0.4.0 lands, `dev` takes only `fix` commits. R3 (row order) ships first as ONE `fix` PR to `dev` (Group 1). Everything else is `feat` and lands in `wish/am-pack` AFTER am-pack Group 7 (the am-* rename). Those groups are written against the final names: `am-sidebar`, `am-sidebar-projects.json`, `am.*` keys. Their depends-on includes "am-pack Group 7". | A `feat` on `dev` cuts v0.4.0 (`scripts/version.mjs:108`), which am-pack reserves. Writing tidy against the final names means am-pack Group 6a never has to migrate tidy's data. The owner may override this to "ship as v0.4.0 after am-pack" (see Risks). |
 | D2 | **R3 adopted in full.** Row order inside a space: the main bot; categories in bots.json order, each with captains, then members by rank; each bot's helpers dashed beneath it; then plain agents not tied to a bot; then shells. A bot is never drawn below a plain agent. It is a pure ordering function in `rows.js`, tested over a recorded fixture. | Drift 6 comes from `main.js` `grouped()`: `draw` puts `agentRows` before `treeAfter`. One pure function makes the order testable and stops it drifting again. |
 | D3 | **R6 is mostly hc's default already.** `hc run --help` says `--parent` defaults to the terminal it is started from. The deliverable shrinks to one briefing line telling a bot to spawn helpers from its own pane, plus tidy reporting orphan helpers. | Drift 7 comes from spawns made outside the bot's pane, `--no-parent`, or attach not re-parenting. Re-parenting a running terminal is issue #9 (hc upstream), out of scope. |
 | D4 | **R4 adapted.** `where` is Herdr's own label; the pack cannot make it display-only. The pack ignores `where` for placement. The project key (git main checkout) decides the project. Start and Attach write `herdr.space` to the project's space. | One placement truth the pack controls. `where` is free text and goes stale when a space is renamed (t1m: "brain-v3" vs "review-243"). |
@@ -92,7 +92,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 **depends-on:** none
 **blocks:** am-pack
 
-Groups 2–5 land in `wish/am-pack` and ship with v0.3.0, so this wish blocks am-pack Group 8 (the release). They also need am-pack Group 7 (the rename); that is a group-level dependency, stated on each group, and not listed above because the wish graph allows no cycle. Group 1 ships now, alone, as v0.2.1 (owner, 2026-11-02).
+Groups 2–5 land in `wish/am-pack` and ship with v0.4.0, so this wish blocks am-pack Group 8 (the release). They also need am-pack Group 7 (the rename); that is a group-level dependency, stated on each group, and not listed above because the wish graph allows no cycle. Group 1 ships now, alone, as v0.2.1 (owner, 2026-11-02).
 
 ## Success Criteria
 
@@ -252,7 +252,7 @@ node --test test/order.test.mjs && node --test 'test/*.test.mjs' && for f in mod
 4. `briefingText.mjs`, three lines, all inside the 9,900-character cap:
    - a bot starts helpers from its own pane (hc's default `--parent`, D3);
    - a main bot sets and clears `automagik-herdr.needs-owner` (D11);
-   - a main bot records each independent review verdict with `automagik-herdr verdict` (D13; the command itself is Group 5's, and both ship in v0.3.0).
+   - a main bot records each independent review verdict with `automagik-herdr verdict` (D13; the command itself is Group 5's, and both ship in v0.4.0).
 5. `test/placement.test.mjs`, with fake hc and fake `herdr-app`: placement by key; space creation on Start and on Attach; the three briefing lines; the new plan rules on the fixtures.
 
 **Interfaces:**
@@ -399,7 +399,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| The owner overrides D1 to "ship as v0.4.0 after am-pack" | Medium | Groups 2–5 are written against the am-* names either way; only their PR base changes, to `dev` after v0.3.0 |
+| The owner overrides D1 to "ship as v0.4.0 after am-pack" | Medium | Groups 2–5 are written against the am-* names either way; only their PR base changes, to `dev` after v0.4.0 |
 | A `feat` lands on `dev` before Group 1 merges and v0.2.1 becomes 0.3.0 | High | Group 1's validation checks `version.mjs next` = 0.2.1 on its branch; merge it first |
 | Group 1 edits `mods/spaces-agents/main.js` and `rows.js`, which am-pack Group 7 renames | Medium | Merge `dev` (with Group 1) into `wish/am-pack` BEFORE am-pack Group 7(a)'s `git mv`, so the edits move with the folder; git's rename detection on the 57 KB `main.js` is not relied on |
 | `scripts/themes.mjs` exists only on `wish/am-pack`, not on `dev` | Low | Group 1's gate guards that check; Groups 2–5 run it as is |
@@ -427,7 +427,7 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 ### Plan review — 2026-11-02
 
-- Owner approved (in this pane): Group 1 ships now as v0.2.1 on dev; Groups 2–5 ship with am-pack v0.3.0.
+- Owner approved (in this pane): Group 1 ships now as v0.2.1 on dev; Groups 2–5 ship with am-pack v0.4.0.
 - Independent plan review, round 1: FIX-FIRST, 18 findings (4 high: duplicate spaces and park/keep recovery in tidy --apply, files shared between Groups 4 and 5, am-pack Group 8 not waiting for this wish). All applied at b15ce30.
 - Round 2: FIX-FIRST, 8 text findings. Applied, and verified by the coordinator against the text (budget 2/2).
 - **Ruling:** a failed automation run is not a separate needs-owner source. Its run terminal carries `automation=<name>` and shows hc `error`, which the error source already covers. Cost if wrong: one field and a reader in Group 3a.

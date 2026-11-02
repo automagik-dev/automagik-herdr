@@ -34,7 +34,7 @@ This wish turns that branch into the product:
 - One release: one pack tarball with every mod and `layouts/automagik.json`.
   - `update.mjs` swaps every pack-owned folder atomically, with one `.prev` set.
   - `install.sh` becomes the only installer: it absorbs `scripts/install.mjs`'s key merge, catalog config and per-mod `herdr-app check`.
-  - v0.2.0 installs move to v0.3.0 by rerunning the curl installer (D11).
+  - v0.2.0 installs move to v0.4.0 by rerunning the curl installer (D11).
 - The footer rail: a Bots tab, plus New bot at the footer instead of a sidebar row.
 - Consolidation: `md-menu` + `markdown-browser` → one mod; `space-icon` → inside the sidebar mod.
 - The rename to `am-*` as expand → migrate → contract-later:
@@ -62,9 +62,9 @@ This wish turns that branch into the product:
 | D6 | **Every mod is Apache-2.0.** The three MIT forks, automations (DnzzL), markdown-browser (ohneda) and mod-manager (repository jacksonpires/herdr-app-mod-manager; copyright line "Copyright (c) 2026 speardragon", kept verbatim), ship under Apache-2.0 as derived works, with the upstream MIT copyright and permission notice verbatim in `LICENSE-upstream` and NOTICE. | Owner ruling 7. MIT permits this; the notice is its one condition. |
 | D7 | **am-quota is clean-room.** No line comes from 0xRowdy/herdr-cliproxy, which has no licence. | Owner ruling on cliproxy, and copyright law. |
 | D8 | **One layout, `automagik`.** The pack's root `layouts/automagik.json` replaces v0.2.0's bots-only `mods/spaces-agents/layouts/automagik.json`. The installer replaces an installed copy only when it is byte-identical to the v0.2.0 file; otherwise it keeps it and prints a note. Every mod keeps `place: "none"`. | Owner ruling 9 and herdr-bots A18. |
-| D9 | **Integration branch.** Groups merge into `wish/am-pack`; `dev` receives one merge, which cuts one release, **v0.3.0**. | Every shipping merge into `dev` cuts a release (herdr-bots A14). Landing the groups one by one would publish half-built packs. |
+| D9 | **Integration branch.** Groups merge into `wish/am-pack`; `dev` receives one merge, which cuts one release, **v0.4.0**. (It was v0.3.0 until 2026-11-02, when the owner shipped bot workers alone on `dev` as v0.3.0. A v0.3.0 install has the same v0.2 shape, `mods/spaces-agents`, so every upgrade path that starts at v0.2.x also starts at v0.3.0.) | Every shipping merge into `dev` cuts a release (herdr-bots A14). Landing the groups one by one would publish half-built packs. |
 | D10 | **Pocket Link is not in the pack.** The installer writes only folders the pack owns. It moves a replaced pack release into the one `<app home>/automagik-herdr/.prev/` set and anything the person owned into `backup/<mod>-<date>/` (never replaced), never deletes one, and carries `.state/`, dotfiles and `node_modules` into the replacement, including when an adopted old-named folder becomes its `am-*` folder. | Owner rulings 10 and 11, after the 18:40 run erased Pocket Link's pairing key. |
-| D11 | **No bridge: v0.2.0 installs move by rerunning the curl installer.** It recognises a v0.2.0 home (its marker and `mods/spaces-agents`), installs the pack and runs the Group 6 migration. v0.2.0's own `automagik-herdr update` stays on v0.2.0: its `pickUpdate` finds no `automagik-herdr-<v>.tgz` in later releases and reports nothing. | Owner via t187, 2026-11-01. v0.2.0 is mostly on the owner's team's machines, but the repo and one-liner are public, so the README gets an upgrade note and the v0.3.0 release notes say "rerun the installer"; together they are cheaper than a bridge build. The reviewer showed a bridge can't finish the upgrade on its own (v0.2.0's CLI imports `update.mjs` statically and exits), and it would have to ship with every release. |
+| D11 | **No bridge: v0.2.0 installs move by rerunning the curl installer.** It recognises a v0.2.0 home (its marker and `mods/spaces-agents`), installs the pack and runs the Group 6 migration. v0.2.0's own `automagik-herdr update` stays on v0.2.0: its `pickUpdate` finds no `automagik-herdr-<v>.tgz` in later releases and reports nothing. | Owner via t187, 2026-11-01. v0.2.0 is mostly on the owner's team's machines, but the repo and one-liner are public, so the README gets an upgrade note and the v0.4.0 release notes say "rerun the installer"; together they are cheaper than a bridge build. The reviewer showed a bridge can't finish the upgrade on its own (v0.2.0's CLI imports `update.mjs` statically and exits), and it would have to ship with every release. |
 | D12 | **Folders and display names are both renamed, with a migration (owner, 2026-11-01).** Herdr routes `<mod>.<command>`, `mod.open:<mod>`, layout `content.mod`, `data/<mod>/` and per-mod storage by folder name, so there are no aliases. The migration rewrites everything that names an old folder (Group 6a) and makes the briefing hook's path rename-proof (Group 6b). Shared-key shims read the old key and write `am.*` for one release. | The owner chose clean folder names over titles only, with the full list of what breaks in front of him. Owner's layouts are migrated, each with a dated backup, because leaving them blanks the sidebar. |
 | D13 | **Writers.** t187 owns the pack content: Groups 1, 2 and 5a. The herdr-bots team owns release machinery, the footer, the sidebar and the rename: Groups 3, 4, 5b, 6, 7 and 8. Each group claims its card before it starts. | Two writers already touched `pack/vendor-on-dev`; disjoint file sets prevent collisions. |
 
@@ -95,12 +95,12 @@ This wish turns that branch into the product:
 **depends-on:** herdr-bots
 **blocks:** none
 
-Group 8 (release v0.3.0) also waits for sidebar-rules Groups 2–5, which land in `wish/am-pack` after Group 7 and ship with v0.3.0 (owner, 2026-11-02).
+Group 8 (release v0.4.0) also waits for sidebar-rules Groups 2–5, which land in `wish/am-pack` after Group 7 and ship with v0.4.0 (owner, 2026-11-02).
 
 ## Success Criteria
 
 - [ ] On a scratch `HERDR_APP_HOME` with plain Herdr, the curl one-liner installs the eight `am-*` mods and `layouts/automagik.json`, `herdr-app check` passes for each, and after the layout switch Herdr shows the sidebar, footer rail, tab bar and `+` menu with no mod errors.
-- [ ] A v0.2.0 install (spaces-agents, its before-install copy, `.prev`, shared keys, `automagik.json` layout, a `main-agents`-style edited layout, keys bound to `spaces-agents.paste`, a Claude bot's briefing hook) reruns the curl installer and ends on v0.3.0. It has the eight `am-*` folders, shared keys under `am.*`, every layout and key binding pointing at the new names (each layout backed up first), the `automagik-herdr` link working, and the briefing hook firing. Nothing outside the pack's folders has changed: Pocket Link's folder is byte-identical.
+- [ ] A v0.2.0 install (spaces-agents, its before-install copy, `.prev`, shared keys, `automagik.json` layout, a `main-agents`-style edited layout, keys bound to `spaces-agents.paste`, a Claude bot's briefing hook) reruns the curl installer and ends on v0.4.0. It has the eight `am-*` folders, shared keys under `am.*`, every layout and key binding pointing at the new names (each layout backed up first), the `automagik-herdr` link working, and the briefing hook firing. Nothing outside the pack's folders has changed: Pocket Link's folder is byte-identical.
 - [ ] `automagik-herdr update --rollback` returns that install to v0.2.0 working.
 - [ ] The footer's Bots tab, first in the rail, opens a popup with New bot and Bot settings. The sidebar body has no New bot row.
 - [ ] `grep -rn "0xRowdy\|herdr-cliproxy"` finds only NOTICE's credit line. A reviewer's diff of `mods/am-quota` against the upstream repo shows no shared lines.
@@ -132,7 +132,7 @@ Group 8 (release v0.3.0) also waits for sidebar-rules Groups 2–5, which land i
 | 6b | engineer | High: touches each project's Claude settings | inherit | The briefing hook survives renames |
 | 6c | engineer | Medium: installs a third-party binary (checksum-pinned) and runs it on a timer | inherit | usagemeter: installed by install.sh, synced while Herdr is open |
 | 7 | engineer | Medium: wide mechanical rename, three PRs | inherit | Rename: folders, ids, commands, docs |
-| 8 | engineer + qa | High: end-to-end on scratch homes | inherit | Integrate, verify, merge to dev, v0.3.0 |
+| 8 | engineer + qa | High: end-to-end on scratch homes | inherit | Integrate, verify, merge to dev, v0.4.0 |
 
 **Global constraints:**
 - macOS; Herdr from `brew install --cask penso/tap/herdr-gpui`; Node ≥ 22.7.
@@ -373,7 +373,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
    - **App-home paths:** `spaces-agents-projects.json` → `am-sidebar-projects.json` (copied only when the target is absent, so a file sidebar-rules' tidy already wrote is kept); `space-icons/` stays where it is (shared state references it); `sidebar-agents.json` (the rename map) stays, read by am-sidebar; `data/mod-manager/` copied (not moved) to `data/am-mods/`, and am-mods reads the old directory as a fallback; `data/am-quota/` unchanged.
    - **Per-mod localStorage** (auto-tabs' panel memory) can't be reached from outside the mod. Its loss is stated in the release notes.
    - **The catalog** `modNames` and titles are regenerated after Group 7.
-3. `revert(backupDir)`: applies the inverse rename to layouts and keys.json (am-* → old id, only for entries the forward run changed), so edits the person made in between are kept. The dated backups stay for manual recovery. The release notes say shared-state changes made under v0.3.0 are lost on rollback. `update.mjs rollback` calls it when the `.prev/` set holds old-named folders.
+3. `revert(backupDir)`: applies the inverse rename to layouts and keys.json (am-* → old id, only for entries the forward run changed), so edits the person made in between are kept. The dated backups stay for manual recovery. The release notes say shared-state changes made under v0.4.0 are lost on rollback. `update.mjs rollback` calls it when the `.prev/` set holds old-named folders.
 4. Tests on scratch homes: a v0.2.0 home plus an owner-shaped home (hand-installed old-named mods, `main-agents.json`, a keys.json with the paste bindings). Running the plan twice is a no-op the second time. An unadopted mod-manager keeps `mod.open:mod-manager`. Migrate → rollback restores v0.2.0 behaviour: the Cmd+V binding, main-agents, the CLI and the hook.
 
 **Carried from the Group 3 review (LOW, not blocking):**
@@ -433,8 +433,8 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 **Goal:** One install gives the desktop the usage meter: install.sh installs a pinned usagemeter release, and the sidebar runs `usagemeter sync` every 10 minutes while Herdr is open (owner, 2026-11-02).
 
 **Deliverables:**
-1. `mods/spaces-agents/release.js`: `USAGEMETER = { version, assets: {"darwin-arm64", "darwin-x86_64", "linux-x86_64", "linux-aarch64"} }`, pinned to a released usagemeter version (v0.1.0 or later).
-2. install.sh: after the pack is installed, download the pinned `usagemeter-<os>-<arch>` and that release's `SHA256SUMS` from `github.com/automagik-dev/usagemeter/releases/download/v<version>/`, check the hash, and install to `~/.local/bin/usagemeter` atomically (temp file in the same folder, `chmod 755`, rename). Skip it when `usagemeter --version` already prints the pinned version. `--no-usagemeter` skips the step. Any failure is a warning; the pack install still succeeds. usagemeter's own `install.sh` is not piped into a shell.
+1. `mods/spaces-agents/release.js`: `USAGEMETER = { version, assets: {"darwin-arm64", "darwin-x86_64", "linux-x86_64", "linux-aarch64"} }`, pinned to usagemeter v0.2.0 (released).
+2. install.sh: after the pack is installed, download the pinned `usagemeter-<os>-<arch>` and that release's `SHA256SUMS` from `github.com/automagik-dev/usagemeter/releases/download/v<version>/`, check the hash, and install to `~/.local/bin/usagemeter` atomically (temp file in the same folder, `chmod 755`, rename). Skip it when `usagemeter --version` already prints `usagemeter <pinned version>`. Never downgrade a newer usagemeter the person or Pocket Link installed (shared binary, one path). `--no-usagemeter` skips the step. Any failure is a warning; the pack install still succeeds. usagemeter's own `install.sh` is not piped into a shell.
 3. The sidebar (spaces-agents) runs `usagemeter sync` through exec every 10 minutes while Herdr is open, plus once 30 seconds after load. Only one run at a time, never more often than the 10-minute freshness check. A missing binary is silent. It runs with no arguments beyond `sync`. No LaunchAgent and no daemon.
 4. `--uninstall` removes `~/.local/bin/usagemeter` only when the marker says the pack installed it (`usagemeter=<version>` line). Its store is kept.
 5. Tests: install with a local fake release (good hash, bad hash, already current, `--no-usagemeter`, offline); the timer's single-flight and interval with a fake exec; uninstall removes only a pack-installed binary.
@@ -455,7 +455,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 node --test 'test/*.test.mjs' && sh -n install.sh && shellcheck -s sh install.sh && node scripts/version.mjs check
 ```
 
-**depends-on:** Group 3; a released usagemeter v0.1.0 (automagik-dev/usagemeter)
+**depends-on:** Group 3 (usagemeter v0.2.0 is released)
 
 ---
 
@@ -488,9 +488,9 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 
 ---
 
-### Group 8: Integrate, verify, release v0.3.0
+### Group 8: Integrate, verify, release v0.4.0
 
-**Goal:** `wish/am-pack` merges into `dev` once, cuts v0.3.0, and both a fresh install and a v0.2.0 upgrade are proven on scratch homes.
+**Goal:** `wish/am-pack` merges into `dev` once, cuts v0.4.0, and both a fresh install and a v0.2.0 upgrade are proven on scratch homes.
 
 **Deliverables:**
 1. Merge `dev` into `wish/am-pack` and run the full gate.
@@ -500,7 +500,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 
 **Interfaces:**
 - Consumes: every group.
-- Produces: GitHub release v0.3.0.
+- Produces: GitHub release v0.4.0.
 
 **Acceptance Criteria:**
 - [ ] Every Success Criterion above, with evidence in Review Results.
@@ -518,8 +518,8 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
-- [ ] A fresh scratch home installs v0.3.0 with the curl one-liner: eight mods, the layout, the CLI link, and no mod errors after the switch.
-- [ ] A scratch home at v0.2.0 reruns the curl installer to v0.3.0 and keeps its bots, icons, colours, key bindings, layouts (backed up) and briefing hooks. `automagik-herdr update --rollback` returns the pack folders to their v0.2.0 copies; the migration's backups restore the layouts and keys.
+- [ ] A fresh scratch home installs v0.4.0 with the curl one-liner: eight mods, the layout, the CLI link, and no mod errors after the switch.
+- [ ] A scratch home at v0.2.0 reruns the curl installer to v0.4.0 and keeps its bots, icons, colours, key bindings, layouts (backed up) and briefing hooks. `automagik-herdr update --rollback` returns the pack folders to their v0.2.0 copies; the migration's backups restore the layouts and keys.
 - [ ] `mods/pocket-link` and any other non-pack folder in the scratch home are byte-identical before and after install, update and rollback.
 - [ ] The footer Bots tab opens New bot. The Quota tab opens the panel. The Pocket Link tab shows only when Pocket Link is installed.
 
