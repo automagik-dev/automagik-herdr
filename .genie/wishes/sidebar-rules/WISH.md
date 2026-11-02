@@ -433,7 +433,7 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 ### Group 1 — R3 row order, released as v0.2.1 — 2026-11-02
 
 - **PR #27** was merged by the owner at df19e0e (merge 5a59e1b). It shipped three fixes:
-  - own-project folders (the owner-reported cadu bug);
+  - own-project folders (the owner-reported non-git child folder bug);
   - R3 row order, with recorded and anonymised fixtures;
   - a peek when clicking a bot that has no pane (owner-reported).
 - **Reviews:**
