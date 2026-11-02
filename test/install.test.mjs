@@ -156,8 +156,10 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
   // No node on PATH (a pane Herdr started): bin/run.sh finds one anyway.
-  const noNode = spawnSync(s.link, ["--version"], { encoding: "utf8",
-    env: { HOME: s.home, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) } });
+  const bare = { HOME: s.home, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) };
+  const which = spawnSync("/bin/sh", ["-c", "command -v node"], { encoding: "utf8", env: bare });
+  assert.notEqual(which.status, 0, `node must be absent from the test PATH, found ${which.stdout.trim()}`);
+  const noNode = spawnSync(s.link, ["--version"], { encoding: "utf8", env: bare });
   assert.equal(noNode.stdout.trim(), "automagik-herdr 9.9.0", noNode.stderr);
   assert.deepEqual(s.brewCalls(), []);
   const before = lstatSync(s.pack).ino;
