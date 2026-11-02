@@ -1,9 +1,8 @@
-// am-quota's read side: where each client keeps its credentials, what the installed one says, and
-// the text `security` hands back.
+// am-quota's translations: the proxy's credential shape → the shape each client actually reads.
 //
-// Pure, so `node --test` proves it — except `keychainService`, which shells out to `shasum` for the
-// digest the CLI names a separate profile's Keychain item with (the mod has no crypto module).
-// The measured shapes (2026-11-01) — the switch's translation of them lives with the switch:
+// Pure, so `node --test` proves them — except `keychainService`, which shells out to `shasum` for
+// the digest the CLI names a separate profile's Keychain item with (the mod has no crypto module).
+// The measured shapes (2026-11-01):
 //   proxy codex  { access_token, account_id, id_token, refresh_token, expired, email, last_refresh, plan_type }
 //   codex auth   { OPENAI_API_KEY: null, auth_mode: "chatgpt", last_refresh, tokens: { access_token,
 //                  account_id, id_token, login_owner_id?, oauth_provenance?, refresh_token } }
@@ -13,6 +12,65 @@
 //                  scopes, subscriptionType, rateLimitTier } }
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
+/** A token is opaque, but it is not arbitrary text: no whitespace, and long enough to be one. */
+const isToken = (v) => { const s = str(v); return s.length >= 16 && !/\s/.test(s); };
+const epochMs = (v, fallback) => {
+  if (typeof v === "number" && Number.isFinite(v)) return v > 1e12 ? Math.round(v) : Math.round(v * 1000);
+  if (typeof v === "string" && v) {
+    const ms = Date.parse(v);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return fallback;
+};
+
+/** What stops a credential from being installed at all, for people. */
+export function problems(provider, credential) {
+  const out = [];
+  if (!credential || typeof credential !== "object") return ["the proxy returned no credential"];
+  if (!isToken(credential.access_token)) out.push(str(credential.access_token) ? "the access token is not a token" : "no access token");
+  if (!isToken(credential.refresh_token)) out.push(str(credential.refresh_token) ? "the refresh token is not a token" : "no refresh token");
+  if (provider === "codex" && !str(credential.account_id) && !str(credential.id_token)) out.push("no account id or id token");
+  if (provider === "claude" && !str(credential.refresh_token)) out.push("nothing to refresh with");
+  return out;
+}
+
+/** The proxy's Codex credential, as `~/.codex/auth.json` expects it. */
+export function toCodex(credential, { now = new Date() } = {}) {
+  const missing = problems("codex", credential);
+  if (missing.length) throw new Error(missing.join("; "));
+  const tokens = {
+    access_token: str(credential.access_token),
+    refresh_token: str(credential.refresh_token),
+    account_id: str(credential.account_id) || undefined,
+    id_token: str(credential.id_token) || undefined,
+  };
+  for (const key of Object.keys(tokens)) if (tokens[key] === undefined) delete tokens[key];
+  return {
+    OPENAI_API_KEY: null,
+    auth_mode: "chatgpt",
+    last_refresh: (typeof credential.last_refresh === "string" && credential.last_refresh) || now.toISOString(),
+    tokens,
+  };
+}
+
+/** The proxy's Claude credential, as the Keychain item / `.credentials.json` expects it. */
+export function toClaude(credential, { now = new Date(), scopes, subscriptionType = "pro" } = {}) {
+  const missing = problems("claude", credential);
+  if (missing.length) throw new Error(missing.join("; "));
+  const hour = 3600000;
+  return {
+    claudeAiOauth: {
+      accessToken: str(credential.access_token),
+      refreshToken: str(credential.refresh_token),
+      expiresAt: epochMs(credential.expired ?? credential.expires_at, now.getTime() + hour),
+      refreshTokenExpiresAt: epochMs(credential.refresh_token_expired, now.getTime() + 30 * 24 * hour),
+      scopes: Array.isArray(scopes) && scopes.length ? scopes : ["user:inference", "user:profile"],
+      subscriptionType: str(credential.plan_type) || subscriptionType,
+      rateLimitTier: str(credential.rate_limit_tier) || "default",
+    },
+  };
+}
+
 /** A directory from an environment variable, `~` expanded, no trailing slash. */
 const envDir = (value, fallback, home) => {
   const s = typeof value === "string" ? value.trim() : "";
@@ -21,8 +79,7 @@ const envDir = (value, fallback, home) => {
 };
 
 /**
- * Where a provider's credentials go, and how they are read. Used by the panel to find the file or
- * the item that says which account is installed.
+ * Where a provider's credentials go, and how they are written. Used by the panel's writer.
  * `env` is the client's own environment, so `CODEX_HOME` and `CLAUDE_CONFIG_DIR` move the file the
  * way they move it for the client itself; an unset or empty variable means the default folder.
  */
@@ -40,13 +97,14 @@ export const TARGETS = {
 };
 
 /**
- * One provider's credential target: the file, and the Keychain service (if any). On macOS Claude
- * reads the Keychain first, so its item is what says which account is installed; elsewhere (no
- * `security`) the file is the answer. A `CLAUDE_CONFIG_DIR` is a separate Claude profile: its
- * Keychain item is the suffixed one (`keychainSuffix`), which is why `keychain` alone is never the
- * service to hand `security` — see `keychainService`.
+ * One provider's write plan: the file, the Keychain service (if any), and whether the plaintext
+ * file is skipped. On macOS Claude reads the Keychain first, so a verified Keychain write is the
+ * job and the file — with its backups — is left alone; elsewhere (no `security`) the file is the
+ * route. A `CLAUDE_CONFIG_DIR` is a separate Claude profile: it always gets its file written, and
+ * its Keychain item is the suffixed one (`keychainSuffix`), which is why `keychain` alone is never
+ * the service to hand `security` — see `keychainService`.
  */
-export function credentialTarget(provider, { home, env = {}, platform = "macos" } = {}) {
+export function credentialTarget(provider, { home, env = {}, keychainWritten = false, platform = "macos" } = {}) {
   const target = TARGETS[provider];
   if (!target) return null;
   const keychain = platform === "macos" ? target.keychain : null;
@@ -55,6 +113,7 @@ export function credentialTarget(provider, { home, env = {}, platform = "macos" 
     keychain,
     keychainSuffix: Boolean(keychain) && Boolean(str(env.CLAUDE_CONFIG_DIR)),
     file: target.file(home, env),
+    skipFile: Boolean(keychain) && keychainWritten && !str(env.CLAUDE_CONFIG_DIR),
   };
 }
 
@@ -159,6 +218,20 @@ export function itemText(raw) {
     if (out && isJson(out)) return out;
   }
   return null;
+}
+
+/**
+ * The item to store: the new `claudeAiOauth` over whatever else the item holds (`mcpOAuth` and
+ * anything else the CLI keeps there), one line. An item that is not a JSON object has no keys to
+ * keep, so it is replaced. Neither value is ever logged.
+ */
+export function mergeCredentialItem(existingText, incoming) {
+  const fresh = typeof incoming === "string" ? incoming : JSON.stringify(incoming);
+  const prev = itemText(existingText);
+  if (!prev) return JSON.stringify(JSON.parse(fresh));
+  const kept = JSON.parse(prev);
+  if (!kept || typeof kept !== "object" || Array.isArray(kept)) return JSON.stringify(JSON.parse(fresh));
+  return JSON.stringify({ ...kept, claudeAiOauth: JSON.parse(fresh)?.claudeAiOauth ?? kept.claudeAiOauth });
 }
 
 /** A stable 32-bit fingerprint (FNV-1a) of a token: an identity to compare, never the token. */

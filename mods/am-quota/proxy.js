@@ -164,12 +164,25 @@ export class QuotaSampler {
  *  `busy` until its download settles — waiting forever. */
 export const REQUEST_TIMEOUT = 30000;
 
-/** A 30 s abort signal, when the runtime has `AbortSignal.timeout`; older runtimes get none. */
+/**
+ * A 30 s timeout for one request. `AbortSignal.timeout` where the runtime has it; otherwise an
+ * `AbortController` and a timer, so no runtime ends up with no timeout at all. `done()` clears the
+ * timer and must be called when the request settles.
+ */
 const abortSignal = () => {
   try {
-    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") return AbortSignal.timeout(REQUEST_TIMEOUT);
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      return { signal: AbortSignal.timeout(REQUEST_TIMEOUT), done: () => {} };
+    }
   } catch {}
-  return undefined;
+  try {
+    if (typeof AbortController === "function") {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+      return { signal: controller.signal, done: () => clearTimeout(timer) };
+    }
+  } catch {}
+  return { signal: undefined, done: () => {} };
 };
 
 /**
@@ -188,12 +201,20 @@ export function client({ base, key, fetch }) {
   const root = base.replace(/\/+$/, "");
 
   const get = async (path) => {
-    const res = await fetch(`${root}${path}`, { headers: { Authorization: `Bearer ${key}`, accept: "application/json" }, signal: abortSignal() });
-    if (!res || res.status !== 200) throw new Error(`am-quota: ${path} answered ${res?.status ?? "nothing"}`);
+    const timeout = abortSignal();
     try {
-      return await res.json();
-    } catch {
-      throw new Error(`am-quota: ${path} answered with something that is not JSON`);
+      const res = await fetch(`${root}${path}`, {
+        headers: { Authorization: `Bearer ${key}`, accept: "application/json" },
+        ...(timeout.signal ? { signal: timeout.signal } : {}),
+      });
+      if (!res || res.status !== 200) throw new Error(`am-quota: ${path} answered ${res?.status ?? "nothing"}`);
+      try {
+        return await res.json();
+      } catch {
+        throw new Error(`am-quota: ${path} answered with something that is not JSON`);
+      }
+    } finally {
+      timeout.done();
     }
   };
 
@@ -218,12 +239,17 @@ export function client({ base, key, fetch }) {
     async credential(name) {
       const safe = safeName(name);
       if (!safe) throw new Error("am-quota: that is not a credential name");
-      const res = await fetch(`${root}${CREDENTIALS}/download?name=${encodeURIComponent(safe)}`, {
-        headers: { Authorization: `Bearer ${key}`, accept: "application/json" },
-        signal: abortSignal(),
-      });
-      if (!res || res.status !== 200) throw new Error(`am-quota: ${safe} answered ${res?.status ?? "nothing"}`);
-      return res.text();
+      const timeout = abortSignal();
+      try {
+        const res = await fetch(`${root}${CREDENTIALS}/download?name=${encodeURIComponent(safe)}`, {
+          headers: { Authorization: `Bearer ${key}`, accept: "application/json" },
+          ...(timeout.signal ? { signal: timeout.signal } : {}),
+        });
+        if (!res || res.status !== 200) throw new Error(`am-quota: ${safe} answered ${res?.status ?? "nothing"}`);
+        return await res.text();
+      } finally {
+        timeout.done();
+      }
     },
   };
 }

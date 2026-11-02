@@ -141,13 +141,15 @@ test("every request carries a 30 s abort signal, and a runtime without AbortSign
     assert.equal(signal.aborted, false);
   }
 
-  // The guard: a runtime without AbortSignal.timeout gets no signal, not a crash.
+  // The fallback: a runtime without AbortSignal.timeout still gets a signal (AbortController + timer),
+  // because "no timeout" is what leaves a switch's busy flag set forever.
   const saved = AbortSignal.timeout;
   try {
     delete AbortSignal.timeout;
     seen.length = 0;
     await client({ base: "https://p.example", key: "k", fetch }).credential("codex-052d99cd-x.json");
-    assert.equal(seen[0], undefined);
+    assert.ok(seen[0] instanceof AbortSignal, "a real signal, not no signal");
+    assert.equal(seen[0].aborted, false);
   } finally {
     AbortSignal.timeout = saved;
   }
