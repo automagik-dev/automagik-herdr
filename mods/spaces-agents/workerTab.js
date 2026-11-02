@@ -31,18 +31,21 @@ export function workerClick({ terminal, botTerminal, name, panes, spaces }) {
 /**
  * The commands once the kept worker has its pane: its tab moved after the bot's tab (that
  * tab's index read again now; not when the pane landed in another space, as tab.move stays
- * in one), renamed, and the worker focused. Plus the `hc label` words that mark the tab as
- * the worker's (herdr.space / herdr.tab, ids local to its machine).
+ * in one), renamed, and the worker focused. Neither move nor rename when the pane landed in
+ * the bot's own tab: that tab keeps its name. Plus the `hc label` words that mark the tab as
+ * the worker's (herdr.space / herdr.tab, ids local to its machine), both from where the pane
+ * is now; null when no space holds its tab, so a pair never contradicts itself.
  */
 export function keptSteps(plan, pane, spaces) {
-  const space = (spaces ?? []).find((s) => s?.id === plan.space);
-  const tabs = space?.tabs ?? [];
-  const botTab = tabs.find((t) => t.id === plan.tab);
+  const holder = (spaces ?? []).find((s) => (s?.tabs ?? []).some((t) => t.id === pane.tab));
   const steps = [];
-  if (botTab && tabs.some((t) => t.id === pane.tab)) steps.push(["tab.move", { id: pane.tab, index: botTab.index + 1 }]);
-  if (plan.name) steps.push(["tab.rename", { id: pane.tab, name: plan.name }]);
+  if (pane.tab !== plan.tab) {
+    const botTab = holder?.id === plan.space ? holder.tabs.find((t) => t.id === plan.tab) : null;
+    if (botTab) steps.push(["tab.move", { id: pane.tab, index: botTab.index + 1 }]);
+    if (plan.name) steps.push(["tab.rename", { id: pane.tab, name: plan.name }]);
+  }
   steps.push(["agent.focus", { terminal: plan.terminal }]);
-  const label = ["label", plan.terminal, `herdr.space=${local(plan.space)}`, `herdr.tab=${local(pane.tab)}`];
+  const label = holder ? ["label", plan.terminal, `herdr.space=${local(holder.id)}`, `herdr.tab=${local(pane.tab)}`] : null;
   return { steps, label };
 }
 
@@ -50,9 +53,10 @@ export function keptSteps(plan, pane, spaces) {
  * Opens a worker as a tab: its bot's space and tab selected, terminal.keep with place "tab"
  * (keep finishes in the background), then, once panes() shows it (polled every `stepMs`,
  * at most `waitMs`), keptSteps' commands and label. Returns the new tab's id, or null when
- * no pane came in time (Herdr toasts a failed keep; a late one stays where Herdr put it).
+ * no pane came in time: a notice says the tab is still opening (Herdr toasts a failed keep;
+ * a late one stays where Herdr put it, with Herdr's name).
  */
-export async function openWorkerTab(plan, { run, panes, spaces, hc, sleep, waitMs = 5000, stepMs = 250 }) {
+export async function openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify, waitMs = 5000, stepMs = 250 }) {
   run("space.select", { id: plan.space });
   run("tab.select", { id: plan.tab });
   run("terminal.keep", { terminal: plan.terminal, place: "tab" });
@@ -61,10 +65,15 @@ export async function openWorkerTab(plan, { run, panes, spaces, hc, sleep, waitM
     if (pane) {
       const { steps, label } = keptSteps(plan, pane, spaces());
       for (const [command, args] of steps) run(command, args);
-      try { await hc(label); } catch { /* the tab is open; the label is a marker only */ }
+      if (label) try { await hc(label); } catch { /* the tab is open; the label is a marker only */ }
       return pane.tab;
     }
-    if (waited >= waitMs) return null;
+    if (waited >= waitMs) {
+      try {
+        notify?.({ title: "Worker tab still opening", body: `${plan.name || plan.terminal} will appear when Herdr has kept it.`, level: "info", timeout: 5000 });
+      } catch { /* a notice only */ }
+      return null;
+    }
     await sleep(stepMs);
   }
 }

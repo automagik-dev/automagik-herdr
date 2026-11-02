@@ -11,12 +11,13 @@ const botPane = { pane: "p1", terminal: "t1", tab: "tb2" };
 // A fake of the herdr commands: run() logged, panes()/spaces() as the test sets them, hc()
 // logged, sleep() counting; `onKeep` changes the panes as Herdr's background keep would.
 function fakeHerdr({ panes, spaces = spaceRows(), onKeep = () => {} }) {
-  const f = { runs: [], hcCalls: [], slept: 0, panes, spaces };
+  const f = { runs: [], hcCalls: [], slept: 0, notes: [], panes, spaces };
   f.run = (name, args) => { f.runs.push([name, args]); if (name === "terminal.keep") onKeep(f); return null; };
   f.deps = {
     run: f.run, panes: () => f.panes, spaces: () => f.spaces,
     hc: async (args) => { f.hcCalls.push(args); return { code: 0, stdout: "", stderr: "" }; },
     sleep: async () => { f.slept += 1; },
+    notify: (n) => { f.notes.push(n); return `n${f.notes.length}`; },
   };
   return f;
 }
@@ -70,6 +71,7 @@ test("openWorkerTab: selects the bot's space and tab, keeps the worker as a tab,
   ]);
   assert.deepEqual(f.hcCalls, [["label", "t7", "herdr.space=sp1", "herdr.tab=tb4"]]);
   assert.equal(f.slept, 0);
+  assert.deepEqual(f.notes, []);
 });
 
 test("openWorkerTab: waits for the background keep, then places the tab", async () => {
@@ -84,13 +86,24 @@ test("openWorkerTab: waits for the background keep, then places the tab", async 
   assert.ok(f.runs.some(([c, a]) => c === "tab.move" && a.id === "tb4" && a.index === 3));
 });
 
-test("openWorkerTab: no pane in time moves, renames and labels nothing", async () => {
+test("openWorkerTab: no pane in time moves, renames and labels nothing, and says the tab is still opening", async () => {
   const f = fakeHerdr({ panes: [botPane] });
-  const plan = { kind: "open", terminal: "t7", space: "sp1", tab: "tb2", index: 3, name: "w" };
+  const plan = { kind: "open", terminal: "t7", space: "sp1", tab: "tb2", index: 3, name: "fix/login" };
   assert.equal(await openWorkerTab(plan, { ...f.deps, waitMs: 1000, stepMs: 250 }), null);
   assert.deepEqual(f.runs.map(([c]) => c), ["space.select", "tab.select", "terminal.keep"]);
   assert.deepEqual(f.hcCalls, []);
   assert.equal(f.slept, 4);
+  assert.equal(f.notes.length, 1);
+  assert.equal(f.notes[0].title, "Worker tab still opening");
+  assert.match(f.notes[0].body, /fix\/login/);
+});
+
+test("openWorkerTab: a pane kept in the bot's own tab leaves that tab's place and name alone", async () => {
+  const f = fakeHerdr({ panes: [botPane], onKeep: (f) => { f.panes = [...f.panes, { pane: "p7", terminal: "t7", tab: "tb2" }]; } });
+  const plan = { kind: "open", terminal: "t7", space: "sp1", tab: "tb2", index: 3, name: "fix/login" };
+  assert.equal(await openWorkerTab(plan, f.deps), "tb2");
+  assert.deepEqual(f.runs.slice(3), [["agent.focus", { terminal: "t7" }]]);
+  assert.deepEqual(f.hcCalls, [["label", "t7", "herdr.space=sp1", "herdr.tab=tb2"]]);
 });
 
 test("keptSteps: the bot tab's index is read again; a pane kept in another space is not moved", () => {
@@ -100,6 +113,12 @@ test("keptSteps: the bot tab's index is read again; a pane kept in another space
   assert.deepEqual(keptSteps(plan, { pane: "p7", terminal: "t7", tab: "tb4" }, moved).steps[0], ["tab.move", { id: "tb4", index: 2 }]);
   const elsewhere = keptSteps(plan, { pane: "p7", terminal: "t7", tab: "tb0" }, spaceRows());
   assert.deepEqual(elsewhere.steps.map(([c]) => c), ["tab.rename", "agent.focus"]);
+  // Its label names the space that holds its tab (sp0), never the bot's (sp1).
+  assert.deepEqual(elsewhere.label, ["label", "t7", "herdr.space=sp0", "herdr.tab=tb0"]);
+  // A tab no space holds: no label at all, and no move.
+  const unknown = keptSteps(plan, { pane: "p7", terminal: "t7", tab: "tb-new" }, spaceRows());
+  assert.equal(unknown.label, null);
+  assert.deepEqual(unknown.steps.map(([c]) => c), ["tab.rename", "agent.focus"]);
 });
 
 test("helpersOf and visibleRows: a worker row carries its task branch and its bot's terminal", () => {

@@ -563,7 +563,7 @@ export default class Spaces extends View {
     this.opening.add(h.terminal);
     cx.spawn(async (cx) => {
       const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep }); } finally { this.opening.delete(h.terminal); }
+      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify }); } finally { this.opening.delete(h.terminal); }
     });
   }
 
