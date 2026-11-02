@@ -1,6 +1,6 @@
 // Bot workers: a bot writes no code; for each task it starts one worker, an hc child of its
 // pane, in the task's worktree (`automagik-herdr worker`). This file holds the plain-data
-// parts: which agent, model and effort a worker runs, its `hc run` arguments, the task
+// parts: which agent, model and effort (or hc template) a worker runs, its `hc run` arguments, the task
 // worktree's folder and the git answers about worktrees, and the rows of the workers ledger
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
@@ -13,6 +13,8 @@ export const WORKER_OF_LABEL = "worker.of";
 export const TASK_LABEL = "task";
 export const WORKER_MODEL_LABEL = "worker.model";
 export const WORKER_EFFORT_LABEL = "worker.effort";
+/** The hc template a worker runs (`--template`, or the bot's `worker.template`). */
+export const WORKER_TEMPLATE_LABEL = "worker.template";
 /** The Claude session a terminal runs, set by the briefing hook when it changes. */
 export const SESSION_LABEL = "agent.session";
 
@@ -22,17 +24,36 @@ export const optionLike = (value) => typeof value === "string" && value.trimStar
 /** An effort level as the agents spell them (low, medium, high, xhigh, max, …). */
 export const EFFORT_SHAPE = /^[a-z][a-z0-9-]{0,31}$/;
 
+/** An hc template name (a file in herdr-core's templates folder): no dash first, no spaces. */
+export const TEMPLATE_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
 /**
- * What a worker runs: the per-task `pick` ({ agent, model, effort }, each optional) over the
- * bot's `worker` defaults, over the bot's own agent. A bot's default model is for its default
+ * What a worker runs: the per-task `pick` ({ template, agent, model, effort }, each optional)
+ * over the bot's `worker` defaults, over the bot's own agent. A template owns its command, so
+ * it runs alone: a pick naming a template and an agent, model or effort is refused; a default
+ * template wins over default agent, model and effort (with a warning); and any per-task agent,
+ * model or effort sets a default template aside. A bot's default model is for its default
  * worker agent: a task that picks another agent runs that agent's own default model unless it
  * names one. The bot's own model pin is its seat's, never its workers'. A model or effort the
  * agent has no flag for is left out with a warning. `agents`: the table Herdr starts from.
- * Returns { agent, model, effort, argv, warnings } or { error }.
+ * Returns { template, agent, model, effort, argv, warnings } (template null, or agent, model,
+ * effort and argv null) or { error }.
  */
 export function workerPlan(bot, pick = {}, agents = AGENTS) {
   const warnings = [];
   const defaults = bot?.worker && typeof bot.worker === "object" ? bot.worker : {};
+  const picked = ["agent", "model", "effort"].filter((k) => pick[k]);
+  const asTemplate = (template) => (TEMPLATE_SHAPE.test(template) ? { template, agent: null, model: null, effort: null, argv: null, warnings }
+    : { error: `"${template}" isn't an hc template name (letters, digits, ".", "_" and "-", no dash first).` });
+  if (pick.template) {
+    if (picked.length) return { error: `A template owns its command: --template goes alone, without --${picked.join(", --")}.` };
+    return asTemplate(pick.template);
+  }
+  if (defaults.template && !picked.length) {
+    const shadowed = ["agent", "model", "effort"].filter((k) => defaults[k]);
+    if (shadowed.length) warnings.push(`${bot.name}'s worker template ${defaults.template} owns its command; its worker ${shadowed.join(", ")} default${shadowed.length > 1 ? "s are" : " is"} ignored.`);
+    return asTemplate(defaults.template);
+  }
   let fallback = bot?.agent ?? null;
   if (defaults.agent) {
     const key = resolveAgent(defaults.agent, agents);
@@ -62,22 +83,42 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     effort = null;
   }
   const argv = [...agents[agent].run, ...modelArgs(agent, model), ...effortArgs(agent, effort)];
-  return { agent, model, effort, argv, warnings };
+  return { template: null, agent, model, effort, argv, warnings };
 }
 
 /**
  * `hc run` arguments for a worker: in the background, a child of the bot's pane, in the
  * task worktree, with the usage labels and no `bot` label (a worker is never a bot, so the
  * sidebar folds it under its bot as a helper). The task text is the agent's last argument,
- * after `--`, never part of a shell string.
+ * after `--`, never part of a shell string. An agent runs as `env PATH=<path> <argv>`, so it
+ * gets the calling pane's PATH, not herdr-core's (a bun script like omp needs ~/.bun/bin). A
+ * `template` runs in hc's template form, `-- <template> <task>`: it sets its own command.
  */
-export function workerArgs({ botId, branch, name, cwd, parent, model, effort, argv, task }) {
+export function workerArgs({ botId, branch, name, cwd, parent, model, effort, argv, task, template, path }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`);
+  if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, "--", template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
-  return [...args, "--parent", parent, "--", ...argv, task];
+  const env = path ? ["env", `PATH=${path}`] : [];
+  return [...args, "--parent", parent, "--", ...env, ...argv, task];
+}
+
+/**
+ * The agent an hc template's command runs: the agent (a key of `agents`) whose program comes
+ * first in it as a word of its own (`… codex --no-daemon …`, `/usr/bin/claude …`), else null.
+ */
+export function templateAgent(command, agents = AGENTS) {
+  let best = null;
+  for (const [key, agent] of Object.entries(agents)) {
+    const program = agent?.run?.[0];
+    if (!program) continue;
+    const word = program.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const at = String(command ?? "").search(new RegExp(`(?:^|[\\s/])${word}(?=\\s|$)`));
+    if (at >= 0 && (!best || at < best.at)) best = { key, at };
+  }
+  return best?.key ?? null;
 }
 
 /** A branch name as a folder name: lowercase, `/` and other marks as `-`. */
@@ -131,11 +172,13 @@ const orNull = (x) => (x === undefined || x === "" ? null : x);
 /**
  * A start row: a worker (`kind: "worker"`, `task` its branch, `worktree` its cwd) or a bot
  * seat (`kind: "seat"`, from start and attach; `task` null, `worktree` its folder). `pid` is
- * the terminal's foreground pid when hc gave one.
+ * the terminal's foreground pid when hc gave one. `template`: the hc template a worker runs
+ * (its agent, model and effort are then null: the template sets them), else null.
  */
-export function startRow({ kind, terminal, pid, botId, task, worktree, agent, model, effort, at }) {
+export function startRow({ kind, terminal, pid, botId, task, worktree, agent, model, effort, template, at }) {
   return { event: "start", kind, terminal, pid: Number.isInteger(pid) ? pid : null, botId, task: orNull(task),
-    worktree: orNull(worktree), agent: orNull(agent), model: orNull(model), effort: orNull(effort), at: stamp(at) };
+    worktree: orNull(worktree), agent: orNull(agent), model: orNull(model), effort: orNull(effort), template: orNull(template),
+    at: stamp(at) };
 }
 
 /** A session row: the Claude session (and its transcript) a terminal now runs. */

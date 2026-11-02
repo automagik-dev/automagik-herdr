@@ -25,7 +25,8 @@ import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
-  ledgerPath, optionLike, parseWorktrees, startRow, workerArgs, workerPlan, worktreeFolder } from "../workers.js";
+  ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan, worktreeFolder }
+  from "../workers.js";
 import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 
@@ -336,6 +337,7 @@ const OPTIONS = {
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
   check: { type: "boolean" }, rollback: { type: "boolean" },
   "worker-agent": { type: "string" }, "worker-model": { type: "string" }, "worker-effort": { type: "string" },
+  "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
 };
 
@@ -351,8 +353,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
          [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
+         [--worker-template T]          (an hc template: owns the command, so it wins)
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
-             [--worker-agent=] [--worker-model=] [--worker-effort=]  (empty: cleared)
+             [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
+                                (empty: cleared)
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -360,9 +364,11 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   attach <bot> <terminal>       tie a running pane to the bot
   detach <bot>                  take the bot's label off its panes (a removed bot: by its id)
   brief <bot>                   print the bot's per-turn briefing as it would be now
-  worker "<task>" (--branch B [--base REF] | --worktree DIR) [--agent A] [--model M]
-         [--effort E] [--name N]  from a bot's pane: start one worker for the task, an hc
-                                child of the bot in the task's worktree (prints its terminal)
+  worker "<task>" (--branch B [--base REF] | --worktree DIR)
+         [--agent A] [--model M] [--effort E | --template T] [--name N]
+                                from a bot's pane: start one worker for the task, an hc
+                                child of the bot in the task's worktree (prints its terminal);
+                                --template runs an hc template, alone
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back
 
@@ -485,13 +491,14 @@ export function entryFrom(opts, base, project, { creating }) {
 }
 
 /**
- * The bot's worker defaults (`worker: { agent?, model?, effort? }`) from --worker-agent,
- * --worker-model and --worker-effort; an empty value clears that one. The agent is canonical
+ * The bot's worker defaults (`worker: { agent?, model?, effort?, template? }`) from
+ * --worker-agent, --worker-model, --worker-effort and --worker-template; an empty value clears
+ * that one. A template is an hc template name; it isn't looked up here (edit runs anywhere). The agent is canonical
  * (`claude-code` is stored as `claude`); a model must be on the worker agent's list when it
  * has one (an agent with no list takes any model: workers' models are swap-test data).
  */
 function workerDefaults(opts, entry) {
-  const given = ["agent", "model", "effort"].filter((k) => opts[`worker-${k}`] !== undefined);
+  const given = ["agent", "model", "effort", "template"].filter((k) => opts[`worker-${k}`] !== undefined);
   if (!given.length) return;
   const w = entry.worker && typeof entry.worker === "object" && !Array.isArray(entry.worker) ? { ...entry.worker } : {};
   const agentText = opts["worker-agent"];
@@ -507,6 +514,12 @@ function workerDefaults(opts, entry) {
   else if (effort !== undefined) {
     if (!EFFORT_SHAPE.test(effort)) throw new CliError(`--worker-effort: "${effort}" isn't an effort level (low, medium, high, …).`, 2);
     w.effort = effort;
+  }
+  const template = opts["worker-template"];
+  if (template === "") delete w.template;
+  else if (template !== undefined) {
+    if (!TEMPLATE_SHAPE.test(template)) throw new CliError(`--worker-template: "${template}" isn't an hc template name (letters, digits, ".", "_" and "-", no dash first).`, 2);
+    w.template = template;
   }
   const model = opts["worker-model"];
   if (model === "") delete w.model;
@@ -1033,25 +1046,59 @@ async function liveWorkers(botId, branch) {
   return rows.filter((r) => r?.address && (r.state === undefined || r.state === "live")).map((r) => r.address);
 }
 
+/**
+ * The agent an hc template runs, from its command in `hc templates`: an agent key, or
+ * undefined when it can't be told (no known agent in the command, or the list failed, with a
+ * warning). A template hc doesn't list is refused here, before any worktree is made.
+ */
+async function templateRuns(template, agents, warnings) {
+  const r = await hc(["templates", "--json"]);
+  let list = null;
+  try { list = r.code === 0 ? JSON.parse(r.stdout).templates : null; } catch { list = null; }
+  if (!Array.isArray(list)) {
+    warnings.push(`hc templates gave no list (${(r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}`}); starting ${template} anyway.`);
+    return undefined;
+  }
+  const hit = list.find((x) => x?.name === template);
+  if (!hit) {
+    const names = list.map((x) => x?.name).filter(Boolean);
+    throw new CliError(`hc has no template ${template}${names.length ? `. Its templates: ${names.join(", ")}` : ""}.`);
+  }
+  return templateAgent(hit.command, agents) ?? undefined;
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
   if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
   if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
+  const pick = { template: opts.template, agent: opts.agent, model: opts.model, effort: opts.effort };
+  const alongside = ["agent", "model", "effort"].filter((k) => pick[k] !== undefined);
+  if (pick.template !== undefined && alongside.length) {
+    throw new CliError(`A template owns its command: --template goes alone, without --${alongside.join(", --")}.`, 2);
+  }
   const { me, bot, project } = await callingBot(opts);
   const agents = agentTable();
-  const plan = workerPlan(bot, { agent: opts.agent, model: opts.model, effort: opts.effort }, agents);
+  const plan = workerPlan(bot, pick, agents);
   if (plan.error) throw new CliError(plan.error, 2);
-  if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
   const warnings = [...plan.warnings];
-  const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
-  if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
+  // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
+  let runs = plan.agent;
+  if (plan.template) runs = await templateRuns(plan.template, agents, warnings);
+  else {
+    if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
+    const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
+    if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
+  }
   const place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
     : await branchWorktree(opts.branch, opts.base, project.key, warnings);
   // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
   // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
-  if (plan.agent === "claude") {
+  if (runs === undefined) {
+    warnings.push(`Can't tell which agent template ${plan.template} runs, so no session hook was written in ${place.worktree}; `
+      + `if it runs Claude, the ${place.branch} worker's session won't be linked to usage.`);
+  } else if (runs === "claude") {
     const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
     warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
   }
@@ -1068,7 +1115,7 @@ async function cmdWorker(opts, rest) {
     const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
     const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
-      model: plan.model, effort: plan.effort, argv: plan.argv, task });
+      model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, path: process.env.PATH });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -1078,15 +1125,17 @@ async function cmdWorker(opts, rest) {
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: place.branch, worktree: place.worktree,
-    agent: plan.agent, model: plan.model, effort: plan.effort }));
+    agent: plan.agent, model: plan.model, effort: plan.effort, template: plan.template }));
   if (unlogged) warnings.push(unlogged);
   report(warnings);
   const out = { terminal, bot: bot.id, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
-    base: place.base, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
+    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
   if (opts.json) return out;
   const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
-  return [terminal, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, `  agent     ${plan.agent}`,
-    `  model     ${plan.model ?? "(the agent's default)"}`, `  effort    ${plan.effort ?? "(the agent's default)"}`,
+  const what = plan.template ? [`  template  ${plan.template}${runs ? ` (runs ${runs})` : ""}`]
+    : [`  agent     ${plan.agent}`, `  model     ${plan.model ?? "(the agent's default)"}`,
+      `  effort    ${plan.effort ?? "(the agent's default)"}`];
+  return [terminal, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
     `End it once the task merges: hc kill ${terminal}`].join("\n");
 }
 

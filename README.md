@@ -93,6 +93,7 @@ automagik-herdr create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
        [--character C --colour K | --omni] [--model M] [--rank R]
        [--planned-wave N [--planned-note T]] [--worker-agent A] [--worker-model M] [--worker-effort E]
+       [--worker-template T]
 automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
@@ -100,7 +101,8 @@ automagik-herdr start <bot> [--space ID] [--tab ID]
 automagik-herdr attach <bot> <terminal>
 automagik-herdr detach <bot>
 automagik-herdr brief <bot>
-automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR) [--agent A] [--model M] [--effort E] [--name N]
+automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
+       [--agent A] [--model M] [--effort E | --template T] [--name N]
 automagik-herdr update [--check | --rollback]
 ```
 
@@ -142,20 +144,35 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   runs that agent's own default model. Effort goes to `claude --effort`, codex
   `-c model_reasoning_effort`, and pi or omp `--thinking`; other agents get none, with a
   warning.
+- **Templates:** `--template T` runs the hc template `T` (`hc templates` lists them)
+  instead of an agent, for seats whose command sets more than a model: a custom model
+  provider, keys, flags. A template owns its command, so `--template` with `--agent`,
+  `--model` or `--effort` is refused. A bot's `worker.template` default wins over its
+  `worker` agent, model and effort defaults, with a warning; any per-task `--agent`,
+  `--model` or `--effort` sets the default template aside, so a captain whose workers run
+  `dev-sol` can still start a Claude reviewer. A template hc doesn't list is refused before
+  any worktree is made. A template whose command runs `claude` gets the session hook; when
+  the command names no agent Herdr knows, the hook is skipped with a warning.
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled
-  `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, with the task
-  text as the agent's last argument. The worker has no `bot` label, so the sidebar folds it
-  under its bot as a helper row showing its model and effort.
-- **Output:** the worker's terminal, then its worktree, branch, agent, model and effort
-  (`--json`: the same as data).
+  `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, then
+  `-- env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the bot's
+  pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs on)
+  start. A template runs in hc's template form, `-- <template> <task text>`, labelled
+  `worker.template=<name>` and without the PATH: the template sets its own command. The task
+  text is always one argument, never part of a shell string. The worker has no `bot` label,
+  so the sidebar folds it under its bot as a helper row showing its model and effort.
+- **Output:** the worker's terminal, then its worktree, branch, and agent, model and effort,
+  or its template (`--json`: the same as data, with `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
   once the task merges. The bot's briefing says so every turn. As an hc child, a worker
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
-  terminal, pid, botId, task, worktree, agent, model, effort, at }` (`at` is ISO 8601; a
-  seat's `task` is null). The briefing hook appends `{ event: "session", terminal, session,
-  transcript, at }` and sets the terminal's `agent.session` label when a Claude session
+  terminal, pid, botId, task, worktree, agent, model, effort, template, at }` (`at` is ISO
+  8601; a seat's `task` is null). `template` is new in this release: the hc template a
+  worker runs, else null (seats and agent workers; rows written before it have no such key).
+  When a template runs, `agent`, `model` and `effort` are null: the template sets them. The
+  briefing hook appends `{ event: "session", terminal, session, transcript, at }` and sets the terminal's `agent.session` label when a Claude session
   changes. A session row can repeat when the label write fails, so consumers dedupe session
   rows on (terminal, session). There is no end row: a worker's end comes from hc or from its
   session. The rows outlive the terminals, so usage can be tied to bots and tasks afterwards.
@@ -258,9 +275,11 @@ newest when there are several.
   rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
   to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
   for team members; `automagik-herdr create|edit --rank R` sets one (`--rank=` clears it).
-- `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high" }`, each
-  key optional, the defaults of the bot's [workers](#workers). Without `agent`, workers run
-  the bot's own agent. `create|edit --worker-agent/--worker-model/--worker-effort` set them
+- `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high" }` or
+  `{ "template": "dev-sol" }`, each key optional, the defaults of the bot's
+  [workers](#workers). Without `agent`, workers run the bot's own agent; a `template` (an hc
+  template name) wins over `agent`, `model` and `effort`.
+  `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
   with a warning.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label

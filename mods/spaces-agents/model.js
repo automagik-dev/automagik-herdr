@@ -66,12 +66,12 @@ const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x)
 const isText = (x) => typeof x === "string" && x.trim() !== "";
 const isWave = (x) => Number.isInteger(x) && x > 0;
 
-/** The worker fields a bot may set (`worker: { agent?, model?, effort? }`), each optional text. */
-export const WORKER_FIELDS = ["agent", "model", "effort"];
+/** The worker fields a bot may set (`worker: { agent?, model?, effort?, template? }`), each optional text. */
+export const WORKER_FIELDS = ["agent", "model", "effort", "template"];
 
 /**
  * Why a bot's `worker` (its workers' defaults) can't be used, or null when it is absent or
- * fine: an object whose agent, model and effort, where given, are non-empty text. Other keys
+ * fine: an object whose agent, model, effort and template, where given, are non-empty text. Other keys
  * in it are kept as they are.
  */
 export function workerProblem(worker) {
