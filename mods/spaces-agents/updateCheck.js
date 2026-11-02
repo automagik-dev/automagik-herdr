@@ -10,7 +10,7 @@ export { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS };
 
 /** The shared value (Herdr's `shared`/`setShared`) holding the version already announced, so a
  *  mod reload or a second sidebar view doesn't announce it again. */
-export const SHOWN_KEY = "spaces-agents.update-shown";
+export const SHOWN_KEY = "am.sidebar.update-shown";
 
 /** The announced version from the shared value, or null when it isn't one. */
 export const shownFrom = (value) => (typeof value === "string" && value !== "" ? value : null);

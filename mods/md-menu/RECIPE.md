@@ -29,7 +29,7 @@ verbatim notice is `LICENSE-upstream`).
 - **Keeping only real files**: one `sh -c 'for f do [ -f "$f" ] …'` over every candidate, so a
   fabricated path in prose never becomes a row. Doubles are dropped, twelve kept.
 - **Clicking one** opens the preview: the tab's existing preview switches in place through shared
-  `markdown-browser.slots` / `.show`, else a new pane splits to the right of the clicked pane and is
+  `am.markdown.slots` / `.show`, else a new pane splits to the right of the clicked pane and is
   recorded as its slot; a preview opened any other way (a shell's `pane.split`) is replaced by
   opening beside it, focusing, swapping left and closing it. A popup closes only once the work has
   started.
@@ -44,9 +44,10 @@ verbatim notice is `LICENSE-upstream`).
 
 ## The shared-state names
 
-`markdown-browser.slots`, `.show` and `.last` keep their old names on purpose: Groups 6–7 own the
-rename — they are what rewrites the key bindings and the layouts that name this mod — so moving
-them here would split that migration in two. Only this mod writes them — the menu when it opens or re-points a preview. A
+`am.markdown.slots`, `.show` and `.last` were markdown-browser's `markdown-browser.slots`, `.show`
+and `.last` before the rename: on load the mod copies an old value into an empty `am.*` key once
+and leaves the old key in place for one release (`SHARED_OLD`; the rename migration in
+spaces-agents/migrate.js lists every such key). Only this mod writes them — the menu when it opens or re-points a preview. A
 preview opened by hand (`pane.split {mod: "md-menu", props: {file}}`) carries no `slot` and writes
 nothing; the menu simply opens beside it and takes its place when asked to.
 

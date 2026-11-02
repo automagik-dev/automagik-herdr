@@ -462,10 +462,12 @@ export function parseCatalog(json) {
   return { generatedAt: json?.generatedAt ?? null, count: mods.length, byMod };
 }
 
-// Where the index is: the pack's installer writes data/mod-manager/catalog.json ({ url }), the
-// mod's own catalog.json is the copy in a checkout, and the published index is the fallback.
+// Where the index is: the pack's installer writes data/mod-manager/catalog.json ({ url }), copied
+// to data/am-mods/ by the rename migration (read first, the old folder as the fallback); the mod's
+// own catalog.json is the copy in a checkout, and the published index is the fallback.
 export async function catalogUrl(io, appHome) {
-  for (const path of [`${appHome}/data/mod-manager/catalog.json`, `${appHome}/mods/mod-manager/catalog.json`]) {
+  const own = [`${appHome}/data/am-mods/catalog.json`, `${appHome}/data/mod-manager/catalog.json`];
+  for (const path of [...own, `${appHome}/mods/mod-manager/catalog.json`]) {
     try {
       const raw = await io.readText(path);
       const url = raw ? JSON.parse(raw)?.url : null;

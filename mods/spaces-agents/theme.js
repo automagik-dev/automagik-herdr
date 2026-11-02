@@ -14,7 +14,7 @@ import * as fs from "fs/promises";
 /** The two themes, by name (the file is `<name>.json`). */
 export const THEME_NAMES = Object.freeze(["automagik-light", "automagik-dark"]);
 /** The shared value recording that the themes were selected once. */
-export const THEME_KEY = "spaces-agents.theme-selected";
+export const THEME_KEY = "am.sidebar.theme-selected";
 
 /**
  * What to do now, over plain data: `done` (shared THEME_KEY), `present` (names whose file is in

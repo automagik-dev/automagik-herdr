@@ -76,7 +76,7 @@ test("runCheck: --mods names the app home's mods folder, so the installed versio
 });
 
 test("the announced version is kept in shared: a reload or a second view doesn't announce it again", () => {
-  assert.equal(SHOWN_KEY, "spaces-agents.update-shown");
+  assert.equal(SHOWN_KEY, "am.sidebar.update-shown");
   assert.deepEqual([shownFrom(undefined), shownFrom(null), shownFrom(5), shownFrom(""), shownFrom("0.2.0")], [null, null, null, null, "0.2.0"]);
   // Herdr's shared values as a map and its notify as a log, through the mod's own announce().
   const shared = new Map();

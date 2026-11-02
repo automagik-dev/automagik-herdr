@@ -5,8 +5,8 @@
 // - { file, on }: that file rendered in a pane, reloaded when it changes, with a button that hands
 //   it to the system's default app (`on` = the machine it lives on, null for this one).
 //
-// The preview carries a `slot`, and shared `markdown-browser.slots` / `.show` / `.last` (kept under
-// that name) let the next file replace the current one in place instead of piling up panes. Only
+// The preview carries a `slot`, and shared `am.markdown.slots` / `.show` / `.last` (markdown-browser's
+// before the rename, copied over once) let the next file replace the current one in place instead of piling up panes. Only
 // this mod writes them: a preview opened from a shell's own `pane.split` carries no slot.
 // The menu face: Herdr's items (an item is [label, command, args]; "worktree" opens the worktree
 // dialog), then the Markdown files this terminal's text shows, newest first. ↑/↓ move, Enter runs,
@@ -21,12 +21,17 @@ import { openDefault } from "./open.js";
 
 
 // The mod previews are opened into, and the shared state that lets a click switch an existing
-// preview in place. The three names stay `markdown-browser.*` until Groups 6–7 own the rename.
-// Only this mod writes them; a preview split by hand carries no slot and writes nothing.
+// preview in place. Only this mod writes them; a preview split by hand carries no slot and writes nothing.
 const PREVIEW = "md-menu";
-const SLOTS = "markdown-browser.slots";
-const SHOW = "markdown-browser.show";
-const LAST = "markdown-browser.last";
+const SLOTS = "am.markdown.slots";
+const SHOW = "am.markdown.show";
+const LAST = "am.markdown.last";
+// The rename shim (D12): the values from before the rename are copied over once on load, and the
+// old keys stay (spaces-agents/migrate.js SHARED_RENAMES).
+export const SHARED_OLD = Object.freeze({ "markdown-browser.slots": SLOTS, "markdown-browser.show": SHOW, "markdown-browser.last": LAST });
+function carryShared() {
+  for (const [old, now] of Object.entries(SHARED_OLD)) if (shared(now) == null && shared(old) != null) setShared(now, shared(old));
+}
 // Previews opened from the menu: { pane id: slot }, and what each slot shows now
 // ({ slot: { file, on } }; without one, its props' file). External splits carry no slot.
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
@@ -130,6 +135,7 @@ function shortcut(name, args) {
 
 export default class MdMenu extends View {
   init(_given, cx) {
+    carryShared();
     if (props()?.file) return this.initPreview(cx);
     return this.initMenu(cx);
   }

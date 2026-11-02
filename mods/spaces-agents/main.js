@@ -18,6 +18,7 @@ import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
+import { carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
@@ -124,8 +125,15 @@ export function tone(t, status) {
   return t[status] ?? t.unknown;
 }
 
+/** The sidebar's shared keys from before the rename (migrate.js SHARED_RENAMES maps them to am.*). */
+const SHARED_OLD = ["spaces-agents.icons", "spaces-agents.projects", "spaces-agents.update-shown", "spaces-agents.theme-selected",
+  "space.colors", "sidebar.collapsed"];
+
 export default class Spaces extends View {
   init(given, cx) {
+    // The rename shim (D12): the sidebar's shared keys live under am.*; an install from before
+    // the rename has them under the old names, copied over once here (the old ones stay).
+    carryShared(shared, setShared, SHARED_OLD);
     // Opened as a dialog (New bot, Edit, Attach as bot…): the form only, no sidebar.
     const p = props() ?? given;
     if (p?.form) { this.form = new BotForm(p, cx); return; }
@@ -1005,7 +1013,7 @@ export default class Spaces extends View {
 
   row({ w, i, g, tree }, t) {
     const on = w.active;
-    const colors = shared("space.colors") ?? {};
+    const colors = shared("am.space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
     const fill = color === "transparent" ? null : color.startsWith("#") ? color : (MARK[color] ?? t[color]);
     return v_flex()
@@ -1068,9 +1076,9 @@ export default class Spaces extends View {
   }
 
   // The space's icon: an emoji or an uploaded image (the icon dialog, spaceIcon.js; shared
-  // "spaces-agents.icons" by full space id), else its letter on its color. Click to change.
+  // "am.sidebar.icons" by full space id), else its letter on its color. Click to change.
   avatar(w, fill, t) {
-    const held = (shared("spaces-agents.icons") ?? {})[w.id];
+    const held = (shared("am.sidebar.icons") ?? {})[w.id];
     const pic = typeof held === "string" ? held : held?.kind === "image" ? held.file : null;
     const emoji = held && typeof held === "object" && held.kind === "emoji" ? held.char : null;
     return this.ownPress(div().id(`space-icon-${w.id}`).size(18).flex_none().rounded(5).tooltip("Change icon")
@@ -1100,19 +1108,19 @@ export default class Spaces extends View {
   render(cx) {
     if (this.form) return this.form.render(cx);
     const t = theme();
-    const collapsed = shared("sidebar.collapsed") === true;
+    const collapsed = shared("am.sidebar.collapsed") === true;
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
     const ids = new Set(sp.map(p => p.id));
-    const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
-    let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
+    const kept = Object.fromEntries(Object.entries(shared("am.space.colors") ?? {}).filter(([id]) => ids.has(id)));
+    let changed = Object.keys(kept).length !== Object.keys(shared("am.space.colors") ?? {}).length;
     for (const p of sp) {
       if (kept[p.id] || p.name === "~") continue;
       const uses = c => Object.values(kept).filter(v => v === c).length;
       kept[p.id] = palette.reduce((best, c) => uses(c) < uses(best) ? c : best);
       changed = true;
     }
-    if (changed) setShared("space.colors", kept);
+    if (changed) setShared("am.space.colors", kept);
     this.prepareAgents();
     this.prepareBots();
     const list = this.grouped(t, collapsed);

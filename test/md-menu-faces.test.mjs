@@ -29,9 +29,9 @@ const { state } = herdr;
 const { default: MdMenu } = await import("../mods/md-menu/main.js");
 const { index, textOf, nodes } = await import(stubs["gpui-kit"]);
 
-const SLOTS = "markdown-browser.slots";
-const SHOW = "markdown-browser.show";
-const LAST = "markdown-browser.last";
+const SLOTS = "am.markdown.slots";
+const SHOW = "am.markdown.show";
+const LAST = "am.markdown.last";
 
 // Every task this file's views spawn, so a case can wait for its work to finish before the next
 // one resets the shared state. The preview's folder watch never resolves, so the wait is bounded.

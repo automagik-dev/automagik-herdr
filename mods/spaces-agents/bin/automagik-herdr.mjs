@@ -473,7 +473,9 @@ async function projectFor(opts) { return loadProject(await commandKeyOf(opts)); 
 function rememberedKeys() {
   let keys = [];
   try {
-    const list = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}")?.["spaces-agents.projects"];
+    // The sidebar's remembered projects: am.* since the rename, else the old key (read only).
+    const held = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}");
+    const list = held?.["am.sidebar.projects"] ?? held?.["spaces-agents.projects"];
     keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
   } catch { /* unreadable: none */ }
   let listed = [];

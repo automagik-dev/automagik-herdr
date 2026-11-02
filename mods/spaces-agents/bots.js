@@ -10,7 +10,7 @@ import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, parseBots, checkBots, l
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
-const REMEMBERED = "spaces-agents.projects";
+const REMEMBERED = "am.sidebar.projects";
 // A folder's project changes rarely (a repo made or removed): looked up again after a minute.
 const KEY_TTL = 60_000;
 
