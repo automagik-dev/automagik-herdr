@@ -1,6 +1,6 @@
 # Automagik Herdr
 
-Autonomous teams of coding agents across harnesses (Claude Code, Codex, Gemini, Kimi, Oh My Pi…)
+Autonomous teams of coding agents across harnesses (Claude Code, Codex, Antigravity, Kimi, Oh My Pi…)
 with a main bot, captains and members, running in [Herdr](https://dev.herdr.app).
 
 <!-- hero: docs/hero.png, a sidebar screenshot with a team running -->
@@ -44,7 +44,7 @@ Install Automagik Herdr on this Mac and set up my first bot.
    If automagik-herdr is not found, use ~/.local/bin/automagik-herdr and tell me to add
    ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
-   (claude, codex, gemini…). Characters: whale, octopus, star, moon, wave, squircle, zed,
+   (claude, codex, antigravity…). Characters: whale, octopus, star, moon, wave, squircle, zed,
    hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
    ring, gem. If I don't pick a character, use --omni (the octopus); never guess the folder,
    name or agent.
@@ -68,7 +68,7 @@ a place in a team, and keeps that team in front of every agent and of you.
   its lead and the terminal to report to.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
   its `blocked`, `error` and exit notes into the lead's pane, so the lead wakes up.
-- **Any harness.** Bots run Claude Code, Codex, Gemini, Kimi, Oh My Pi or any agent Herdr
+- **Any harness.** Bots run Claude Code, Codex, Antigravity, Kimi, Oh My Pi or any agent Herdr
   knows, side by side in the same team.
 - **A detected model.** The sidebar shows the model a bot's pane really runs, read from its
   command line, else the agent's own default. A model can be pinned from the agent's known
@@ -132,7 +132,9 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
 - **Where:** `--worktree DIR` uses an existing worktree of the bot's project. `--branch B`
   reuses the worktree already on `B`, or makes `<main checkout>/.claude/worktrees/<slug>`
   with `git worktree add -b B`. After a fetch, a new branch starts from `--base`, else
-  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`, else `master`. The main
+  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`, else `master`. It tracks
+  `origin/B` when it starts there and nothing otherwise, so the first push is
+  `git push -u origin B` and a plain `git push` never lands on the base. The main
   checkout is never a worker's folder, and its HEAD is never moved. `/.claude/worktrees/` goes
   into the clone's own git exclude, so `git add -A` in the main checkout never picks a
   worktree up.
