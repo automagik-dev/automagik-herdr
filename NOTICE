@@ -11,7 +11,9 @@ mods/*/LICENSE where a mod derives from one):
                         Start/Attach and briefing are this pack's). Its layout is the root
                         layouts/automagik.json, so Herdr does not dock a second sidebar.
   mods/sidebar-chrome   from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg
-  mods/md-menu          from Herdr's `menu` 0.1.10 — changed: main.js, mod.json; added: marks.js
+  mods/md-menu          from Herdr's `menu` 0.1.10, with the Markdown renderer merged in from
+                        ohneda/herdr-markdown-browser (MIT; notice below) — changed: main.js,
+                        mod.json; added: marks.js, open.js, LICENSE-upstream
   mods/auto-tabs        from Herdr's shipped `tabs` (the app's copy, 2026-11-01) — changed: main.js,
                         mod.json; added: names.js
   mods/new-menu-tui     from Herdr's `new-menu` 0.1.7 — changed: main.js, mod.json; added: target.js
@@ -23,8 +25,6 @@ repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is t
                         mod.json; added: RECIPE.md
   mods/automations      from DnzzL/herdr-automations — changed: main.js (fork header), mod.json
                         (title "Automagik Automations"); added: RECIPE.md. Code otherwise upstream.
-  mods/markdown-browser from ohneda/herdr-markdown-browser — changed: mod.json (the file-list panel
-                        is off); added: RECIPE.md
 
   jacksonpires/herdr-app-mod-manager:
 
@@ -75,7 +75,7 @@ repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is t
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
-  ohneda/herdr-markdown-browser:
+  md-menu — the Markdown preview, from ohneda/herdr-markdown-browser:
 
   MIT License
 

@@ -1,53 +1,87 @@
 # md-menu
 
 Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text
-talks about: click one and it opens in a preview pane beside the chat, the way a click in the
-Markdown panel used to. Derived from Herdr's shipped `menu`.
+talks about; click one and it renders in a preview pane beside the chat. One mod, two faces.
+
+Derived from Herdr's shipped `menu`, with the Markdown renderer from
+[`ohneda/herdr-markdown-browser`](https://github.com/ohneda/herdr-markdown-browser) (MIT; the
+verbatim notice is `LICENSE-upstream`).
 
 ## What you see
 
-Herdr's terminal menu, unchanged (split, zoom, right-click routing, park, close), followed by a
-divider, the label **Markdown in this terminal**, and up to twelve rows: a file icon, the path
-relative to the terminal's folder, and `machine` for another machine's file. A popup 380 × 460,
-`popover` background, 12.8 px text, `selected` on the row under the pointer, ↑/↓ + Enter working
-over both sections.
+- **The terminal menu** (props `{tab, target}`, or opened by a key): Herdr's items unchanged (split,
+  zoom, right-click routing, park, close), a divider, **Markdown in this terminal**, and up to
+  twelve rows — file icon, path relative to the terminal's folder, `machine` for another machine's
+  file. A popup 380 × 460, `popover` background, 12.8 px text, `selected` on the row under the
+  pointer, ↑/↓ + Enter over both sections.
+- **The preview** (props `{file, on}`): a 32 px header with the file name (semibold), the full path
+  in `dim` (`machine:path` for another machine's file) and, on this machine, a **Default app**
+  button; the rendered Markdown at 14 px, 20 px side padding, scrollable and selectable;
+  `Loading…` before the first read, `File not found` when the file is gone.
+
+`mod.json` has `place: "none"`, so nothing is docked: every face is opened with props.
 
 ## How it behaves
 
-- **Finding paths**: `hc read <terminal> --lines 600`, then one regex over the text
-  (`.../.md|.mdx|.markdown`), newest first. Each match is resolved against the terminal's live
-  folder and then the repo's root (`git rev-parse --show-toplevel`); `~/` and absolute paths as
-  they are.
+- **Finding paths** (menu face): `hc read <terminal> --lines 600`, then one regex over the text
+  (`.md|.mdx|.markdown`), newest first. Each match is resolved against the terminal's live folder and
+  then the repo's root (`git rev-parse --show-toplevel`); `~/` and absolute paths as they are.
 - **Keeping only real files**: one `sh -c 'for f do [ -f "$f" ] …'` over every candidate, so a
   fabricated path in prose never becomes a row. Doubles are dropped, twelve kept.
-- **Clicking one** shows it in the tab's preview: the tab's existing Markdown preview switches in
-  place through shared `markdown-browser.slots` / `.show` (the panel's own bookkeeping), else a new
-  pane splits to the right of the clicked pane and is recorded as its slot; a preview opened any
-  other way (a shell's `pane.split`) is replaced by opening beside it, focusing, swapping left and
-  closing it. A popup closes only once the work has started.
+- **Clicking one** opens the preview: the tab's existing preview switches in place through shared
+  `markdown-browser.slots` / `.show`, else a new pane splits to the right of the clicked pane and is
+  recorded as its slot; a preview opened any other way (a shell's `pane.split`) is replaced by
+  opening beside it, focusing, swapping left and closing it. A popup closes only once the work has
+  started.
+- **Reading and reloading** (preview face): the newest read wins (a slower, older one is dropped);
+  local files are watched with `watchFolder`; another machine's are re-read every 3 s while their tab
+  is shown.
+- **Default app**: `sh -c realpath` first (refusing folders and `*.md` links to programs), then
+  `open` / `rundll32` / `xdg-open`; `md-menu.open` reaches every shown preview and the focused one
+  acts.
 - **Offered where**: a right-click on a terminal (props `{tab: "pane", target}`) or opened by a key
   (`mod.open:md-menu`, which falls back to the focused terminal, else the tab's first terminal).
 
+## The shared-state names
+
+`markdown-browser.slots`, `.show` and `.last` keep their old names on purpose: Groups 6–7 own the
+rename — they are what rewrites the key bindings and the layouts that name this mod — so moving
+them here would split that migration in two. Only this mod writes them — the menu when it opens or re-points a preview. A
+preview opened by hand (`pane.split {mod: "md-menu", props: {file}}`) carries no `slot` and writes
+nothing; the menu simply opens beside it and takes its place when asked to.
+
 ## Built from
 
-`mods/md-menu/main.js` (menu + Markdown rows + preview bookkeeping), `marks.js` (regex, resolution,
-labels — no Herdr import, so `node` can run it), `mod.json` (`place: none`, popup 380 × 460).
-Herdr API: `props`, `run`, `panes`, `focused`, `terminals`, `hc`, `exec`, `home`, `shared`,
-`setShared`, `notify`, `closeOverlay`, `openOverlay`, `theme`, `keys`, `spaces`, `layout`.
-Layout: the shown layout's root needs `"terminal_menu": "md-menu"`.
+`main.js` (both faces, the pane bookkeeping), `marks.js` (regex, resolution, labels — no Herdr
+import, so `node` can run it), `open.js` (the default-app check), `mod.json` (`place: "none"`,
+popup 380 × 460), `LICENSE`, `LICENSE-upstream` (MIT). Herdr API: `props`, `run`, `panes`, `focused`,
+`terminals`, `hc`, `exec`, `home`, `shared`, `setShared`, `notify`, `closeOverlay`, `openOverlay`,
+`theme`, `keys`, `spaces`, `readTextFile`, `watchFolder`, `nextCommand`.
+Layout: the shown layout's root needs `"terminal_menu": "md-menu"`; previews are split as
+`{mod: "md-menu", props: {file, on}}`.
 
 ## Watch out
 
 - **It replaces the terminal menu, it does not extend it** — a clone of the shipped one, so Herdr's
-  later changes to `menu` don't reach it. Re-clone when that matters.
-- It needs the `markdown-browser` mod for the preview pane; without it the row click opens a pane
-  of an unknown mod and the app says so.
+  later changes to `menu` don't reach it, and the renderer keeps its upstream fork distance
+  (`.mdx` import/export stripping is line-based, not a parser). Re-clone/merge by hand when upstream
+  moves.
 - Paths with spaces are missed (the regex stops at whitespace); a fragment that still exists on disk
   is matched, anything else is dropped.
 - `exec` has a time limit; `hc read` of 600 lines and one `sh` per open are cheap but not free.
-- Only rows the terminal printed are offered: it is not a file browser.
+- Only rows the terminal printed are offered: it is not a file browser. The upstream file-list panel
+  was dropped with the merge.
+- `open` on Windows and Linux has never been exercised by this pack.
+
+## Checked
+
+`test/md-menu-faces.test.mjs` (3 tests, a stub runtime) is criterion 1's committed check: a printed
+`NOTES.md` becomes a row and a path that is not on disk stays hidden; a click splits a pane to the
+right as `md-menu` with a slot and records `slots`/`show`/`last`; a second click re-points that slot
+in place. The in-app click-through on a scratch home belongs to Group 8's end-to-end run.
 
 ## Done when
 
 `herdr-app check mods/md-menu` passes; right-clicking a terminal that printed a `.md` path lists it;
-clicking it opens (or switches) the preview in the tab.
+clicking it opens (or switches) the preview in the tab; editing the file updates the pane within a
+second; **Default app** opens it.

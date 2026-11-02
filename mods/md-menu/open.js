@@ -1,6 +1,8 @@
 // Hands a Markdown file to the system's default app for it.
 import { exec, window } from "herdr";
-import { psLiteral } from "./list.js";
+
+// A PowerShell single-quoted literal: the only escape is doubling a quote (typographic ones too).
+const psLiteral = (s) => `'${s.replace(/['‘’‚‛]/g, (c) => c + c)}'`;
 
 // Only a Markdown file goes to the default app: not a link named *.md to a program or an app
 // bundle (the default handler would run it). Resolves with { path } (what to open: the
@@ -18,7 +20,7 @@ async function check(file) {
     // in a sentinel that comes off with exactly one newline.
     r = await exec("sh", ["-c",
       'p=$(realpath -- "$1" && printf x) || exit 1; p=${p%x}; p=${p%?}; [ -f "$p" ] && printf %s "$p"',
-      "markdown-browser", file]);
+      "md-menu", file]);
   }
   if (r.code !== 0 || /[\0-\x1f\x7f]/.test(r.stdout) || !/\.(md|mdx|markdown)$/i.test(r.stdout))
     return { why: "Not a Markdown file" };
