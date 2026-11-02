@@ -1,0 +1,173 @@
+{
+ "fixture": "owner-2026-11-02",
+ "note": "rows: each space's R3 order under the default folds (main bot and categories open, bots folded), as `kind id`. goldenSpaceOrder.alpha: the alpha mode's space order (D6) per machine group, recorded as data for sidebar-rules Group 3a; the default mode is manual, seeded from Herdr's current order.",
+ "rows": {
+  "sp23f728cb4a2cdd1b527e8420f0f83afb": {
+   "name": "space 1",
+   "rows": [
+    "main b:b-3uytoqkvlv"
+   ]
+  },
+  "sp9d7f2575f71a6dbb5b4f6c790c55476b": {
+   "name": "space 2",
+   "rows": [
+    "main b:b-mvrr3pb5uj",
+    "category c:[null,\"~/workspace/repos/project-d\"]:category-1",
+    "bot b:b-cqmxrnoagb",
+    "bot b:b-vwtvzemtvt",
+    "bot b:b-zxxhjubw5i",
+    "category c:[null,\"~/workspace/repos/project-d\"]:category-2",
+    "bot b:b-gegmsi4sec",
+    "bot b:b-x6kmwlno5n",
+    "category c:[null,\"~/workspace/repos/project-d\"]:category-3",
+    "bot b:b-g7q5fx2ank",
+    "bot b:b-4zv2xqoj23",
+    "category c:[null,\"~/workspace/repos/project-d\"]:category-4",
+    "bot b:b-5vrep6hlhh",
+    "bot b:b-mpugd3ntze",
+    "category c:[null,\"~/workspace/repos/project-d\"]:category-5",
+    "bot b:b-jcj4zzsb4u",
+    "helper h:t1pw",
+    "helper h:t1qw",
+    "helper h:t1rv"
+   ]
+  },
+  "spb9ce4e08fb6697e48f73446db3ce837a": {
+   "name": "space 3",
+   "rows": [
+    "main b:b-txjahcaxyw",
+    "category c:[null,\"~/workspace/repos/project-a\"]:category-1",
+    "bot b:b-d6euvowxh3",
+    "category c:[null,\"~/workspace/repos/project-a\"]:category-2",
+    "bot b:b-w6kmutwlxe",
+    "bot b:b-vuohqz2vby"
+   ]
+  },
+  "spea78c8fb088b7856249fe52c41125af3": {
+   "name": "Automagik Herdr",
+   "rows": [
+    "main b:b-ikfvbmibgh",
+    "agent a:t187"
+   ]
+  },
+  "spfa1c2f98c795a969a394ff07609fc337": {
+   "name": "space 4",
+   "rows": [
+    "main b:b-3luspfx5cj",
+    "bot b:b-vud3dh7pjf",
+    "bot b:b-dztzhs2c6w"
+   ]
+  },
+  "sp06181487e8d2804ed5d5509764c4f938": {
+   "name": "space 5",
+   "rows": [
+    "agent a:t16r"
+   ]
+  },
+  "sp4dc68bcf46eda7eec9f83aafec09c603": {
+   "name": "space 6",
+   "rows": [
+    "shell s:t21z"
+   ]
+  },
+  "sp2c4c7a06ee5b36cb42726135a8260f14": {
+   "name": "space 7",
+   "rows": [
+    "agent a:t220",
+    "agent a:t221"
+   ]
+  },
+  "machine-1/sp4434df202411577677487460552a0562": {
+   "name": "space 8",
+   "rows": [
+    "agent a:machine-1/t1"
+   ]
+  },
+  "machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1": {
+   "name": "space 9",
+   "rows": [
+    "shell s:machine-2/t8",
+    "shell s:machine-2/t13"
+   ]
+  },
+  "machine-2/sp1c84590def1c3b61a3066c61de5be811": {
+   "name": "space 10",
+   "rows": [
+    "agent a:machine-2/t11",
+    "shell s:machine-2/t12"
+   ]
+  },
+  "machine-3/spae18c14e4779e8610a17d3c784b99773": {
+   "name": "space 11",
+   "rows": [
+    "shell s:machine-3/t1",
+    "shell s:machine-3/t7"
+   ]
+  },
+  "machine-3/spa95f23dfb4b23706dc5e272433d6e91a": {
+   "name": "space 12",
+   "rows": [
+    "agent a:machine-3/t2",
+    "agent a:machine-3/t3",
+    "shell s:machine-3/t74",
+    "shell s:machine-3/t9",
+    "shell s:machine-3/t16"
+   ]
+  },
+  "machine-3/sp1499a6e23d2ad7b5663fce95d3714cec": {
+   "name": "space 13",
+   "rows": [
+    "shell s:machine-3/t12",
+    "shell s:machine-3/t13",
+    "shell s:machine-3/t14"
+   ]
+  },
+  "machine-4/sp714fec2bb43835f49822013dadd6f74b": {
+   "name": "space 14",
+   "rows": [
+    "agent a:machine-4/t1",
+    "agent a:machine-4/t4",
+    "agent a:machine-4/t2",
+    "shell s:machine-4/t3"
+   ]
+  },
+  "machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91": {
+   "name": "space 10",
+   "rows": [
+    "agent a:machine-5/t9"
+   ]
+  }
+ },
+ "goldenSpaceOrder": {
+  "alpha": {
+   "this computer": [
+    "spea78c8fb088b7856249fe52c41125af3",
+    "spb9ce4e08fb6697e48f73446db3ce837a",
+    "spfa1c2f98c795a969a394ff07609fc337",
+    "sp23f728cb4a2cdd1b527e8420f0f83afb",
+    "sp9d7f2575f71a6dbb5b4f6c790c55476b",
+    "sp06181487e8d2804ed5d5509764c4f938",
+    "sp4dc68bcf46eda7eec9f83aafec09c603",
+    "sp2c4c7a06ee5b36cb42726135a8260f14"
+   ],
+   "machine-1": [
+    "machine-1/sp4434df202411577677487460552a0562"
+   ],
+   "machine-2": [
+    "machine-2/sp1c84590def1c3b61a3066c61de5be811",
+    "machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1"
+   ],
+   "machine-3": [
+    "machine-3/spae18c14e4779e8610a17d3c784b99773",
+    "machine-3/spa95f23dfb4b23706dc5e272433d6e91a",
+    "machine-3/sp1499a6e23d2ad7b5663fce95d3714cec"
+   ],
+   "machine-4": [
+    "machine-4/sp714fec2bb43835f49822013dadd6f74b"
+   ],
+   "machine-5": [
+    "machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91"
+   ]
+  }
+ }
+}

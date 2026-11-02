@@ -4,6 +4,7 @@
 import { registerHooks } from "node:module";
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +53,8 @@ beforeEach((t) => {
   state.closed = [];
   state.runs = [];
   state.spaces = [];
+  state.focused = null;
+  state.pickFolder = null;
   state.terminals = [];
   state.agents = AGENTS;
   state.hcAnswer = () => ({ code: 0, stdout: "{}", stderr: "" });
@@ -216,4 +219,97 @@ test("Rank chips are not offered for the main bot", async () => {
   const { draw } = await open({ form: "create" });
   draw();
   assert.ok(!nodes.has("bot-rank-none"));
+});
+
+// The owner's case: a folder outside git (cadu) under a folder holding another project's
+// bots.json (repos). `project` is the parent here, seeded with its main bot.
+function underParent() {
+  const cadu = join(project, "cadu");
+  mkdirSync(cadu);
+  return cadu;
+}
+const kindWhy = (kind) => nodes.get(`bot-kind-${kind}`)?.props.tooltip ?? null;
+
+test("a folder picked outside git is its own project, even under another project's folder: Main bot, saved there", async () => {
+  seed([MAIN]);
+  const parentBefore = readFileSync(join(project, ".herdr/bots.json"), "utf8");
+  const cadu = underParent();
+  state.pickFolder = cadu;
+  const { form, cx, draw, click } = await open({ form: "create", project: undefined });
+  draw();
+  assert.match(textOf(nodes.get("bot-project")), /Pick a project…/);
+  await click("bot-project");
+  assert.equal(form.key, cadu);
+  assert.equal(form.s.kind, "main", "a new project's first bot is its main bot");
+  draw();
+  assert.equal(kindWhy("main"), null, "Main bot is offered");
+  assert.equal(kindWhy("member"), "A project's first bot is its main bot.");
+  form.inputs.name.type("Cadu", cx);
+  draw();
+  await click("bot-save");
+  assert.equal(form.error, null);
+  const saved = JSON.parse(readFileSync(join(cadu, ".herdr/bots.json"), "utf8"));
+  assert.deepEqual(saved.bots.map((b) => [b.name, b.kind]), [["Cadu", "main"]]);
+  assert.equal(readFileSync(join(project, ".herdr/bots.json"), "utf8"), parentBefore, "the parent project is untouched");
+});
+
+test("a focused space whose folder is gone is not keyed: the form asks for the project", async () => {
+  seed([MAIN]);
+  state.spaces = [{ id: "s1", name: "gone", folder: join(project, "gone") }];
+  state.focused = { space: "s1" };
+  const { form, draw } = await open({ form: "create", project: undefined });
+  draw();
+  assert.ok(!form.key);
+  assert.match(textOf(nodes.get("bot-project")), /Pick a project…/);
+  assert.ok(!nodes.has("bot-project-parent") && !nodes.has("bot-project-own"));
+});
+
+test("a focused folder under another project's folder is offered both ways, never assumed", async () => {
+  seed([MAIN]);
+  const cadu = underParent();
+  state.spaces = [{ id: "s1", name: "cadu", folder: cadu }];
+  state.focused = { space: "s1" };
+  const { form, draw, click } = await open({ form: "create", project: undefined });
+  draw();
+  assert.ok(!form.key, "the parent's project is not assumed");
+  assert.equal(textOf(nodes.get("bot-project-parent")), "proj (parent project)");
+  assert.equal(textOf(nodes.get("bot-project-own")), "Make cadu its own project");
+  await click("bot-project-own");
+  assert.equal(form.key, cadu);
+  assert.equal(form.s.kind, "main");
+  draw();
+  assert.ok(!nodes.has("bot-project-parent"), "the choice is gone once made");
+  // Picking the parent instead: a member of its team, as before.
+  const again = await open({ form: "create", project: undefined });
+  again.draw();
+  await again.click("bot-project-parent");
+  assert.equal(again.form.key, project);
+  assert.equal(again.form.s.kind, "member");
+});
+
+test("a focused folder with its own bots.json, or in a git worktree, is keyed with no question", async (t) => {
+  seed([MAIN]);
+  const cadu = underParent();
+  mkdirSync(join(cadu, ".herdr"));
+  writeFileSync(join(cadu, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [] })}\n`);
+  state.spaces = [{ id: "s1", name: "cadu", folder: cadu }];
+  state.focused = { space: "s1" };
+  const own = await open({ form: "create", project: undefined });
+  own.draw();
+  assert.equal(own.form.key, cadu);
+  assert.ok(!nodes.has("bot-project-parent"));
+  // A worktree of a repository keys to its main checkout (Decision 15), unchanged.
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo });
+  mkdirSync(repo);
+  g("init", "-q");
+  g("commit", "-q", "--allow-empty", "-m", "init");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const tree = await open({ form: "create", project: undefined });
+  tree.draw();
+  assert.equal(tree.form.key, repo);
+  assert.ok(!nodes.has("bot-project-own"));
 });
