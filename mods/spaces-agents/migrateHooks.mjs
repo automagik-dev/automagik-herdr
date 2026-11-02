@@ -20,7 +20,8 @@ import {
   chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { ENTRY_SOURCE, OURS, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
 import { PROJECTS_FILE, listedProjects } from "./model.js";
@@ -194,20 +195,33 @@ const realOf = (path) => { try { return realpathSync(path); } catch { return nul
 
 export const SCAN_DEPTH = 4;
 const SCAN_MAX = 5000;
-const SCAN_SKIP = new Set(["node_modules", ".git", ".claude"]);
+/** Never entered, beside every dot-folder (.git; .claude, where worker worktrees live): node_modules
+ * and macOS's privacy-protected folders (entering one can raise a permission prompt at the person;
+ * Library covers iCloud Drive's Library/Mobile Documents). */
+const SCAN_SKIP = new Set([
+  "node_modules", "Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures",
+]);
+/** True when `root` is the home folder or holds it (/, /Users): such a root is never walked. */
+function holdsHome(root, home = homedir()) {
+  const h = realOf(home);
+  const r = realOf(root);
+  return Boolean(h && r) && (h === r || h.startsWith(r.endsWith(sep) ? r : r + sep));
+}
 /**
  * The subfolders of `root`, at most SCAN_DEPTH below it, that hold a .claude folder: no link is
- * followed, and node_modules, .git, .claude (worker worktrees live there) and any folder with its
- * own .git (a nested repository or worktree) are not entered. At most SCAN_MAX folders per root.
+ * followed, and SCAN_SKIP's folders, dot-folders and any folder with its own .git (a nested
+ * repository or worktree) are not entered. At most SCAN_MAX folders per root. None for a root
+ * that is the home folder or one of its ancestors: only the root's own .claude is read there.
  */
 function scan(root) {
   const found = [];
+  if (holdsHome(root)) return found;
   let seen = 0;
   const walk = (dir, depth) => {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (!e.isDirectory() || SCAN_SKIP.has(e.name) || ++seen > SCAN_MAX) continue;
+      if (!e.isDirectory() || SCAN_SKIP.has(e.name) || e.name.startsWith(".") || ++seen > SCAN_MAX) continue;
       const sub = join(dir, e.name);
       if (lstat(join(sub, ".git"))) continue;
       if (lstat(join(sub, ".claude"))) found.push(sub);
