@@ -92,7 +92,7 @@ automagik-herdr show <bot>                 one bot in full
 automagik-herdr create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
        [--character C --colour K | --omni] [--model M] [--rank R]
-       [--planned-wave N [--planned-note T]]
+       [--planned-wave N [--planned-note T]] [--worker-agent A] [--worker-model M] [--worker-effort E]
 automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
@@ -100,6 +100,7 @@ automagik-herdr start <bot> [--space ID] [--tab ID]
 automagik-herdr attach <bot> <terminal>
 automagik-herdr detach <bot>
 automagik-herdr brief <bot>
+automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR) [--agent A] [--model M] [--effort E] [--name N]
 automagik-herdr update [--check | --rollback]
 ```
 
@@ -114,6 +115,42 @@ automagik-herdr update [--check | --rollback]
   whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
   project is refused.
+
+## Workers
+
+A bot manages its lane and writes no code. For each task it starts one worker, from its own
+pane:
+
+```bash
+automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --effort high
+```
+
+- **Who:** the calling bot is read from `HC_TERMINAL_ID` and that terminal's `bot` label.
+  Anywhere else the command is refused.
+- **Where:** `--worktree DIR` uses an existing worktree of the bot's project. `--branch B`
+  reuses the worktree already on `B`, or makes `<main checkout>/.claude/worktrees/<slug>`
+  with `git worktree add -b B`. After a fetch, a new branch starts from `--base`, else
+  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`. The main checkout is
+  never a worker's folder, and its HEAD is never moved.
+- **What runs:** `--agent`, `--model` and `--effort` for this task, else the bot's `worker`
+  defaults in `.herdr/bots.json`, else the bot's own agent with that agent's defaults. A
+  default model belongs to the default worker agent, so a task that picks another agent
+  runs that agent's own default model. Effort goes to `claude --effort`, codex
+  `-c model_reasoning_effort`, and pi or omp `--thinking`; other agents get none, with a
+  warning.
+- **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled
+  `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, with the task
+  text as the agent's last argument. The worker has no `bot` label, so the sidebar folds it
+  under its bot as a helper row showing its model and effort.
+- **Output:** the worker's terminal, then its worktree, branch, agent, model and effort
+  (`--json`: the same as data).
+- **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
+  once the task merges. The bot's briefing says so every turn.
+- **Ledger:** `worker`, `start` and `attach` append one row per terminal to
+  `<app home>/automagik-herdr/workers.jsonl` (`kind` `worker` or `seat`, terminal, pid,
+  bot, task, worktree, agent, model, effort, time). The briefing hook appends a `session` row
+  and sets the terminal's `agent.session` label when a Claude session changes. The rows
+  outlive the terminals, so usage can be tied to bots and tasks afterwards.
 
 ## The Create form
 
@@ -213,6 +250,11 @@ newest when there are several.
   rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
   to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
   for team members; `automagik-herdr create|edit --rank R` sets one (`--rank=` clears it).
+- `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high" }`, each
+  key optional, the defaults of the bot's [workers](#workers). Without `agent`, workers run
+  the bot's own agent. `create|edit --worker-agent/--worker-model/--worker-effort` set them
+  (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
+  with a warning.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -222,7 +264,8 @@ Start and Attach add one `UserPromptSubmit` hook to `.claude/settings.local.json
 bot's session folder, never to the shared `settings.json`, and keep that file out of git
 through the clone's own exclude file. The hook runs `node <app home>/mods/spaces-agents/briefing.mjs`.
 It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
-prompt. Members' reports are fenced as untrusted data. A session attached while it was
+prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
+terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
 already running may need `/hooks` once to load the hook.
 
 ### Requirements
@@ -266,7 +309,7 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
-`launchArgs.js`, `models.js`, `formModel.js`, `release.js`, `updateCheck.js`), so the tests
+`launchArgs.js`, `models.js`, `workers.js`, `formModel.js`, `release.js`, `updateCheck.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are
