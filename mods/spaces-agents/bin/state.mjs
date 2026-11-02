@@ -44,6 +44,7 @@ export function spacesOf(ls) {
 export async function readState(io, { window = true } = {}) {
   const json = async (command, args) => {
     const r = await io.run(command, args);
+    if (r.code === 127) throw new Error(`${command} is not on PATH`);
     if (r.code !== 0) throw new Error(`${command} ${args.join(" ")} failed: ${(r.stderr || r.stdout || "").trim() || `exit ${r.code}`}`);
     try { return JSON.parse(r.stdout); } catch { throw new Error(`${command} ${args.join(" ")} printed no JSON`); }
   };

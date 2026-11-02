@@ -338,14 +338,20 @@ test("tidy and tidy --json print the plan and change no file, label or window", 
   assert.match(text.out, /Visual .*\n {2}recreate {2}s1 on \S+\/beta as "beta"/);
 });
 
-test("tidy needs the window: no herdr-app, a clear error and nothing changed", (t) => {
+test("tidy needs the window: herdr-app failing, a clear error and nothing changed", (t) => {
   const s = scene(t);
-  rmSync(join(s.root, "bin", "herdr-app"));
+  // A failing fake, never a missing one: the host's own herdr-app may be next on PATH.
+  exe(join(s.root, "bin", "herdr-app"), "#!/bin/sh\necho 'no window' >&2\nexit 1\n");
   const before = s.snapshot();
   const r = s.cli(["tidy"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /Can't plan: herdr-app ls failed/);
+  assert.match(r.err, /Can't plan: herdr-app ls failed: no window/);
   assert.deepEqual(s.snapshot(), before);
+});
+
+test("readState names a program that isn't there", async () => {
+  const run = async () => ({ code: 127, stdout: "", stderr: "spawn hc ENOENT" });
+  await assert.rejects(readState({ run, home: "/h", appHome: "/nowhere" }), /hc is not on PATH/);
 });
 
 test("create runs the non-visual fixes only: the registry pruned, a role set; never the window; twice changes nothing more", (t) => {
