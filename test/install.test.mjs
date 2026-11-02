@@ -482,7 +482,127 @@ test("a failing herdr-app check exits 1 after installing, naming the mod and the
   assert.equal(r.code, 1);
   assert.match(r.out, /check FAILED: auto-tabs: broken/);
   assert.match(r.err, /herdr-app check failed .*update --rollback/);
+  assert.doesNotMatch(r.out, /Done/);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
+});
+
+// #44: a rerun of the installed release checks every file against it before saying "up to date".
+test("a same-version rerun repairs a corrupted main.js, a deleted layout and a missing mod; nothing else", (t) => {
+  const s = scratch(t);
+  s.addHerdrApp();
+  s.show("main");
+  // Other mods (one of them Pocket Link, spelled otherwise) and a personal layout: never touched.
+  const theirs = [join(s.mods, "Sheepdog"), join(s.mods, "Pocket-Link"), join(s.appHome, "layouts", "mine.json")];
+  mkdirSync(join(theirs[0], ".state"), { recursive: true });
+  writeFileSync(join(theirs[0], "main.js"), "// sheepdog\n");
+  writeFileSync(join(theirs[0], ".state", "k"), "1\n");
+  mkdirSync(theirs[1]);
+  writeFileSync(join(theirs[1], "main.js"), "// automagik-pocket's\n");
+  mkdirSync(dirname(theirs[2]), { recursive: true });
+  writeFileSync(theirs[2], '{"name":"mine"}\n');
+  const sums = () => [treeSum(theirs[0]), treeSum(theirs[1]), sha(theirs[2])];
+  const before = sums();
+  s.publish("9.8.0");
+  assert.equal(s.run("--yes").code, 0);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  const mainJs = join(s.pack, "main.js"), shipped = readFileSync(mainJs);
+  mkdirSync(join(s.pack, ".state"), { recursive: true });
+  writeFileSync(join(s.pack, ".state", "kept"), "the mod's own\n");
+
+  // The issue's repro, plus a damaged file in a subfolder (the command the link points at).
+  const cli = join(s.pack, "bin", "automagik-herdr.mjs"), cliShipped = readFileSync(cli);
+  writeFileSync(mainJs, "invalid JavaScript !!!\n");
+  writeFileSync(cli, "broken\n");
+  rmSync(layout);
+  const checksBefore = s.checks().length;
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /Checking the installed Automagik Herdr 9\.9\.0 against the release\.\.\.\nChecksum: ok\./);
+  assert.match(again.out, /differs from the release: mods\/spaces-agents \(bin\/automagik-herdr\.mjs, main\.js\)/);
+  assert.match(again.out, /missing: the automagik layout/);
+  assert.match(again.out, /repaired mods\/spaces-agents: reinstalled 9\.9\.0; the damaged copy is kept in .*backup\/spaces-agents-/);
+  assert.match(again.out, /added the automagik layout/);
+  assert.match(again.out, /Repaired the pack 9\.9\.0/);
+  assert.match(again.out, /Done: Automagik Herdr 9\.9\.0\./);
+  assert.doesNotMatch(again.out, /up to date/);
+  assert.deepEqual(readFileSync(mainJs), shipped);
+  assert.deepEqual(readFileSync(cli), cliShipped);
+  assert.deepEqual(readFileSync(layout), readFileSync(LAYOUT_SRC));
+  assert.equal(readFileSync(join(s.pack, ".state", "kept"), "utf8"), "the mod's own\n");
+  assert.equal(s.checks().length - checksBefore, PACK_MODS.length, "herdr-app check on every pack mod after the repair");
+  // The damaged copy is in backup/, not the kept set: a rollback still brings back 9.8.0.
+  const backups = readdirSync(join(s.state, "backup"));
+  assert.equal(backups.length, 1);
+  assert.equal(readFileSync(join(s.state, "backup", backups[0], "main.js"), "utf8"), "invalid JavaScript !!!\n");
+  assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), /^version=9\.8\.0$/m);
+  assert.doesNotMatch(s.mark(), /adopted=/);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+
+  // A missing sibling mod, the sidebar's VERSION and the command intact.
+  rmSync(join(s.mods, "auto-tabs"), { recursive: true });
+  const sibling = s.run("--yes");
+  assert.equal(sibling.code, 0, sibling.err);
+  assert.match(sibling.out, /missing: mods\/auto-tabs/);
+  assert.match(sibling.out, /repaired mods\/auto-tabs: it was missing; installed 9\.9\.0/);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+
+  // A pack mod the mod manager switched off (moved to mods-disabled/) stays off.
+  const off = join(s.appHome, "mods-disabled", "md-menu");
+  mkdirSync(dirname(off), { recursive: true });
+  execFileSync("mv", [join(s.mods, "md-menu"), off]);
+  const checksOff = s.checks().length;
+  const clean = s.run("--yes");
+  assert.equal(clean.code, 0, clean.err);
+  assert.equal(existsSync(join(s.mods, "md-menu")), false, "a switched-off mod is not turned back on");
+  assert.equal(existsSync(join(off, "main.js")), true);
+  const ran = s.checks().slice(checksOff);
+  assert.equal(ran.length, PACK_MODS.length - 1, "every pack mod but the switched-off one is checked");
+  assert.equal(ran.some((c) => c.endsWith("/md-menu")), false);
+  assert.match(clean.out, /Automagik Herdr 9\.9\.0 is already up to date .*every file matches the release/);
+  assert.doesNotMatch(clean.out, /repaired|Done/);
+  assert.deepEqual(sums(), before, "Sheepdog, Pocket-Link and the personal layout are untouched");
+  assert.equal(s.checks().some((c) => /sheepdog|pocket-link/i.test(c)), false);
+});
+
+test("a same-version rerun whose herdr-app check fails exits 1 with the check's output, never up to date", (t) => {
+  const s = scratch(t);
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.bin, "herdr-app"), `${readFileSync(join(s.bin, "herdr-app"), "utf8")}case "$2" in */md-menu) printf 'main.js:3: SyntaxError\\n  at load\\n' >&2; exit 1 ;; esac\n`);
+  const r = s.run("--yes");
+  assert.equal(r.code, 1);
+  assert.match(r.out, /check FAILED: md-menu: main\.js:3: SyntaxError\n {8}at load\n/);
+  assert.match(r.err, /herdr-app check failed for a mod/);
+  assert.doesNotMatch(r.out, /up to date|Done/);
+});
+
+test("a clean same-version rerun checks every file and every mod, swaps nothing and says up to date", (t) => {
+  const s = scratch(t);
+  s.addHerdrApp();
+  s.show("automagik");
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const ino = lstatSync(s.pack).ino, mark = s.mark(), checksBefore = s.checks().length;
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Checksum: ok\.\n(  check passed: .*\n)+(.*\n)*Automagik Herdr 9\.9\.0 is already up to date/);
+  assert.equal(s.checks().length - checksBefore, PACK_MODS.length);
+  assert.doesNotMatch(r.out, /Downloading|Linked|repaired|missing|differs|Done/);
+  assert.equal(lstatSync(s.pack).ino, ino);
+  assert.equal(s.mark(), mark);
+  assert.equal(existsSync(join(s.state, "backup")), false);
+  assert.equal(existsSync(join(s.state, ".prev")), false);
+  // The command's link gone, the pack intact: linked again, and that is not "up to date".
+  rmSync(s.link);
+  const relinked = s.run("--yes");
+  assert.equal(relinked.code, 0, relinked.err);
+  assert.match(relinked.out, /Linked .*automagik-herdr\.\n(.*\n)*Done: Automagik Herdr 9\.9\.0\./);
+  assert.doesNotMatch(relinked.out, /up to date/);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  assert.equal(lstatSync(s.pack).ino, ino);
 });
 
 const HINT = /the sidebar appears after this:\n  herdr-app do layout\.switch '\{"name":"automagik"\}'\n$/;

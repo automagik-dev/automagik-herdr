@@ -16,8 +16,11 @@
 # alone, or with --adopt moved to automagik-herdr/backup/ first. Pocket Link is never touched.
 # It merges the pack's free keys, points the mod manager at the catalog, adds the `automagik`
 # layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
-# the `automagik-herdr` command into ~/.local/bin. Safe to run again. It never touches a
-# project's .herdr/bots.json or Herdr's settings. Apache-2.0.
+# the `automagik-herdr` command into ~/.local/bin. Safe to run again: a rerun of the installed
+# release downloads it all the same, checks every installed pack file against it, reinstalls a
+# missing or damaged folder (the damaged copy kept in backup/), puts back a missing automagik
+# layout and runs the checks again; it says "up to date" only when all of that passed. It never
+# touches a project's .herdr/bots.json or Herdr's settings. Apache-2.0.
 #
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
@@ -324,17 +327,13 @@ install() {
 
   installed=$(mark_get version)
   [ -n "$installed" ] || installed=none
-  target=$(cli_target)
-  # Up to date: this release, and the link ours to it (or the person's own, which stays).
-  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null && [ -n "$target" ] && [ -x "$target" ] \
-    && { [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] || { [ -L "$LINK" ] && ! link_ours; }; }; then
-    say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK)."
-    offer_switch
-    switch_hint
-    exit 0
-  fi
+  # This release already installed: its tarball is downloaded all the same, and every installed
+  # file is checked against it (update.mjs repair) before anything is called up to date.
+  same=no
+  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null; then same=yes; fi
 
-  say "Downloading Automagik Herdr $VERSION..."
+  if [ "$same" = yes ]; then say "Checking the installed Automagik Herdr $VERSION against the release..."
+  else say "Downloading Automagik Herdr $VERSION..."; fi
   curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
   if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
   sum=${sum%% *}
@@ -352,18 +351,37 @@ install() {
   for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js; do
     { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
   done
-  set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
-  if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
   rc=0
-  out=$(node "$TMP/x/spaces-agents/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
-  if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
-    why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
-    fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"
+  changed=yes
+  if [ "$same" = yes ]; then
+    out=$(node "$TMP/x/spaces-agents/update.mjs" repair --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>"$TMP/log") || rc=$?
+    if [ "$rc" = 2 ]; then
+      # A release whose updater has no `repair` command (cut before #44): it is installed again.
+      say "This release's updater cannot check the installed files; installing $VERSION again."
+      same=no
+      rc=0
+    elif [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
+      why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
+      fail "could not check the installed pack: ${why:-$out $(cat "$TMP/log")}"
+    else
+      sed 's/^/  /' "$TMP/log"
+      case $out in *'"changed":false'*) changed=no ;; esac
+      if [ "$changed" = yes ]; then say "Repaired the pack $VERSION in $MODS: what differed from the release is listed above."; fi
+    fi
   fi
-  sed 's/^/  /' "$TMP/log"
-  say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
-  if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
-    say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
+  if [ "$same" = no ]; then
+    set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
+    if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
+    out=$(node "$TMP/x/spaces-agents/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
+    if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
+      why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
+      fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"
+    fi
+    sed 's/^/  /' "$TMP/log"
+    say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
+    if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
+      say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
+    fi
   fi
   offer_switch
 
@@ -371,7 +389,9 @@ install() {
   mkdir -p "$BIN_DIR"
   target=$(cli_target)
   if [ -n "$target" ]; then chmod +x "$target"; fi
-  if [ -z "$target" ]; then
+  if [ -n "$target" ] && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ]; then
+    :
+  elif [ -z "$target" ]; then
     say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."
   elif [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
     say "Left $LINK alone: it is a file, not a link. Remove it and run this again to link automagik-herdr."
@@ -380,6 +400,7 @@ install() {
   else
     ln -sfn "$target" "$LINK"
     say "Linked $LINK."
+    changed=yes
   fi
   case ":${PATH}:" in
     *":$BIN_DIR:"*) ;;
@@ -387,11 +408,21 @@ install() {
   esac
 
   # ---- f. next ----
+  # A failed check or an unfinished step is never "Done" nor "up to date".
+  if [ "$rc" = 4 ]; then switch_hint; fail "the pack is installed, but a step after it did not finish (the warning above says what, and where the folders are)."; fi
+  if [ "$rc" = 3 ] && [ "$same" = yes ]; then
+    switch_hint
+    fail "herdr-app check failed for a mod (above): its output says what to fix. The files match release $VERSION."
+  fi
+  if [ "$rc" = 3 ]; then switch_hint; fail "herdr-app check failed for a mod (above); the pack is installed, and 'automagik-herdr update --rollback' swaps the kept set back."; fi
+  if [ "$same" = yes ] && [ "$changed" = no ]; then
+    say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK): every file matches the release."
+    switch_hint
+    return 0
+  fi
   say "Done: Automagik Herdr $VERSION. Open Herdr (or reload its mods), or in a project folder run:"
   say "  automagik-herdr create --kind=main --name=<name> --agent=claude && automagik-herdr start <name>"
   switch_hint
-  if [ "$rc" = 4 ]; then fail "the pack is installed, but a step after it did not finish (the warning above says what, and where the folders are)."; fi
-  if [ "$rc" = 3 ]; then fail "herdr-app check failed for a mod (above); the pack is installed, and 'automagik-herdr update --rollback' swaps the kept set back."; fi
 }
 
 main "$@"
