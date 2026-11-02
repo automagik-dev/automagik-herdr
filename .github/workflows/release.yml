@@ -5,8 +5,9 @@ name: Release
 # repository (0.N.P: scripts/version.mjs), committed as `chore(release): v<version>` and tagged
 # `v<version>` on dev, published as the GitHub release `v<version>` with
 #
-#   automagik-herdr-<version>.tgz   the pack at the tag: `git archive … v<version>:mods/spaces-agents`
-#   SHA256SUMS                      its sha256, which `automagik-herdr update` checks
+#   automagik-herdr-pack-<version>.tgz   the pack at the tag: every PACK_MODS folder of the tag's
+#                                        mods/ (never pocket-link) plus layouts/automagik.json
+#   SHA256SUMS                           its sha256, which install.sh and `automagik-herdr update` check
 #
 # and then main moves to the release commit (main holds released commits and nothing else; a
 # prerelease leaves it). The tag's subject records the kind ("Automagik Herdr <v>", or
@@ -81,7 +82,8 @@ jobs:
           published=yes
           if [[ -n "${last}" ]]; then
             if assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${last}" --jq '.assets[].name' 2> "${RUNNER_TEMP}/gh.err"); then
-              grep -qx "automagik-herdr-${last#v}.tgz" <<< "${assets}" && grep -qx SHA256SUMS <<< "${assets}" || published=partial
+              # v0.2.x releases name their tarball automagik-herdr-<v>.tgz, later ones automagik-herdr-pack-<v>.tgz.
+              grep -Eqx "automagik-herdr-(pack-)?${last#v}\.tgz" <<< "${assets}" && grep -qx SHA256SUMS <<< "${assets}" || published=partial
             elif grep -q 'HTTP 404' "${RUNNER_TEMP}/gh.err"; then
               published=no
             else
@@ -104,10 +106,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test 'test/*.test.mjs'
-          for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do
             node --check "$f"
           done
           node scripts/version.mjs check
+          node scripts/catalog.mjs --check
 
       - name: Version, commit and tag
         id: cut
@@ -117,6 +120,8 @@ jobs:
           version=$(node scripts/version.mjs next)
           node scripts/version.mjs set "${version}"
           node scripts/version.mjs check
+          # The marketplace index rides the release commit, regenerated from this tree.
+          node scripts/catalog.mjs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(release): v${version}"
@@ -160,9 +165,20 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          # From the tag, not the working tree: what was tagged is what ships.
+          # From the tag, not the working tree: what was tagged is what ships. The folder list is
+          # the tag's PACK_MODS; every other folder of the tag's mods/ but pocket-link must be in
+          # it, and the archive's top level must be exactly it plus layouts/ (update.mjs refuses
+          # anything else). Only those folders and the one layout go in: no other file.
           mkdir -p release
-          git archive --format=tar.gz --prefix=spaces-agents/ -o "release/automagik-herdr-${VERSION}.tgz" "v${VERSION}:mods/spaces-agents"
+          tgz="release/automagik-herdr-pack-${VERSION}.tgz"
+          git show "v${VERSION}:mods/spaces-agents/release.js" > "${RUNNER_TEMP}/release.mjs"
+          mapfile -t mods < <(node --input-type=module -e 'const { PACK_MODS } = await import(process.argv[1]); for (const m of PACK_MODS) console.log(m);' "${RUNNER_TEMP}/release.mjs")
+          tagged=$(git ls-tree --name-only "v${VERSION}:mods" | grep -vx pocket-link | sort)
+          [[ "${tagged}" == "$(printf '%s\n' "${mods[@]}" | sort)" ]] || { echo "::error::mods/ at v${VERSION} (${tagged//$'\n'/ }) is not PACK_MODS (${mods[*]})"; exit 1; }
+          git show "v${VERSION}:layouts/automagik.json" > "${RUNNER_TEMP}/automagik.json"
+          git archive --format=tar.gz -o "${tgz}" --prefix=layouts/ --add-file="${RUNNER_TEMP}/automagik.json" --prefix= "v${VERSION}:mods" -- "${mods[@]}"
+          top=$(tar -tzf "${tgz}" | cut -d/ -f1 | sort -u)
+          [[ "${top}" == "$(printf '%s\n' "${mods[@]}" layouts | sort)" ]] || { echo "::error::the archive's top level (${top//$'\n'/ }) is not PACK_MODS plus layouts"; exit 1; }
           (cd release && sha256sum -- * > SHA256SUMS)
           cat release/SHA256SUMS
 

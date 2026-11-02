@@ -3,15 +3,21 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.2.0 or later) instead of the latest
-#   ... | bash -s -- --uninstall      put the pack that was there before back
+#   ... | bash -s -- --version 1.2.3  a given release (v0.3.0 or later) instead of the latest
+#   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
+#   ... | bash -s -- --uninstall      put back what was there before
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
-# downloads the release's pack and SHA256SUMS, checks the hash, and installs the pack through
-# the pack's own update.mjs (the same entry checks and kept copy as `automagik-herdr update`).
-# It adds the pack's `automagik` layout when the app home has none, and links the `automagik-herdr`
-# command into ~/.local/bin. Safe to run again. It never touches a project's .herdr/bots.json
-# or Herdr's settings. Apache-2.0.
+# downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
+# mod and layouts/automagik.json), checks the hash before anything is written, and installs every
+# pack mod through the pack's own update.mjs: each folder staged, then swapped in, the replaced
+# ones kept together in <app home>/automagik-herdr/.prev. Its ownership record (the marker)
+# lists every folder it put in mods/; only those are ever replaced. Any other folder is left
+# alone, or with --adopt moved to automagik-herdr/backup/ first. Pocket Link is never touched.
+# It merges the pack's free keys, points the mod manager at the catalog, adds the `automagik`
+# layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
+# the `automagik-herdr` command into ~/.local/bin. Safe to run again. It never touches a
+# project's .herdr/bots.json or Herdr's settings. Apache-2.0.
 #
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
@@ -37,6 +43,7 @@ main() {
   MARK=$STATE/installed-by-install.sh
   BEFORE=$STATE/spaces-agents.before-install
   LAYOUT=$APP_HOME/layouts/automagik.json
+  REF=$STATE/automagik.json
   HINT=no
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
@@ -44,12 +51,14 @@ main() {
   CASK=penso/tap/herdr-gpui
 
   YES=0
+  ADOPT=0
   UNINSTALL=0
   WANT=
   while [ $# -gt 0 ]; do
     case $1 in
       --yes|-y) YES=1 ;;
       --uninstall) UNINSTALL=1 ;;
+      --adopt) ADOPT=1 ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -86,12 +95,14 @@ usage() {
   cat <<'EOF'
 Automagik Herdr installer
 
-  install.sh [--yes] [--version <v>]   install or update the pack and the automagik-herdr command
-  install.sh --uninstall [--yes]       put back the pack that was there before; remove the command
+  install.sh [--yes] [--version <v>] [--adopt]   install or update the pack and the automagik-herdr command
+  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.2.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.3.0 or later.
+--adopt replaces a pack-named mod this installer did not install, after moving it to
+<app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
 EOF
 }
 
@@ -110,8 +121,9 @@ ask() {
   return 1
 }
 
-# A line of the marker: `before=` is "kept" when a pack was there at the first install
-# (copied to $BEFORE) or "none"; `layout=added` when this script added $LAYOUT.
+# A line of the marker (the ownership record, release.js parseMarker): v2 has `version=`,
+# `mods=<comma list>`, `layout=added|kept`, `before=kept|none` and `adopted=<mod>:<path>,…`;
+# v0.2's v1 has no `mods=` (it installed spaces-agents only, its first pack copied to $BEFORE).
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
@@ -134,7 +146,7 @@ offer_switch() {
     && grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$APP_HOME/layouts/$shown.json"; then
     return 0
   fi
-  if [ -z "$shown" ] || [ ! -f "$PACK/layouts/automagik.json" ] || ! cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
+  if [ -z "$shown" ] || [ ! -f "$REF" ] || ! cmp -s "$LAYOUT" "$REF"; then
     HINT=yes
     return 0
   fi
@@ -156,29 +168,57 @@ switch_hint() {
 
 uninstall() {
   [ -f "$MARK" ] || { say "Nothing to uninstall: this installer did not install the pack in $MODS."; exit 0; }
-  [ ! -L "$PACK" ] || fail "$PACK is a symlink, not a pack this script installed: nothing was changed. Remove the link, then run --uninstall again."
-  before=$(mark_get before)
+  mods=$(mark_get mods)
+  adopted=$(mark_get adopted)
+  ref=$REF
+  if ! grep -q '^mods=' "$MARK"; then
+    # v1 (v0.2.x): spaces-agents only, the layout's reference inside it, its first pack in $BEFORE.
+    mods=spaces-agents
+    ref=$PACK/layouts/automagik.json
+    if [ "$(mark_get before)" = kept ] && [ -d "$BEFORE" ]; then adopted=spaces-agents:${BEFORE#"$STATE"/}; fi
+  fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
-  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$PACK/layouts/automagik.json" ] && cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
+  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi
-  mkdir -p "$STATE"
-  if [ -d "$BEFORE" ]; then
-    # The pack from before the first install; the installed one is kept as the rollback copy.
-    if [ -e "$PACK" ] && [ ! -L "$PACK" ]; then rm -rf "$STATE/spaces-agents.prev"; mv "$PACK" "$STATE/spaces-agents.prev"; fi
-    mv "$BEFORE" "$PACK"
-    say "Put back the pack that was there before the first install ($PACK); the installed one is kept in $STATE/spaces-agents.prev."
-  elif [ "$before" != none ] && [ -f "$STATE/spaces-agents.prev/main.js" ]; then
-    command -v node >/dev/null 2>&1 || fail "uninstalling needs node (the pack's update.mjs puts the old pack back)."
-    out=$(node "$PACK/update.mjs" rollback --mods "$MODS" </dev/null) || fail "could not put the old pack back: $out"
-    say "Put back the kept pack ($PACK); the installed one is kept in $STATE/spaces-agents.prev."
-  elif [ -d "$PACK" ] && [ ! -L "$PACK" ]; then
-    rm -rf "$STATE/spaces-agents.prev"
-    mv "$PACK" "$STATE/spaces-agents.prev"
-    say "Moved the pack out of $MODS (nothing was there before); it is kept in $STATE/spaces-agents.prev."
+  # The record's folders leave mods/ together as the kept set (never deleted); only names the
+  # pack can own, never Pocket Link, never a link.
+  next=$STATE/.prev-next
+  rm -rf "$next"
+  mkdir -p "$next"
+  moved=
+  IFS=,
+  for m in $mods; do
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    if [ -L "$MODS/$m" ]; then say "Left $MODS/$m: it is a link, not a folder this script installed."; continue; fi
+    [ -d "$MODS/$m" ] || continue
+    mv "$MODS/$m" "$next/$m"
+    moved=${moved:+$moved,}$m
+  done
+  unset IFS
+  if [ -n "$moved" ]; then
+    printf 'version=%s\nmods=%s\nbefore=none\n' "$(mark_get version)" "$moved" >"$next/.pack"
+    rm -rf "$STATE/.prev"
+    mv "$next" "$STATE/.prev"
+    say "Moved the pack out of $MODS ($moved); it is kept in $STATE/.prev."
+  else
+    rm -rf "$next"
   fi
+  # What the person had before: each adopted folder comes back, unless something is in its place.
+  IFS=,
+  for e in $adopted; do
+    m=${e%%:*}
+    p=${e#*:}
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    case $p in *..*|/*) continue ;; esac
+    if [ -d "$STATE/$p" ] && [ ! -e "$MODS/$m" ]; then
+      mv "$STATE/$p" "$MODS/$m"
+      say "Put back $MODS/$m, the one that was there before the install."
+    fi
+  done
+  unset IFS
   if [ -L "$LINK" ]; then rm -f "$LINK"; say "Removed $LINK."; fi
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
@@ -228,84 +268,64 @@ install() {
   say "Herdr: ok."
 
   # ---- d. the pack ----
+  # Nothing is written into the app home before the tarball matches SHA256SUMS.
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
   if [ -n "$WANT" ]; then base=$RELEASES/download/v$WANT; else base=$RELEASES/latest/download; fi
   curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
-  # The release names its tarball automagik-herdr-<version>.tgz; SHA256SUMS lists it.
-  TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
-  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-<version>.tgz."
-  VERSION=${TGZ#automagik-herdr-}
+  # The release names its tarball automagik-herdr-pack-<version>.tgz; SHA256SUMS lists it.
+  TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-pack-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
+  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a release before v0.3.0?)."
+  VERSION=${TGZ#automagik-herdr-pack-}
   VERSION=${VERSION%.tgz}
-  [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-$WANT.tgz."
+  [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-pack-$WANT.tgz."
 
-  installed=$(cat "$PACK/VERSION" 2>/dev/null || echo none)
+  installed=$(mark_get version)
+  [ -n "$installed" ] || installed=none
   target=$PACK/bin/automagik-herdr.mjs
-  if [ "$installed" = "$VERSION" ] && [ -f "$MARK" ] && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
-    say "Automagik Herdr $VERSION is already up to date ($PACK, $LINK)."
+  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null \
+    && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
+    say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK)."
     offer_switch
     switch_hint
     exit 0
   fi
 
-  mkdir -p "$STATE"
-  rm -rf "$BEFORE.tmp"
-  copied=no
-  laid=$(mark_get layout)
-  # What --uninstall puts back: "kept" (the pack there at the first install, copied once to
-  # $BEFORE and never overwritten) or "none". Later runs keep what the first one found.
-  if [ -f "$MARK" ]; then first=$(mark_get before); elif [ -e "$PACK" ] && [ ! -L "$PACK" ]; then first=kept; else first=none; fi
-
-  if [ "$installed" != "$VERSION" ]; then
-    say "Downloading Automagik Herdr $VERSION..."
-    curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
-    if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
-    sum=${sum%% *}
-    want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
-    [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
-    say "Checksum: ok."
-    # Only the installer's two files come out here, to run them; update.mjs then lists every
-    # entry, extracts beside mods/, checks again, keeps the old pack and swaps the new one in.
-    mkdir "$TMP/x"
-    tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js </dev/null 2>/dev/null \
-      || fail "$TGZ holds no spaces-agents/update.mjs: nothing was installed."
-    for f in update.mjs release.js; do
-      { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
-    done
-    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then
-      { cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; } \
-        || { rm -rf "$BEFORE.tmp"; fail "could not keep a copy of $PACK: nothing was installed."; }
-      copied=yes
-    fi
-    if ! out=$(node "$TMP/x/spaces-agents/update.mjs" install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>&1); then
-      why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
-      if [ "$copied" = yes ]; then rm -rf "$BEFORE"; fi
-      fail "nothing was installed: ${why:-$out}"
-    fi
-    say "Installed the pack $VERSION in $PACK."
-    if [ "$installed" != none ]; then say "The pack it replaced ($installed) is kept in $STATE/spaces-agents.prev: 'automagik-herdr update --rollback' swaps it back."; fi
-    if [ "$copied" = yes ]; then say "The pack from before the first install is kept in $BEFORE: 'install.sh --uninstall' puts it back."; fi
-    # The marker is written only here, by a run that installed the pack, beside the
-    # before-install copy: a pack already at this version (placed by hand) gets no marker,
-    # so --uninstall leaves it in mods/.
-    printf 'version=%s\nbefore=%s\n' "$VERSION" "$first" >"$MARK"
-    if [ "$laid" = added ]; then printf 'layout=added\n' >>"$MARK"; fi
-  elif [ ! -f "$MARK" ]; then
-    say "The pack in $PACK is already $VERSION and was not installed by this script: it is left as it is, and --uninstall won't move it."
+  say "Downloading Automagik Herdr $VERSION..."
+  curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
+  if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
+  sum=${sum%% *}
+  want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
+  [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
+  say "Checksum: ok."
+  # Only the installer's two files come out here, to run them; update.mjs then lists every
+  # entry, stages every folder beside mods/, checks again, keeps the replaced set and swaps.
+  mkdir "$TMP/x"
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js </dev/null 2>/dev/null \
+    || fail "$TGZ holds no spaces-agents/update.mjs: nothing was installed."
+  for f in update.mjs release.js; do
+    { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
+  done
+  set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
+  if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
+  rc=0
+  out=$(node "$TMP/x/spaces-agents/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
+  if [ "$rc" != 0 ] && [ "$rc" != 3 ]; then
+    why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
+    fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"
   fi
-
-  # ---- the automagik layout: added when the app home has none, then the switch offered ----
-  if [ -f "$PACK/layouts/automagik.json" ] && [ ! -e "$LAYOUT" ]; then
-    mkdir -p "$APP_HOME/layouts"
-    cp "$PACK/layouts/automagik.json" "$LAYOUT"
-    if [ -f "$MARK" ] && [ "$(mark_get layout)" != added ]; then printf 'layout=added\n' >>"$MARK"; fi
-    say "Added the automagik layout ($LAYOUT): Herdr's main layout with the Automagik sidebar."
+  sed 's/^/  /' "$TMP/log"
+  say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
+  if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
+    say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
   fi
   offer_switch
 
   # ---- e. the command ----
-  chmod +x "$target"
   mkdir -p "$BIN_DIR"
-  if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
+  case ",$(mark_get mods)," in *,spaces-agents,*) chmod +x "$target" ;; *) target= ;; esac
+  if [ -z "$target" ]; then
+    say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."
+  elif [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
     say "Left $LINK alone: it is a file, not a link. Remove it and run this again to link automagik-herdr."
   else
     ln -sfn "$target" "$LINK"
@@ -320,6 +340,7 @@ install() {
   say "Done: Automagik Herdr $VERSION. Open Herdr (or reload its mods), or in a project folder run:"
   say "  automagik-herdr create --kind=main --name=<name> --agent=claude && automagik-herdr start <name>"
   switch_hint
+  if [ "$rc" = 3 ]; then fail "herdr-app check failed for a mod (above); the pack is installed, and 'automagik-herdr update --rollback' swaps the kept set back."; fi
 }
 
 main "$@"

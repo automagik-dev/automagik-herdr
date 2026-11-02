@@ -120,7 +120,7 @@ test("nextCheckIn and noticeFor: retry after RETRY_MS, then every CHECK_EVERY_MS
 const release = (version) => ({
   tag_name: `v${version}`, draft: false, prerelease: false, html_url: `https://github.com/x/releases/tag/v${version}`,
   assets: [
-    { name: `automagik-herdr-${version}.tgz`, browser_download_url: `https://dl.test/automagik-herdr-${version}.tgz` },
+    { name: `automagik-herdr-pack-${version}.tgz`, browser_download_url: `https://dl.test/automagik-herdr-pack-${version}.tgz` },
     { name: "SHA256SUMS", browser_download_url: "https://dl.test/SHA256SUMS" },
   ],
 });
