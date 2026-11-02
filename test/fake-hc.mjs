@@ -67,7 +67,7 @@ switch (words[0]) {
     const address = `t${state.next ?? 100}`;
     state.next = (state.next ?? 100) + 1;
     state.terminals.push({ address, name, cwd, labels, parent, state: "live", created_ms: Date.now(),
-      foreground: { argv, cwd }, status: { app: argv[0] === "claude" ? "claude-code" : argv[0], state: "working" } });
+      pid: 9000 + Number(address.slice(1)), foreground: { argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: argv[0] === "claude" ? "claude-code" : argv[0], state: "working" } });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();

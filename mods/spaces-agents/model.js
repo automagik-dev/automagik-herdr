@@ -66,6 +66,21 @@ const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x)
 const isText = (x) => typeof x === "string" && x.trim() !== "";
 const isWave = (x) => Number.isInteger(x) && x > 0;
 
+/** The worker fields a bot may set (`worker: { agent?, model?, effort? }`), each optional text. */
+export const WORKER_FIELDS = ["agent", "model", "effort"];
+
+/**
+ * Why a bot's `worker` (its workers' defaults) can't be used, or null when it is absent or
+ * fine: an object whose agent, model and effort, where given, are non-empty text. Other keys
+ * in it are kept as they are.
+ */
+export function workerProblem(worker) {
+  if (worker === undefined) return null;
+  if (!isObject(worker)) return "worker is not an object";
+  const bad = WORKER_FIELDS.filter((k) => worker[k] !== undefined && !isText(worker[k]));
+  return bad.length ? `worker ${bad.join(", ")} not text` : null;
+}
+
 /**
  * Reads a definitions file for showing it. Throws when the text is not a version-1 file
  * at all (not JSON, no `bots` array, another version). Inside it, an entry with no usable
@@ -116,6 +131,8 @@ export function parseBots(text) {
     if (bot.agent !== undefined && !isText(bot.agent)) delete bot.agent;
     if (!bot.agent && !bot.planned) warnings.push(`${where}: no coding agent`);
     if (bot.model !== undefined && typeof bot.model !== "string") delete bot.model;
+    const workerWhy = workerProblem(bot.worker);
+    if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
     if (bot.rank !== undefined && !RANKS.includes(bot.rank)) {
       warnings.push(`${where}: unknown rank ${JSON.stringify(bot.rank)}; ignored (one of ${RANKS.join(", ")})`);
       delete bot.rank;
@@ -211,6 +228,8 @@ export function checkBots(file, before = null) {
     if (b.kind === "main" && b.lead !== undefined) errors.push(`${at}: a main bot has no lead`);
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
     if (b.rank !== undefined && !RANKS.includes(b.rank)) errors.push(`${at}: unknown rank ${JSON.stringify(b.rank)}`);
+    const workerWhy = workerProblem(b.worker);
+    if (workerWhy) errors.push(`${at}: ${workerWhy}`);
   }
   const mains = file.bots.filter((b) => b?.kind === "main").length;
   if (mains !== 1) errors.push(`${mains} main bots; a project has exactly one`);
@@ -323,8 +342,9 @@ export function newCategoryId(title, categories = []) {
  * A copy of `raw` (parseBots' raw file, or a new one) with one bot created or edited, the
  * Create form's write-back. `entry` holds every field the form edits; an optional one it
  * leaves out or empty is removed (planned, lead, category, agent, model); other keys the
- * stored entry had are kept. `rank` (A16) is removed only when `entry` names it empty, so a
- * front end that doesn't edit ranks keeps the stored one.
+ * stored entry had are kept. `rank` (A16) and `worker` are removed only when `entry` names
+ * them empty, so a front end that doesn't edit them (the form has no worker fields) keeps the
+ * stored ones; a `worker` with none of its fields left is removed too.
  * A lead equal to the main bot is stored as no lead; a category goes only with the main bot
  * as lead; `newCategory` ({ title, sub }) is added to the categories and used.
  */
@@ -349,6 +369,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
+  if ("worker" in bot && (!isObject(bot.worker) || Object.keys(bot.worker).length === 0)) delete merged.worker;
   if (i >= 0) out.bots[i] = merged; else out.bots.push(merged);
   return out;
 }
