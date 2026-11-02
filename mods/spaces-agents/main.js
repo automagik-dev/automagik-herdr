@@ -547,8 +547,8 @@ export default class Spaces extends View {
         .on_click((_e, cx) => this.openHelper(r, cx))
         .child(pic)
         .child(div().flex_1().min_w(0).truncate().text_color(shown ? t.foreground : t.muted).child(h.name))
-        .when(Boolean(h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10).text_color(t.dim)
-          .child([h.model, h.effort].filter(Boolean).join(" · "))))
+        .when(Boolean(h.template || h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10)
+          .text_color(t.dim).child([h.template, h.model, h.effort].filter(Boolean).join(" · "))))
         .when(h.terminal.includes("/"), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(h.terminal.split("/")[0])))
         .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) })));
   }
