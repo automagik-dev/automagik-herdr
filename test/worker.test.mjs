@@ -298,3 +298,13 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(sessionChange(get, "not json"), null);
   assert.equal(sessionChange(null, JSON.stringify({ session_id: "s2" })), null);
 });
+
+test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with hc kill once merged", async () => {
+  const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/spaces-agents/briefingText.mjs");
+  const file = parseBots(JSON.stringify(team())).file;
+  const text = briefingText({ self: { ...file.bots[2], instructions: "x".repeat(4000) }, file });
+  assert.ok(text.includes(WORKER_LINE));
+  assert.match(WORKER_LINE, /automagik-herdr worker/);
+  assert.match(WORKER_LINE, /hc kill/);
+  assert.ok(text.length <= BRIEFING_LIMIT);
+});

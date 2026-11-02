@@ -6,6 +6,11 @@
 
 import { effectiveLead, MAX_INSTRUCTIONS } from "./model.js";
 
+/** How a bot works (bot workers): it writes no code; one worker per task does. */
+export const WORKER_LINE = "You write no code yourself: for each task start one worker with "
+  + "`automagik-herdr worker \"<task>\" --branch <branch>` (it runs in the task's worktree, under your pane), "
+  + "check its result, and end it with `hc kill <terminal>` once the task merges.";
+
 /** The block stays under Claude Code's 10,000-character cap on a hook's output. */
 export const BRIEFING_LIMIT = 9900;
 /** The longest latest report shown for one member. */
@@ -68,6 +73,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) head.push("Instructions:", shown.trim());
+  head.push(WORKER_LINE);
   const tail = [];
 
   if (lead) {

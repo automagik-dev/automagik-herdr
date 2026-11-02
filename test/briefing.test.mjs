@@ -213,6 +213,13 @@ if (a[0] === "ls") {
   out({ machines: [], terminals: all.filter((t) => i < 0 || t.labels?.[k] === v).map(row) });
 } else if (a[0] === "get" && fx.terminals[a[1]]) out(fx.terminals[a[1]]);
 else if (a[0] === "read" && fx.terminals[a[1]]) out({ text: fx.screens?.[a[1]] ?? "", complete: true, how: "screen" });
+else if (a[0] === "label" && fx.terminals[a[1]]) {
+  const t = fx.terminals[a[1]];
+  for (const kv of a.slice(2)) t.labels[kv.slice(0, kv.indexOf("="))] = kv.slice(kv.indexOf("=") + 1);
+  (fx.labelled ??= []).push(a.slice(1));
+  require("fs").writeFileSync(process.env.FAKE_HC, JSON.stringify(fx));
+  out({ address: t.address, labels: t.labels });
+}
 else { process.stderr.write("not_found"); process.exit(1); }
 };
 // fx.slow: addresses or label values whose calls hang (a machine that doesn't answer).
@@ -251,12 +258,17 @@ async function scratch(t) {
   chmodSync(join(bin, "hc"), 0o755);
   const fixture = join(root, "hc.json");
   writeFileSync(fixture, JSON.stringify(FIXTURE));
-  const brief = async (env) => {
-    const r = await run(process.execPath, [SCRIPT], {
+  // `input`: the hook's stdin, then closed (as Claude Code sends it); none: stdin left open.
+  const brief = async (env, input) => {
+    const options = {
       env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
         HERDR_BRIEFING_TIME_SCALE: String(SCALE), ...env },
+    };
+    if (input === undefined) return run(process.execPath, [SCRIPT], options);
+    return new Promise((resolve, reject) => {
+      const child = execFile(process.execPath, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
+      child.stdin.end(input);
     });
-    return r;
   };
   return { root, main, tree, bin, brief };
 }
@@ -291,6 +303,37 @@ test("briefing.mjs: silent for a bot of a project with no bots.json, and for a p
   const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree });
   assert.equal(r.stdout, "");
   assert.match(r.stderr, /^automagik-herdr briefing: .+\n$/); // one line, exit 0 (run() would reject otherwise)
+});
+
+test("briefing.mjs: a new Claude session is labelled on its terminal and logged once; the briefing is unchanged", async (t) => {
+  const { root, tree, brief } = await scratch(t);
+  const app = join(root, "app");
+  const ledger = join(app, "automagik-herdr", "workers.jsonl");
+  const input = JSON.stringify({ session_id: "s-1", transcript_path: "/tmp/s-1.jsonl", hook_event_name: "UserPromptSubmit" });
+  const plain = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app });
+  const first = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app }, input);
+  assert.equal(first.stdout, plain.stdout, "the briefing is the same with or without a session");
+  assert.equal(first.stderr, "");
+  const fx = () => JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
+  assert.equal(fx().terminals.t1.labels["agent.session"], "s-1");
+  const rows = () => readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual({ ...rows()[0], at: undefined }, { event: "session", terminal: "t1", session: "s-1", transcript: "/tmp/s-1.jsonl", at: undefined });
+  // The same session next turn: no label call, no row. A new one (after /clear): both again.
+  await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app }, input);
+  assert.equal(rows().length, 1);
+  assert.equal(fx().labelled.length, 1);
+  await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app }, JSON.stringify({ session_id: "s-2" }));
+  assert.equal(rows().length, 2);
+  assert.equal(fx().terminals.t1.labels["agent.session"], "s-2");
+  // A worker's pane (no bot label, no project): no briefing, but its session is joined.
+  const worker = await brief({ HC_TERMINAL_ID: "t5", HERDR_APP_HOME: app }, JSON.stringify({ session_id: "w-1" }));
+  assert.equal(worker.stdout, "");
+  assert.equal(rows()[2].terminal, "t5");
+  // A ledger that can't be written: silent, and the briefing still prints.
+  writeFileSync(join(root, "blocked"), "a file, not a folder");
+  const broken = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: join(root, "blocked") }, JSON.stringify({ session_id: "s-3" }));
+  assert.equal(broken.stdout, plain.stdout);
+  assert.equal(broken.stderr, "");
 });
 
 test("briefing.mjs: no hc on PATH: nothing printed, one stderr line, exit 0", async (t) => {

@@ -85,6 +85,17 @@ test("helpersOf: the parent tree, depth first, never a known bot's terminal or w
   assert.deepEqual(got.map((h) => [h.terminal, h.name, h.depth]), [["h1", "build", 0], ["h2", "reviewer", 1], ["h4", "Codex", 0]]);
 });
 
+test("helpersOf: a bot's worker (worker.of, task, no bot label) folds under its pane with its model and effort", () => {
+  const terms = [
+    T("t1", { labels: { bot: "b-devdevdevd" } }),
+    T("w1", { parent: "t1", name: "feat-login", labels: { "worker.of": "b-devdevdevd", task: "feat/login", "worker.model": "opus", "worker.effort": "high" } }),
+    T("w2", { parent: "t1", name: "fix-x", labels: { "worker.of": "b-devdevdevd", task: "fix/x" } }),
+  ];
+  const got = helpersOf(terms, "t1", new Set(["b-devdevdevd"]));
+  assert.deepEqual(got.map((h) => [h.terminal, h.name, h.depth, h.model, h.effort]),
+    [["w1", "feat-login", 0, "opus", "high"], ["w2", "fix-x", 0, null, null]]);
+});
+
 test("buildTree: the C7 project as plain data", () => {
   const terms = [
     T("t1", { labels: { bot: "b-mainmainma" }, status: "working" }),
