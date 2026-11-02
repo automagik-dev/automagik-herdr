@@ -10,7 +10,7 @@ mods/*/LICENSE where a mod derives from one):
                         LICENSE-automagik and LICENSE-herdr (the bot view, characters, form,
                         Start/Attach and briefing are this pack's). Its layout is the root
                         layouts/automagik.json, so Herdr does not dock a second sidebar.
-  mods/sidebar-chrome   from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg
+  mods/sidebar-chrome   from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg, bot.svg and layers.svg (Lucide, ISC; bot.svg as Herdr ships it in frame/welcome)
   mods/md-menu          from Herdr's `menu` 0.1.10, with the Markdown renderer merged in from
                         ohneda/herdr-markdown-browser (MIT; notice below) — changed: main.js,
                         mod.json; added: marks.js, open.js, LICENSE-upstream
