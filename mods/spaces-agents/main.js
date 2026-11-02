@@ -17,7 +17,7 @@ import { discoverProjects, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
-import { startBot, attachBot, modelTexts } from "./launch.js";
+import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, workerTabName, openWorkerTab } from "./workerTab.js";
@@ -716,7 +716,8 @@ export default class Spaces extends View {
     if (c === "refresh") return this.refreshBots(cx);
     if (c === "new-bot") return openBotForm({ form: "create" });
     const terminal = args.terminal ?? focused()?.terminal ?? null;
-    const bot = args.bot ?? terminals().find((k) => k.address === terminal)?.labels?.[BOT_LABEL] ?? null;
+    // The focused pane's bot is the attach ledger's answer (automagik-herdr whois), never its label.
+    const bot = args.bot ?? (terminal && c !== "attach" ? await botOfTerminal(terminal) : null);
     const title = { edit: "Edit bot", start: "Start bot", attach: "Attach as bot" }[c];
     if (c === "attach" && !terminal) return notify({ title, body: "Focus the pane to attach first.", level: "warning" });
     // Attach with no bot named: the picker, for the pane.

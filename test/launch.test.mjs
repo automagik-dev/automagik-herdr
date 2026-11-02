@@ -1,17 +1,17 @@
 // Start and Attach: the pure argument building and messages (launchArgs.js), then launch.js
-// over the Herdr stand-ins with a scratch git project. hc itself is never run: the stub
-// answers `hc get` and `hc run` and records every call.
+// over the Herdr stand-ins with a scratch git project: it runs the real CLI against a fake hc
+// (test/fake-hc.mjs) first on PATH. The real hc is never run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, labelMoves, attachRefusal, parseCommand } from "../mods/spaces-agents/launchArgs.js";
-const { startBot, attachBot, liveTerminalOf } = await import("../mods/spaces-agents/launch.js");
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand } from "../mods/spaces-agents/launchArgs.js";
+const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/spaces-agents/launch.js");
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -76,12 +76,6 @@ test("attach refusal names both folders and the fix; same project passes", () =>
   assert.equal(attachRefusal({ botName: "G", projectKey: "/repos/a", sessionFolder: "/repos/a-wt", sessionKey: "/repos/a" }), null);
 });
 
-test("label moves: off every other holder, then onto the target", () => {
-  assert.deepEqual(labelMoves(["t3", "t5", "t3", "t9"], "t9", ID.main),
-    [["label", "t3", "bot="], ["label", "t5", "bot="], ["label", "t9", "bot=b-aaaaaaaaaa"]]);
-  assert.deepEqual(labelMoves([], "t9", ID.main), [["label", "t9", "bot=b-aaaaaaaaaa"]]);
-});
-
 test("duplicates: the newest by created_ms counts; the live rule reads the foreground", () => {
   assert.equal(newest([{ address: "t1", created_ms: 5 }, { address: "t2", created_ms: 9 }, { address: "t3", created_ms: 7 }]).address, "t2");
   assert.equal(agentInForeground({ foreground: { argv: ["/bin/zsh", "-l"] } }), false);
@@ -99,211 +93,122 @@ test("commands: name with optional JSON or key=value arguments", () => {
   assert.deepEqual(parseCommand("attach bot=b-x terminal=t7"), { name: "attach", args: { bot: "b-x", terminal: "t7" } });
 });
 
-// ---- launch.js over the stand-ins ----
+// ---- launch.js over the stand-ins: the sidebar runs the real CLI ----
+// launch.js execs `env HERDR_APP_HOME=<app> sh <app>/mods/spaces-agents/bin/run.sh <cli> …`
+// through the stub's exec (a real execFile). The scratch app home's mods/spaces-agents links
+// to this checkout, and this process's PATH starts with a fake hc (test/fake-hc.mjs), its HOME
+// a scratch one, so the CLI never reaches a real hc, window or app home.
 
 const run = promisify(execFile);
-async function project(t, file = team()) {
+const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const MOD = new URL("../mods/spaces-agents", import.meta.url).pathname;
+const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+const saved = { PATH: process.env.PATH, HOME: process.env.HOME, HC_FAKE_STATE: process.env.HC_FAKE_STATE,
+  HC_FAKE_LOG: process.env.HC_FAKE_LOG, HC_TERMINAL_ID: process.env.HC_TERMINAL_ID, HERDR_APP_HOME: process.env.HERDR_APP_HOME };
+
+async function world(t, { file = team(), terminals = () => [] } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
   const main = join(root, "proj");
   mkdirSync(join(main, ".herdr"), { recursive: true });
   await run("git", ["init", "-q", main]);
   await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: main });
-  const tree = join(root, "proj-wt");
-  await run("git", ["worktree", "add", "-q", "-b", "wt", tree], { cwd: main });
-  const other = join(root, "other");
-  mkdirSync(other);
   writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(file));
-  return { main, tree, other };
-}
-const gets = {};
-function reset() {
-  for (const k of Object.keys(gets)) delete gets[k];
-  Object.assign(state, {
-    spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [], terminals: [], focused: null, hcCalls: [], runs: [],
-    agents: [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }],
-    hcAnswer: (args) => {
-      if (args[0] === "get") return gets[args[1]] ? { code: 0, stdout: JSON.stringify(gets[args[1]]), stderr: "" } : { code: 1, stdout: "", stderr: "no such terminal" };
-      if (args[0] === "run") return { code: 0, stdout: JSON.stringify({ address: "t42" }), stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    },
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
+  const home = join(root, "home");
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  const app = join(root, "app");
+  mkdirSync(join(app, "mods"), { recursive: true });
+  symlinkSync(MOD, join(app, "mods/spaces-agents"));
+  const statePath = join(root, "hc.json");
+  const logPath = join(root, "hc.log");
+  writeFileSync(statePath, JSON.stringify({ terminals: terminals(main), next: 100 }));
+  writeFileSync(logPath, "");
+  Object.assign(process.env, { PATH: `${bin}:${saved.PATH}`, HOME: home, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath });
+  delete process.env.HC_TERMINAL_ID;
+  delete process.env.HERDR_APP_HOME;
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    rmSync(root, { recursive: true, force: true });
   });
+  Object.assign(state, { spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [], terminals: [], focused: null,
+    hcCalls: [], runs: [], notes: [], appHome: app, agents: [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }] });
+  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
+  const setHc = (st) => writeFileSync(statePath, JSON.stringify(st));
+  const ledger = () => { try { return readFileSync(join(app, "automagik-herdr/attach.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+  return { root, main, app, calls, hcState, setHc, ledger };
 }
-const row = (address, labels, extra = {}) => ({ address, labels, state: "live", program: { key: "claude", agent: true }, ...extra });
+const term = (address, { bot: b, cwd = "/x", argv = ["claude"], created = 1 } = {}) => ({ address, name: address, cwd, state: "live", parent: null,
+  created_ms: created, labels: b ? { bot: b } : {}, foreground: { argv, cwd }, status: { app: "claude-code", state: "idle" } });
 
-test("liveTerminalOf: label plus an agent in front; a shell doesn't count; duplicates read with hc get", async () => {
-  reset();
-  state.terminals = [row("t1", { bot: ID.main }), row("t2", { bot: ID.cap }, { program: { key: "shell", agent: false } })];
-  assert.deepEqual(await liveTerminalOf(ID.main), { terminal: "t1", duplicate: false });
-  assert.equal(await liveTerminalOf(ID.cap), null);
-  assert.deepEqual(state.hcCalls, []);
-  // No program on the rows: hc get's foreground decides.
-  state.terminals = [row("t4", { bot: ID.dev }, { program: undefined }), row("t5", { bot: ID.dev }, { program: undefined }), row("t6", { bot: ID.dev }, { program: undefined })];
-  Object.assign(gets, {
-    t4: { address: "t4", created_ms: 10, foreground: { argv: ["claude"] } },
-    t5: { address: "t5", created_ms: 30, foreground: { argv: ["claude"] } },
-    t6: { address: "t6", created_ms: 99, foreground: { argv: ["/bin/zsh"] } },
-  });
-  assert.deepEqual(await liveTerminalOf(ID.dev), { terminal: "t5", duplicate: true });
+test("the fake hc is the one the CLI runs here: never the real one", async (t) => {
+  await world(t);
+  const { stdout } = await run("sh", ["-c", "command -v hc"]);
+  assert.match(stdout.trim(), /automagik-herdr-.*\/bin\/hc$/);
 });
 
-test("startBot: a member with a live lead runs under it, in the project's space and active tab", async (t) => {
-  reset();
-  const { main } = await project(t);
+test("startBot runs the CLI: hc run in the project's space and tab, an attach row by start; the sidebar sets no label", async (t) => {
+  const w = await world(t, { terminals: (main) => [term("t7", { bot: ID.cap, cwd: main })] });
   state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] },
-    { id: "s1", folder: main, machine: null, active: false, tabs: [{ id: "a", active: false }, { id: "b", active: true }] }];
-  state.terminals = [row("t7", { bot: ID.cap }, { name: "dev" })];
-  const r = await startBot(main, ID.dev);
-  assert.deepEqual(r, { terminal: "t42" });
-  const runArgs = state.hcCalls.find((a) => a[0] === "run");
-  assert.deepEqual(runArgs, ["run", "--bg", "--json", "--name", "dev-cccc", "--cwd", main, "--label", `bot=${ID.dev}`,
-    "--label", "herdr.space=s1", "--label", "herdr.tab=b", "--parent", "t7", "--outlive-parent", "--", "claude"]);
-  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: null }]);
+    { id: "s1", folder: w.main, machine: null, active: false, tabs: [{ id: "a", active: false }, { id: "b", active: true }] }];
+  const r = await startBot(w.main, ID.dev);
+  assert.deepEqual(r, { terminal: "t100" });
+  const runArgs = w.calls().find((a) => a[0] === "run");
+  assert.ok(runArgs.includes(`bot=${ID.dev}`) && runArgs.includes("herdr.space=s1") && runArgs.includes("herdr.tab=b"));
+  assert.deepEqual(runArgs.slice(runArgs.indexOf("--parent"), runArgs.indexOf("--parent") + 3), ["--parent", "t7", "--outlive-parent"]);
+  const rows = w.ledger();
+  assert.deepEqual(rows.map((x) => [x.event, x.bot, x.terminal, x.by]), [["attach", ID.cap, "t7", "import"], ["attach", ID.dev, "t100", "start"]]);
+  assert.deepEqual(state.hcCalls, [], "the sidebar itself calls no hc: no label, no run");
+  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: w.main, machine: null }]);
+  // Started already: the ledger's pane is focused, never a second one.
+  assert.deepEqual(await startBot(w.main, ID.dev), { focused: "t100" });
+  assert.deepEqual(state.runs, [["agent.focus", { terminal: "t100" }]]);
+  assert.equal(w.calls().filter((a) => a[0] === "run").length, 1);
+  assert.match((await startBot(w.main, ID.plan)).refused, /planned/);
 });
 
-test("startBot: lead down -> --no-parent; a live bot is focused, not started; planned refused", async (t) => {
-  reset();
-  const { main } = await project(t);
-  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
-  await startBot(main, ID.dev);
-  const runArgs = state.hcCalls.find((a) => a[0] === "run");
-  assert.ok(runArgs.includes("--no-parent") && !runArgs.includes("--parent"));
-  assert.equal(runArgs.some((a) => a.startsWith("herdr.tab=")), false);
-  reset();
-  state.terminals = [row("t3", { bot: ID.main })];
-  assert.deepEqual(await startBot(main, ID.main), { focused: "t3" });
-  assert.deepEqual(state.runs, [["agent.focus", { terminal: "t3" }]]);
-  assert.equal(state.hcCalls.some((a) => a[0] === "run"), false);
-  assert.match((await startBot(main, ID.plan)).refused, /planned/);
+test("startBot: two Starts at once open one pane", async (t) => {
+  const w = await world(t);
+  const [a, b] = await Promise.all([startBot(w.main, ID.main), startBot(w.main, ID.main)]);
+  assert.deepEqual([a, b].map((r) => r.terminal ?? r.refused).sort(), [`${ID.main} is already starting.`, "t100"]);
+  assert.equal(w.calls().filter((c) => c[0] === "run").length, 1);
 });
 
-test("attachBot: a Claude pane whose session is in another project is refused, nothing written", async (t) => {
-  reset();
-  const { main, other } = await project(t);
-  state.terminals = [row("t1m", {}, { cwd: "/Users/x/workspace" })];
-  gets.t1m = { address: "t1m", foreground: { argv: ["claude", "--resume", "s"], cwd: other }, labels: {} };
-  const r = await attachBot(main, ID.main, "t1m");
-  assert.match(r.refused, new RegExp(`runs in ${other}`));
-  assert.match(r.refused, new RegExp(`project ${main}`));
-  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), []);
-  assert.equal(state.shared.get("spaces-agents.projects"), undefined);
+test("attachBot runs the CLI: an attach row by attach; a bot attached elsewhere is refused naming it, never moved", async (t) => {
+  const w = await world(t, { terminals: (main) => [term("t1", { bot: ID.main, cwd: main }), term("t2", { cwd: main }), term("t3", { cwd: main })] });
+  assert.deepEqual(await attachBot(w.main, ID.cap, "t2"), { ok: true });
+  assert.deepEqual(w.ledger().at(-1) && [w.ledger().at(-1).event, w.ledger().at(-1).bot, w.ledger().at(-1).terminal, w.ledger().at(-1).by],
+    ["attach", ID.cap, "t2", "attach"]);
+  assert.equal(w.hcState().terminals.find((x) => x.address === "t2").labels.bot, ID.cap);
+  const moved = await attachBot(w.main, ID.cap, "t3");
+  assert.match(moved.refused, /Captain \(b-bbbbbbbbbb\) is attached to t2 .*--move/);
+  const taken = await attachBot(w.main, ID.dev, "t1");
+  assert.match(taken.refused, /t1 already plays Genie \(b-aaaaaaaaaa\)/);
+  assert.match((await attachBot(w.main, ID.dev, "vps/t9")).refused, /this computer's panes only/);
+  assert.deepEqual(state.hcCalls, []);
 });
 
-test("attachBot: a Claude session in the project's worktree passes; the label moves off the old holder", async (t) => {
-  reset();
-  const { main, tree } = await project(t);
-  state.terminals = [row("t1m", {}, { cwd: "/Users/x/workspace" }), row("t3", { bot: ID.main })];
-  gets.t1m = { address: "t1m", foreground: { argv: ["claude"], cwd: tree }, labels: {} };
-  assert.deepEqual(await attachBot(main, ID.main, "t1m"), { ok: true });
-  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t3", "bot="], ["label", "t1m", `bot=${ID.main}`], ["label", "t1m", "role=main"]]);
-  assert.deepEqual(await attachBot(main, ID.main, "far/t9"), { refused: "Attach works on this computer's panes only; far/t9 is on another machine." });
+test("liveTerminalOf and botOfTerminal follow the ledger: a relabel moves nothing", async (t) => {
+  const w = await world(t, { terminals: (main) => [term("t1", { bot: ID.main, cwd: main }), term("t2", { cwd: main })] });
+  assert.deepEqual(await liveTerminalOf(ID.main), { terminal: "t1", duplicate: false });
+  assert.equal(await botOfTerminal("t1"), ID.main);
+  const st = w.hcState();
+  st.terminals[0].labels = {};
+  st.terminals[1].labels = { bot: ID.main };
+  w.setHc(st);
+  assert.deepEqual(await liveTerminalOf(ID.main), { terminal: "t1", duplicate: false });
+  assert.equal(await botOfTerminal("t2"), null);
+  assert.equal(await liveTerminalOf(ID.cap), null);
+  assert.equal(await botOfTerminal("vps/t1"), null);
 });
 
-// ---- fix loop 1 ----
-
-test("startBot: two Starts at once open one pane; a Start right after focuses the new one", async (t) => {
-  reset();
-  const { main } = await project(t);
-  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
-  const [a, b] = await Promise.all([startBot(main, ID.main), startBot(main, ID.main)]);
-  assert.equal(state.hcCalls.filter((x) => x[0] === "run").length, 1);
-  assert.deepEqual([a, b].map((r) => Object.keys(r)[0]).sort(), ["refused", "terminal"]);
-  assert.match((a.refused ?? b.refused), /already starting/);
-  // The new pane has the label but no agent in front yet: focused, not started twice.
-  state.terminals = [row("t42", { bot: ID.main }, { program: { key: "shell", agent: false } })];
-  assert.deepEqual(await startBot(main, ID.main), { focused: "t42" });
-  assert.equal(state.hcCalls.filter((x) => x[0] === "run").length, 1);
-});
-
-test("attachBot: a pane already playing another bot is refused, naming it", async (t) => {
-  reset();
-  const { main } = await project(t);
-  state.terminals = [row("t5", { bot: ID.cap }, { cwd: main })];
-  gets.t5 = { address: "t5", foreground: { argv: ["claude"], cwd: main } };
-  const r = await attachBot(main, ID.main, "t5");
-  assert.match(r.refused, /t5 already plays Captain \(b-bbbbbbbbbb\)/);
-  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), []);
-});
-
-test("attachBot: when the label came off the old pane but the new write fails, it says the bot has no pane", async (t) => {
-  reset();
-  const { main } = await project(t);
-  state.terminals = [row("t1", {}, { cwd: main }), row("t3", { bot: ID.main })];
-  gets.t1 = { address: "t1", foreground: { argv: ["claude"], cwd: main } };
-  const answer = state.hcAnswer;
-  state.hcAnswer = (args) => (args[0] === "label" && args[1] === "t1" ? { code: 1, stdout: "", stderr: "core away" } : answer(args));
-  const r = await attachBot(main, ID.main, "t1");
-  assert.match(r.refused, /^Genie has no pane now \(its label came off t3\); attach again\. hc said: core away$/);
-});
-
-test("liveTerminalOf: another machine's labelled terminal doesn't count", async () => {
-  reset();
-  state.terminals = [row("far/t2", { bot: ID.main })];
+test("with no CLI under the app home, Start and Attach say so and nothing runs", async (t) => {
+  await world(t);
+  state.appHome = join(tmpdir(), "no-such-app-home-for-automagik-herdr");
+  const r = await startBot("/p", ID.main);
+  assert.ok(r.refused, "refused");
   assert.equal(await liveTerminalOf(ID.main), null);
-});
-
-test("startBot: a pinned model goes to the agent with its flag (A12); a pin the agent doesn't list is skipped with a note", async (t) => {
-  reset();
-  const pinned = team();
-  pinned.bots.find((b) => b.id === ID.cap).model = "claude-opus-5-5";
-  pinned.bots.find((b) => b.id === ID.dev).model = "Opus 5.5";
-  const { main } = await project(t, pinned);
-  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
-  state.notes = [];
-  await startBot(main, ID.cap);
-  const capRun = state.hcCalls.find((a) => a[0] === "run");
-  assert.deepEqual(capRun.slice(capRun.indexOf("--")), ["--", "claude", "--model", "claude-opus-5-5"]);
-  const pinNotes = () => state.notes.filter((n) => /pinned to/.test(n.body));
-  assert.deepEqual(pinNotes(), []);
-  state.hcCalls = [];
-  await startBot(main, ID.dev);
-  const devRun = state.hcCalls.find((a) => a[0] === "run");
-  assert.deepEqual(devRun.slice(devRun.indexOf("--")), ["--", "claude"]);
-  assert.equal(pinNotes().length, 1);
-  assert.match(pinNotes()[0].body, /pinned to "Opus 5.5", which isn't a Claude Code model this computer lists/);
-});
-
-// ---- A16: pane labels in the sidebar's Start and Attach ----
-
-const ranked = () => {
-  const f = team();
-  f.categories = [{ id: "eng", title: "Engineering" }];
-  f.bots.find((b) => b.id === ID.cap).category = "eng";
-  f.bots.find((b) => b.id === ID.dev).rank = "dev";
-  return f;
-};
-
-test("startBot labels the new pane: role, category, and the lead pane's squad, marked as copied", async (t) => {
-  reset();
-  const { main } = await project(t, ranked());
-  state.terminals = [row("t7", { bot: ID.cap, squad: "memory" }, { name: "cap" })];
-  assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
-  const runArgs = state.hcCalls.find((a) => a[0] === "run");
-  const labels = runArgs.flatMap((w, i) => (runArgs[i - 1] === "--label" ? [w] : []));
-  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "automagik-herdr.squad=memory"]);
-});
-
-test("attachBot labels the pane beside the bot label and keeps a squad it has", async (t) => {
-  reset();
-  const { main } = await project(t, ranked());
-  state.terminals = [row("t7", { bot: ID.cap, squad: "memory" }), row("t8", { squad: "infra" }, { program: { key: "codex", agent: true } })];
-  gets.t8 = { address: "t8", foreground: { argv: ["codex"], cwd: main }, labels: { squad: "infra" } };
-  assert.deepEqual(await attachBot(main, ID.dev, "t8"), { ok: true });
-  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t8", `bot=${ID.dev}`], ["label", "t8", "role=dev", "category=eng"]]);
-});
-
-test("startBot re-reads the file after hc run: an edit made meanwhile reaches the new pane's labels", async (t) => {
-  reset();
-  const { main } = await project(t, ranked());
-  const answer = state.hcAnswer;
-  state.hcAnswer = (args) => {
-    if (args[0] === "run") {
-      const f = ranked();
-      f.bots.find((b) => b.id === ID.dev).rank = "reviewer";
-      writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(f));
-    }
-    return answer(args);
-  };
-  assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
-  assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), [["label", "t42", "role=reviewer"]]);
 });

@@ -1,6 +1,6 @@
 // Start and Attach over plain data: the `hc run` arguments, the A1 parent rule, the live
-// rule (DESIGN Decision 3), which terminal counts among duplicates, the label moves of an
-// attach and its refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
+// rule (DESIGN Decision 3), which terminal counts among duplicates, the labels of a pane and
+// the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
 
@@ -248,15 +248,6 @@ export async function relabel(plan, io) {
 }
 
 /**
- * The `hc label` calls of an attach: the label off every other holder (with the role,
- * category and copied squad Detach takes off, by `labelsOf(holder)`), then on the target.
- */
-export function labelMoves(holders, target, botId, labelsOf = () => ({})) {
-  const off = [...new Set(holders)].filter((t) => t !== target).map((t) => ["label", t, ...detachWords(labelsOf(t) ?? {})]);
-  return [...off, ["label", target, `${BOT_LABEL}=${botId}`]];
-}
-
-/**
  * The attach check for a Claude pane (DESIGN Approach): the folder its session runs in must
  * key to the bot's project. Returns the refusal, naming both folders and the fix, or null.
  */
@@ -297,11 +288,11 @@ export const UNANSWERED = Symbol.for("automagik-herdr.unanswered");
 export const rowsOf = (ls) => (Array.isArray(ls?.terminals) ? ls.terminals : Array.isArray(ls) ? ls : []);
 
 /**
- * A bot's pane by the live rule (DESIGN Decision 3): the terminals carrying `bot=<id>`
- * (`hc ls --label`), each asked with `hc get`, live when an agent is in front; among
- * several, the newest by created_ms, flagged `duplicate`. A row reporting a shell is asked
- * too: `hc ls` rows carry no created_ms, and a pane still in its `sh -c` wrapper is the one
- * youngPane must see (the label's holders are few, so this is a call or two).
+ * The panes carrying `bot=<id>` (`hc ls --label`), a display hint only: the attach ledger
+ * (attach.js) says which pane plays a bot. Used where there is no ledger yet (the briefing
+ * hook before the CLI's first run) and to clear a detached bot's labels. Each is asked with
+ * `hc get`, live when an agent is in front; among several, the newest by created_ms, flagged
+ * `duplicate`.
  * `ask(args)` runs `hc <args> --json` and resolves with the parsed answer, null when hc
  * failed, or UNANSWERED when it ran out of time; it may also throw (the CLI does when hc
  * fails, so a failure never reads as "no pane"). `localOnly` keeps this computer's
@@ -322,11 +313,6 @@ export async function paneOf(botId, ask, { localOnly = false } = {}) {
   const gets = answers.filter((g) => g && typeof g === "object");
   const live = gets.filter((g) => g.state !== "finished" && agentInForeground(g));
   return { get: live.length ? newest(live) : null, duplicate: live.length > 1, addresses, gets };
-}
-
-/** A pane started under `graceMs` ago that carries the label: its agent may not be in front yet. */
-export function youngPane(gets, now, graceMs = 60_000) {
-  return gets.find((g) => g?.state === "live" && typeof g.created_ms === "number" && now - g.created_ms < graceMs) ?? null;
 }
 
 /**
