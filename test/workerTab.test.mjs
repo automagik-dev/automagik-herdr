@@ -48,9 +48,9 @@ test("workerClick: a helper on another machine falls back to peek, even with its
   assert.deepEqual(workerClick({ terminal: "box/t7", botTerminal: "box/t1", panes: shown, spaces }), { kind: "focus", terminal: "box/t7" });
 });
 
-test("workerTabName: the task branch when there is one, else the hc name", () => {
-  assert.equal(workerTabName({ terminal: "t7", name: "dev-1", task: "fix/login" }), "fix/login");
-  assert.equal(workerTabName({ terminal: "t7", name: "dev-1", task: null }), "dev-1");
+test("workerTabName: the worker's branch when there is one, else the hc name", () => {
+  assert.equal(workerTabName({ terminal: "t7", name: "gl-231-dev", branch: "fix/gl-231-login", task: "gl-231" }), "fix/gl-231-login");
+  assert.equal(workerTabName({ terminal: "t7", name: "dev-1", branch: null, task: null }), "dev-1");
   assert.equal(workerTabName({ terminal: "t7" }), "t7");
 });
 
@@ -121,10 +121,18 @@ test("keptSteps: the bot tab's index is read again; a pane kept in another space
   assert.deepEqual(unknown.steps.map(([c]) => c), ["tab.rename", "agent.focus"]);
 });
 
-test("helpersOf and visibleRows: a worker row carries its task branch and its bot's terminal", () => {
-  const terms = [{ address: "t7", parent: "t1", state: "live", name: "dev-1", labels: { task: "fix/login", "worker.of": "b-1" } }];
-  const [h] = helpersOf(terms, "t1");
-  assert.equal(h.task, "fix/login");
+test("helpersOf and visibleRows: a worker row carries its branch, task id and its bot's terminal", () => {
+  const terms = [{ address: "t7", parent: "t1", state: "live", name: "dev-1", labels: { task: "fix/login", "worker.of": "b-1" } },
+    { address: "t8", parent: "t1", state: "live", name: "gl-231-dev",
+      labels: { task: "gl-231", branch: "fix/gl-231-login", "worker.of": "b-1" } },
+    { address: "t9", parent: "t1", state: "live", name: "feat-x", labels: { branch: "feat/x", "worker.of": "b-1" } }];
+  const [h, contract, plain] = helpersOf(terms, "t1");
+  // Started before the task contract: its task label is the branch, and it has no task id.
+  assert.deepEqual([h.branch, h.task], ["fix/login", null]);
+  assert.equal(workerTabName(h), "fix/login");
+  assert.deepEqual([contract.branch, contract.task], ["fix/gl-231-login", "gl-231"]);
+  assert.equal(workerTabName(contract), "fix/gl-231-login", "the tab is named after the branch, not the task id");
+  assert.deepEqual([plain.branch, plain.task], ["feat/x", null]);
   const node = { bot: { id: "b-1" }, planned: false, members: [], helpers: [h], live: { terminal: "t1" } };
   const rows = visibleRows({ main: node, categories: [], uncategorised: [], warnings: [] });
   const helper = rows.find((r) => r.kind === "helper");

@@ -11,9 +11,16 @@ import { TEMPLATE_SHAPE } from "./model.js";
 export { TEMPLATE_SHAPE };
 
 // The usage-tagging contract (usagemeter reads these): a worker terminal carries
-// `worker.of=<botId>`, `task=<branch>` and `worker.role=<role>`, and its cwd is the task worktree.
+// `worker.of=<botId>`, `branch=<branch>` and `worker.role=<role>`, and its cwd is the task
+// worktree. Started with Genie's task id (`--task`), it also carries `task=<id>`,
+// `task.project=<main checkout>` and `task.lead=<lead bot>`; usagemeter joins on (project, task).
+// A worker started before the task contract has no `branch` label: its `task` label is the
+// branch (workerBranch reads either).
 export const WORKER_OF_LABEL = "worker.of";
 export const TASK_LABEL = "task";
+export const TASK_PROJECT_LABEL = "task.project";
+export const TASK_LEAD_LABEL = "task.lead";
+export const BRANCH_LABEL = "branch";
 /** What a worker does in its worktree: one of ROLES. */
 export const WORKER_ROLE_LABEL = "worker.role";
 export const WORKER_MODEL_LABEL = "worker.model";
@@ -43,6 +50,60 @@ export function workerRole(bot, given) {
  * (a worker started before roles holds its worktree until it ends).
  */
 export const writesWorktree = (labels) => labels?.[WORKER_ROLE_LABEL] !== "review";
+
+/** Genie's short task id (gh-1415, gl-231, gn-42); the internal `t_…` key is refused apart. */
+export const TASK_SHAPE = /^[a-z0-9][a-z0-9-]{0,40}$/;
+/** A lead: a bot id (`b-` plus 10 base32 characters) or a Genie session (`session-<uuid>`). */
+export const LEAD_SHAPE = /^(?:b-[a-z2-7]{10}|session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+/** The ranks whose task workers name their lead: the task belongs to another bot. */
+export const LEAD_RANKS = ["reviewer", "fixer"];
+/** hc's terminal names: 1-32 of a-z 0-9 - _ (`hc run --name`). */
+export const HC_NAME_MAX = 32;
+
+/** Why `--task <id>` can't be used, or null. */
+export function taskIdProblem(taskId) {
+  if (typeof taskId !== "string") return "--task needs Genie's short task id (gn-N, gh-N or gl-N).";
+  if (taskId.startsWith("t_")) return "internal Genie id; pass the short id gn-N, gh-N or gl-N";
+  if (!TASK_SHAPE.test(taskId)) {
+    return `--task: "${taskId}" isn't a short task id (a-z, 0-9 and "-", at most 41, no dash first: gn-42, gh-1415, gl-231).`;
+  }
+  return null;
+}
+
+/** A task worker's terminal name: exactly `<id>-<role>`, never suffixed. */
+export const taskWorkerName = (taskId, role) => `${taskId}-${role}`;
+
+/** A worker's branch from its labels: `branch`, else (started before the task contract) `task`. */
+export const workerBranch = (labels) => labels?.[BRANCH_LABEL] || labels?.[TASK_LABEL] || null;
+/** A worker's Genie task id: `task` beside a `branch` label (without one, `task` is the old branch). */
+export const workerTaskId = (labels) => (labels?.[BRANCH_LABEL] ? labels?.[TASK_LABEL] || null : null);
+
+/**
+ * Whether a task runs its bot's other arm (planned swaps): `byte` is the first byte of
+ * sha256(`${botId}:${projectKey}:${taskId}`), computed by the caller (no `node:` import
+ * here). One task in three, by rule, the same for every worker of that bot on that task.
+ */
+export const swapByte = (byte) => Number.isInteger(byte) && byte % 3 === 0;
+
+/** A bot's swap arm (`worker.swap`: { agent?, model?, effort? }) as a workerPlan pick, or null. */
+export function swapArm(bot) {
+  const w = bot?.worker;
+  const swap = w && typeof w === "object" && w.swap && typeof w.swap === "object" && !Array.isArray(w.swap) ? w.swap : null;
+  if (!swap) return null;
+  const arm = {};
+  for (const k of ["agent", "model", "effort"]) if (typeof swap[k] === "string" && swap[k]) arm[k] = swap[k];
+  return Object.keys(arm).length ? arm : null;
+}
+
+/**
+ * Whether a worker with this `pick` runs an hc template: a per-task template, or the bot's
+ * default template with no per-task agent, model or effort. A template worker never swaps.
+ */
+export function runsTemplate(bot, pick = {}) {
+  if (pick.template) return true;
+  const defaults = bot?.worker && typeof bot.worker === "object" ? bot.worker : {};
+  return Boolean(defaults.template) && !["agent", "model", "effort"].some((k) => pick[k]);
+}
 
 /** A value the agent would read as an option (a model, a task text starting with a dash). */
 export const optionLike = (value) => typeof value === "string" && value.trimStart().startsWith("-");
@@ -119,10 +180,16 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * `template` runs in hc's documented template form, `<template> <task>` after the options,
  * with no `--` (neither starts with a dash: both are refused before): it sets its own command.
  */
-export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path }) {
+export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
+  taskId, project, lead }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
-  args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`);
+  args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
+  if (taskId) {
+    args.push("--label", `${TASK_LABEL}=${taskId}`, "--label", `${TASK_PROJECT_LABEL}=${project}`);
+    if (lead) args.push("--label", `${TASK_LEAD_LABEL}=${lead}`);
+  }
+  args.push("--label", `${BRANCH_LABEL}=${branch}`);
   if (role) args.push("--label", `${WORKER_ROLE_LABEL}=${role}`);
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
@@ -199,16 +266,25 @@ const stamp = (at) => new Date(at ?? Date.now()).toISOString();
 const orNull = (x) => (x === undefined || x === "" ? null : x);
 
 /**
- * A start row: a worker (`kind: "worker"`, `task` its branch, `worktree` its cwd) or a bot
- * seat (`kind: "seat"`, from start and attach; `task` null, `worktree` its folder). `pid` is
- * the terminal's foreground pid when hc gave one. `template`: the hc template a worker runs
- * (its agent, model and effort are then null: the template sets them), else null. `role`: a
- * worker's role (ROLES); null for a seat.
+ * A start row: a worker (`kind: "worker"`, `worktree` its cwd as a real path) or a bot seat
+ * (`kind: "seat"`, from start and attach; `worktree` its folder). `task`: Genie's task id
+ * (`--task`), else null; rows written before the task contract hold the branch there, with
+ * no `branch` key. `branch`: the worker's branch. `project`: the main checkout (usagemeter
+ * joins on project and task); `lead`: the task's lead bot; `base`: the commit the worktree
+ * started from; `created`: this command made the worktree. `swap`: the task ran the bot's
+ * other arm (planned swaps); `override`: the bot picked the agent, model, effort or template
+ * itself; `override_requested`: on a swap task, the { agent?, model?, effort? } it asked for
+ * and didn't get, else null. `pid` is the terminal's foreground pid when hc gave one.
+ * `template`: the hc template a worker runs (its agent, model and effort are then null),
+ * else null. `role`: a worker's role (ROLES). A seat's worker fields are null or false.
  */
-export function startRow({ kind, terminal, pid, botId, task, worktree, agent, model, effort, template, role, at }) {
+export function startRow({ kind, terminal, pid, botId, task, branch, project, lead, worktree, base, created, agent, model, effort,
+  template, role, swap, override, overrideRequested, at }) {
+  const requested = overrideRequested && Object.keys(overrideRequested).length ? { ...overrideRequested } : null;
   return { event: "start", kind, terminal, pid: Number.isInteger(pid) ? pid : null, botId, task: orNull(task),
     worktree: orNull(worktree), agent: orNull(agent), model: orNull(model), effort: orNull(effort), template: orNull(template),
-    role: orNull(role), at: stamp(at) };
+    role: orNull(role), branch: orNull(branch), project: orNull(project), lead: orNull(lead), base: orNull(base),
+    created: created === true, swap: swap === true, override: override === true, override_requested: requested, at: stamp(at) };
 }
 
 /** A session row: the Claude session (and its transcript) a terminal now runs. */
