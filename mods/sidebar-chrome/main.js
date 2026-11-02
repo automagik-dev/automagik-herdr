@@ -1,7 +1,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec, openOverlay, closeOverlay, watchFolder } from "herdr";
-import { badgeCount, scanFooter, touchesFooter } from "./contributions.js";
+import { badgeCount, oneAtATime, scanFooter, touchesFooter } from "./contributions.js";
 
 // Where Pocket Link publishes whether a phone is connected (automagik-pocket's "For other mods"
 // contract, schema 1). Resolved as its bridge/state.mjs does: $POCKET_LINK_STATE_DIR, else
@@ -120,13 +120,14 @@ export default class WorkspaceChrome extends View {
       if (footer) await scan(cx);
     });
     // Contributed buttons: every installed mod's mod.json, read only; redrawn only when they change.
-    const scan = async (cx) => {
+    // One scan at a time: a trigger during a scan waits for it and gets one more run after it.
+    const scan = oneAtATime(async (cx) => {
       const { buttons, problems } = await scanFooter({ exec, readText: readTextFile }, appHome()).catch(() => ({ buttons: [], problems: [] }));
       const said = problems.join("\n");
       if (said && said !== this.problems) console.log(said);
       this.problems = said;
       if (JSON.stringify(buttons) !== JSON.stringify(this.contributed)) { this.contributed = buttons; cx.notify(); }
-    };
+    });
     look(cx);
     cx.timer.every(30000, look);
     // Between the 30 s looks, a mod.json or a mod folder changing rescans at once. A watch that
@@ -190,7 +191,9 @@ export default class WorkspaceChrome extends View {
           .child(tab("quota", "layers", "Quota", quota, false, () => run("layout.toggle", { id: "am-quota-panel" })))
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
             .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
-          .children(this.contributed.map(contributed))
+          // Their own group, which gives up its width first and clips: the rail's own tabs never do.
+          .when(this.contributed.length > 0, el => el.child(h_flex().id("footer-contributed").gap(3).items_center()
+            .flex_shrink(1).min_w(0).overflow_hidden().children(this.contributed.map(contributed))))
           .child(div().flex_1().min_w(0).pl(6).pr(2).truncate().text_size(10.5).text_color(t.dim).child(this.hovered ?? ""))
           .child(div().w(1).h(16).flex_none().mx(1).bg(t.border))
           .child(tab("settings", "settings", "Settings", false, false, () => run("app.settings"))

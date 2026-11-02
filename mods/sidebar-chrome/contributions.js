@@ -24,11 +24,27 @@ export function iconPath(v) {
 // A file that looks like an SVG; anything else gets the fallback glyph.
 export const iconLooksValid = (body) => typeof body === "string" && /<svg[\s>]/i.test(body);
 
-// The count to draw: a number above 0, else nothing. Strings are not coerced.
+// The count to draw: a number above 0, else nothing. Strings are not coerced. Past 9 it reads
+// "9+", which still fits beside the icon in a 28 px tab.
 export function badgeCount(v) {
   if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return null;
   const n = Math.ceil(v);
-  return n > 99 ? "99+" : String(n);
+  return n > 9 ? "9+" : String(n);
+}
+
+// Runs `fn` one call at a time. A call made while one runs waits for it, and the latest such call's
+// arguments get one more run after it; every caller resolves when that rerun is done.
+export function oneAtATime(fn) {
+  let running = null, again = null;
+  return (...args) => {
+    if (running) { again = args; return running; }
+    running = (async () => {
+      try {
+        for (let next = args; next; next = again) { again = null; await fn(...next); }
+      } finally { running = null; }
+    })();
+    return running;
+  };
 }
 
 // One mod.json's entries, valid ones only, in the order declared. `problems` says what was

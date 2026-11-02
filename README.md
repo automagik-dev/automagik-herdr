@@ -403,13 +403,15 @@ Any installed mod can put a button in the footer rail. Declare it in your own `m
 - `icon`: an SVG under the app home (`~/.config/herdr-app`), drawn with `svg()` and tinted like the
   rail's own icons. A missing, non-SVG or outside path draws a neutral circle.
 - `badge`: a `shared()` key. While its value is a number above 0, the button shows it as a small
-  count (99+ past 99); 0, `null`, a string or no value shows nothing.
+  count (9+ past 9); 0, `null`, a string or no value shows nothing.
 
 An entry with no `id`, `label` or `command`, an `id` used twice, or a `mod.json` that is not JSON is
 skipped (the reason goes to the console). The rail shows at most 4 contributed buttons in all, by
-mod name, then in the order each mod lists them, after the pack's own tabs and before Settings. It
-reads every installed mod's `mod.json` every 30 s, and at once when a `mod.json` or a mod folder
-changes; it writes nothing.
+mod name, then in the order each mod lists them, after the pack's own tabs and before Settings. They
+sit in their own group, which clips when the sidebar is too narrow: the rail's own tabs always show.
+A mod named `pocket-link` (in any case) cannot add buttons: the rail has its own Pocket Link tab and
+does not read that folder. The rail reads every installed mod's `mod.json` every 30 s, and at once
+when a `mod.json`, a mod folder or an SVG under `mods/` changes; it writes nothing.
 
 ## Wiring (your layout)
 

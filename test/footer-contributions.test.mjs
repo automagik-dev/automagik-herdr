@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  MAX_BUTTONS, FALLBACK_ICON, badgeCount, collectFooter, iconLooksValid, iconPath, modNames, parseFooter, scanFooter, touchesFooter,
+  MAX_BUTTONS, FALLBACK_ICON, badgeCount, collectFooter, iconLooksValid, iconPath, modNames, oneAtATime, parseFooter, scanFooter, touchesFooter,
 } from "../mods/sidebar-chrome/contributions.js";
 
 const TASKS = { id: "tasks", label: "Tasks", icon: "mods/genie-herdr/tasks.svg", command: "mod.open", args: { name: "tasks-mock" }, badge: "genie.tasks.waiting" };
@@ -85,7 +85,9 @@ test("badge: a count only for a number above 0", () => {
   assert.equal(badgeCount(NaN), null);
   assert.equal(badgeCount(Infinity), null);
   assert.equal(badgeCount(0.4), "1");
-  assert.equal(badgeCount(140), "99+");
+  assert.equal(badgeCount(9), "9");
+  assert.equal(badgeCount(10), "9+", "past 9 the pill stays two characters wide");
+  assert.equal(badgeCount(140), "9+");
 });
 
 test("icon paths: relative SVGs under the app home only; files must look like an SVG", () => {
@@ -164,4 +166,29 @@ test("scan: no mods folder means no buttons and one problem, not a throw", async
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("one scan at a time: triggers during a scan wait for it and get one rerun, with the latest args", async () => {
+  const runs = [];
+  let release;
+  const fn = async (x) => { runs.push(x); if (x === "a") await new Promise((r) => { release = r; }); };
+  const scan = oneAtATime(fn);
+  const first = scan("a");
+  const second = scan("b");
+  const third = scan("c");
+  assert.equal(second, first, "a trigger during a scan waits for the same run");
+  assert.equal(third, first);
+  await Promise.resolve();
+  assert.deepEqual(runs, ["a"], "nothing runs beside the scan in flight");
+  release();
+  await Promise.all([first, second, third]);
+  assert.deepEqual(runs, ["a", "c"], "one rerun, with the latest trigger");
+  await scan("d");
+  assert.deepEqual(runs, ["a", "c", "d"], "idle again: the next trigger runs at once");
+});
+
+test("one scan at a time: a failing run frees the next trigger", async () => {
+  const scan = oneAtATime(async (x) => { if (x === "bad") throw new Error("boom"); });
+  await assert.rejects(scan("bad"), /boom/);
+  await scan("good");
 });

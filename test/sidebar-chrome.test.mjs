@@ -156,3 +156,25 @@ test("a mod.json change rescans at once; a batch of other files does not", async
   const finds = state.calls.filter((c) => c.kind === "exec" && c.command === "find");
   assert.equal(finds.length, 2, "the first look, then the mod.json batch");
 });
+
+test("contributed buttons clip in their own group; the rail's own tabs always render, outside it", async () => {
+  const four = (name) => ({ [`mods/${name}/mod.json`]: JSON.stringify({ automagik: { footer: [1, 2].map((n) => ({ id: `b${n}`, label: `${name} ${n}`, command: "app.help" })) } }) });
+  const ids = await footer({ sidebar: true, files: { ...four("aa"), ...four("bb"), ...four("cc") } });
+  assert.deepEqual(ids, ["bots", "mods", "automations", "quota", "aa/b1", "aa/b2", "bb/b1", "bb/b2", "settings", "machine"]);
+  const group = nodes.get("footer-contributed");
+  const calls = new Map(group.calls.map(([name, ...args]) => [name, args]));
+  assert.deepEqual(calls.get("min_w"), [0]);
+  assert.deepEqual(calls.get("flex_shrink"), [1]);
+  assert.ok(calls.has("overflow_hidden"), "the group clips");
+  const inside = new Set(all({ __node: group }).map((n) => n.id));
+  for (const id of ["bots", "mods", "automations", "quota", "settings", "machine"]) {
+    assert.ok(!inside.has(id), `${id} is outside the clipping group`);
+    assert.ok(nodes.get(id).calls.some(([name]) => name === "flex_none"), `${id} never shrinks`);
+  }
+  for (const id of ["aa/b1", "bb/b2"]) assert.ok(inside.has(id), `${id} is inside the group`);
+});
+
+test("no contributed buttons: no empty group in the rail", async () => {
+  await footer({ sidebar: false });
+  assert.ok(!nodes.has("footer-contributed"));
+});
