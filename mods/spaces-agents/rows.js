@@ -84,8 +84,10 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
   return kids.flatMap((t) => {
     const terminal = addressOf(t);
     seen.add(terminal);
+    // A bot's worker (automagik-herdr worker) names its model and effort in its labels.
     const row = { terminal, name: t.name || t.template || t.program?.name || terminal, agent: t.program?.key ?? null,
-      program: t.program ?? null, status: t.status ?? null, depth };
+      program: t.program ?? null, status: t.status ?? null, depth,
+      model: t.labels?.["worker.model"] || null, effort: t.labels?.["worker.effort"] || null };
     return [row, ...helpersOf(terminals, terminal, known, depth + 1, seen)];
   });
 }
