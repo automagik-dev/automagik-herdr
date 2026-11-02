@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { installScript, KEYCHAIN_BYTES, keychainScript, keychainBackupScript, keychainBackupPath, keychainRestoreScript, payload as credentialPayload, payloadDir, payloadPath, prepareScript, sweepScript } from "../mods/am-quota/write.js";
 import { keychainReadScript } from "../mods/am-quota/translate.js";
+import { keychain, word } from "./am-quota-keychain.mjs";
 
 const STAMP = "2026-11-01T12-00-00-000Z";
 const SECRET = '{"claudeAiOauth":{"accessToken":"at-SECRET-0123456789abcdef"}}';
@@ -18,12 +19,14 @@ const sh = (script, ...args) => spawnSync("sh", ["-c", script, "sh", ...args], {
 const mode = (p) => statSync(p).mode & 0o777;
 const dir = () => mkdtempSync(join(tmpdir(), "am-quota-write-"));
 
-// Every scratch item gets its own service name, and every test deletes it in a `finally`: a test
-// that fails must not leave an item in the person's login keychain.
-let seq = 0;
-const service = (name) => `am-quota-test-${name}-${process.pid}-${Date.now().toString(36)}-${++seq}-${Math.random().toString(36).slice(2, 6)}`;
-const forget = (svc) => spawnSync("security", ["delete-generic-password", "-s", svc], { encoding: "utf8" });
-const readItem = (svc) => spawnSync("security", ["find-generic-password", "-w", "-s", svc], { encoding: "utf8" });
+// Every Keychain test runs against the stand-in in ./am-quota-keychain.mjs, on every platform,
+// never the real `security`: that one writes the person's login keychain, and under a scratch HOME
+// it pops a "Keychain Not Found" dialog on their screen. `kc.sh` runs a product script with the
+// stand-in first on PATH; `kc.run` calls the stand-in by its absolute path. Nothing here spawns
+// `security` any other way — am-quota-keychain-guard.test.mjs checks the source for it.
+const readItem = (kc, svc) => kc.run(["find-generic-password", "-w", "-s", svc]);
+/** The `-i` add line the product sends, as the stand-in logs it (the value is only its size). */
+const addLine = (kc, svc, bytes) => `-i: add-generic-password -U -a ${word(kc.account)} -s ${word(svc)} -X <${bytes} bytes>`;
 
 test("prepare: the payload folder is 0700 before any payload exists", () => {
   const home = dir();
@@ -101,93 +104,103 @@ test("keychain: the item is written through `security -i` on stdin, never in arg
   assert.match(script, /find-generic-password -w -s "\$1"/, "and the item is read back: `security -i` can exit 0 after a failed inner command");
 });
 
-const darwin = process.platform === "darwin" && spawnSync("sh", ["-c", "command -v security"], {}).status === 0;
-test("keychain: a real credential lands in the item and reads back byte-identical", { skip: !darwin }, () => {
-  const home = dir();
-  const svc = service("write");
-  try {
-    const p = payloadPath(home, "claude", STAMP);   // `payload` is the builder above
-    assert.equal(sh(prepareScript(), payloadDir(home), p).status, 0);
-    // A realistic Claude credential (~1.5 kB → ~3 kB of hex), not just a toy: this is the size band
-    // where a truncating writer would still exit 0.
-    // Exactly the shape the mod writes for Claude: one line, no trailing newline.
-    const big = credentialPayload("claude", PROXY_CRED);
-    assert.ok(!big.includes("\n") && !big.endsWith("\n"), "single line, as write.js's payload() guarantees");
-    writeFileSync(p, big);   // > the 128-byte prompt cap that made `security -w` unusable
-    const out = sh(keychainScript(), svc, p);
-    assert.equal(out.status, 0, out.stderr);
-    const got = spawnSync("sh", ["-c", keychainReadScript(), "sh", svc], { encoding: "utf8" });
-    assert.equal(got.stdout.replace(/\n+$/, ""), big, "the client reads back exactly what the proxy sent");
-  } finally {
-    forget(svc);
-  }
+test("guard: in a Keychain test's env `security` is the stand-in, and it fails closed without one", () => {
+  const kc = keychain();
+  const which = spawnSync("sh", ["-c", "command -v security"], { encoding: "utf8", env: kc.env });
+  assert.equal(which.stdout.trim(), kc.security, "PATH finds the stand-in, never /usr/bin/security");
+  assert.ok(kc.env.PATH.startsWith(`${kc.security.slice(0, -"/security".length)}:`), "its folder is first on PATH");
+  assert.equal(kc.sh(keychainReadScript(), "am-quota-test-guard").status, 44, "a product script reaches it");
+  assert.deepEqual(kc.calls().map((c) => c.bin), [kc.security], "and the call was the stand-in's");
+  const bare = spawnSync(kc.security, ["find-generic-password", "-w", "-s", "x"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
+  assert.equal(bare.status, 70, "without its folder the stand-in stops; it never hands off to anything");
 });
 
-test("keychain: a payload too large for the stdin command line fails instead of leaking to argv", { skip: !darwin }, () => {
+test("keychain: a real credential lands in the item and reads back byte-identical", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("big");
-  try {
-    const payload = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
-    writeFileSync(payload, "x".repeat(3000));   // hex is 6000 chars: over the 4000 limit
-    const out = sh(keychainScript(), svc, payload);
-    assert.equal(out.status, 75, "75 is for a refusal before the add ran: there is nothing to put back");
-    assert.match(out.stderr, /too large/);
-    assert.equal(readItem(svc).status, 44, "and nothing was stored");
-  } finally {
-    forget(svc);
-  }
+  const svc = "am-quota-test-write";
+  const p = payloadPath(home, "claude", STAMP);   // `payload` is the builder above
+  assert.equal(sh(prepareScript(), payloadDir(home), p).status, 0);
+  // A realistic Claude credential (~1.5 kB → ~3 kB of hex), not just a toy: this is the size band
+  // where a truncating writer would still exit 0.
+  // Exactly the shape the mod writes for Claude: one line, no trailing newline.
+  const big = credentialPayload("claude", PROXY_CRED);
+  assert.ok(!big.includes("\n") && !big.endsWith("\n"), "single line, as write.js's payload() guarantees");
+  writeFileSync(p, big);   // > the 128-byte prompt cap that made `security -w` unusable
+  const out = kc.sh(keychainScript(), svc, p);
+  assert.equal(out.status, 0, out.stderr);
+  assert.deepEqual(kc.bytes(svc), Buffer.from(big, "utf8"), "the stored bytes are the payload's");
+  const got = kc.sh(keychainReadScript(), svc);
+  assert.equal(got.stdout.replace(/\n+$/, ""), big, "the client reads back exactly what the proxy sent");
+  assert.deepEqual(kc.lines(), [
+    addLine(kc, svc, Buffer.byteLength(big)),   // on stdin: the hex never reaches argv
+    `find-generic-password -w -s ${svc} -a ${word(kc.account)}`,   // the script's read-back
+    `find-generic-password -w -s ${svc}`,   // the client's read
+  ]);
 });
 
-test("keychain: the old item is saved before it is replaced, and the backup puts it back exactly", { skip: !darwin }, () => {
+test("keychain: a payload too large for the stdin command line fails instead of leaking to argv", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("backup");
-  try {
-    const payload = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
-    // The item the CLI keeps: our OAuth blob next to a key the panel must never lose.
-    const first = JSON.stringify({ claudeAiOauth: { accessToken: "at-old-0123456789abcdef" }, mcpOAuth: { keep: "me" } });
-    writeFileSync(payload, first);
-    assert.equal(sh(keychainScript(), svc, payload).status, 0, "seed the item");
-
-    const backup = keychainBackupPath(home, "claude", STAMP);
-    const saved = sh(keychainBackupScript(), svc, backup);
-    assert.equal(saved.status, 0, saved.stderr);
-    assert.equal(mode(backup), 0o600, "the backup holds tokens");
-    assert.match(readFileSync(backup, "utf8"), /^[0-9a-f]+$/, "hex, one line, no trailing newline");
-
-    // A switch replaces the item; a later failure must be able to undo that.
-    const second = JSON.stringify({ claudeAiOauth: { accessToken: "at-new-0123456789abcdef" } });
-    writeFileSync(payload, second);
-    assert.equal(sh(keychainScript(), svc, payload).status, 0);
-    assert.equal(readItem(svc).stdout.replace(/\n+$/, ""), second);
-
-    const back = sh(keychainRestoreScript(), svc, backup, "restore");
-    assert.equal(back.status, 0, back.stderr);
-    const got = spawnSync("sh", ["-c", keychainReadScript(), "sh", svc], { encoding: "utf8" });
-    assert.equal(got.stdout.replace(/\n+$/, ""), first, "byte-identical, the other key included");
-  } finally {
-    forget(svc);
-  }
+  const svc = "am-quota-test-big";
+  const payload = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
+  writeFileSync(payload, "x".repeat(3000));   // hex is 6000 chars: over the 4000 limit
+  const out = kc.sh(keychainScript(), svc, payload);
+  assert.equal(out.status, 75, "75 is for a refusal before the add ran: there is nothing to put back");
+  assert.match(out.stderr, /too large/);
+  assert.deepEqual(kc.calls(), [], "security was never called");
+  assert.equal(readItem(kc, svc).status, 44, "and nothing was stored");
 });
 
-test("keychain: no item before the first install means rollback deletes instead of restoring", { skip: !darwin }, () => {
+test("keychain: the old item is saved before it is replaced, and the backup puts it back exactly", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("absent");
-  try {
-    const backup = join(home, "none.hex");
-    assert.equal(sh(keychainBackupScript(), svc, backup).status, 3, "nothing to save: not an error");
-    assert.equal(existsSync(backup), false, "and no empty backup left behind");
+  const svc = "am-quota-test-backup";
+  const payload = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
+  // The item the CLI keeps: our OAuth blob next to a key the panel must never lose.
+  const first = JSON.stringify({ claudeAiOauth: { accessToken: "at-old-0123456789abcdef" }, mcpOAuth: { keep: "me" } });
+  writeFileSync(payload, first);
+  assert.equal(kc.sh(keychainScript(), svc, payload).status, 0, "seed the item");
 
-    const payload = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
-    writeFileSync(payload, SECRET);
-    assert.equal(sh(keychainScript(), svc, payload).status, 0, "the first install");
-    assert.equal(sh(keychainRestoreScript(), svc, "", "delete").status, 0);
-    assert.equal(readItem(svc).status, 44, "the added item is gone");
-  } finally {
-    forget(svc);
-  }
+  const backup = keychainBackupPath(home, "claude", STAMP);
+  const saved = kc.sh(keychainBackupScript(), svc, backup);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.equal(mode(backup), 0o600, "the backup holds tokens");
+  assert.match(readFileSync(backup, "utf8"), /^[0-9a-f]+$/, "hex, one line, no trailing newline");
+  assert.equal(readFileSync(backup, "utf8"), Buffer.from(first, "utf8").toString("hex"), "the item's bytes");
+
+  // A switch replaces the item; a later failure must be able to undo that.
+  const second = JSON.stringify({ claudeAiOauth: { accessToken: "at-new-0123456789abcdef" } });
+  writeFileSync(payload, second);
+  assert.equal(kc.sh(keychainScript(), svc, payload).status, 0);
+  assert.equal(readItem(kc, svc).stdout.replace(/\n+$/, ""), second);
+
+  const back = kc.sh(keychainRestoreScript(), svc, backup, "restore");
+  assert.equal(back.status, 0, back.stderr);
+  assert.equal(kc.lines().at(-1), addLine(kc, svc, Buffer.byteLength(first)), "the restore is one -i add");
+  assert.deepEqual(kc.bytes(svc), Buffer.from(first, "utf8"), "byte-identical, the other key included");
+  const got = kc.sh(keychainReadScript(), svc);
+  assert.equal(got.stdout.replace(/\n+$/, ""), first, "and the client reads it so");
+});
+
+test("keychain: no item before the first install means rollback deletes instead of restoring", () => {
+  const kc = keychain();
+  const home = dir();
+  const svc = "am-quota-test-absent";
+  const backup = join(home, "none.hex");
+  assert.equal(kc.sh(keychainBackupScript(), svc, backup).status, 3, "nothing to save: not an error");
+  assert.equal(existsSync(backup), false, "and no empty backup left behind");
+
+  const payload = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
+  writeFileSync(payload, SECRET);
+  assert.equal(kc.sh(keychainScript(), svc, payload).status, 0, "the first install");
+  assert.equal(kc.sh(keychainRestoreScript(), svc, "", "delete").status, 0);
+  assert.equal(kc.lines().at(-1), `delete-generic-password -s ${svc}`);
+  assert.equal(kc.bytes(svc), null, "the added item is gone");
+  assert.equal(readItem(kc, svc).status, 44);
 });
 
 test("keychain: backup and restore keep the secret out of argv too", () => {
@@ -199,35 +212,33 @@ test("keychain: backup and restore keep the secret out of argv too", () => {
   assert.match(keychainRestoreScript(), /\| security -i/, "a restore goes in on stdin, like the write");
 });
 
-test("keychain: an item holding a newline comes back as hex, and is still backed up byte-identically", { skip: !darwin }, () => {
+test("keychain: an item holding a newline comes back as hex, and is still backed up byte-identically", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("hex");
-  const acct = spawnSync("id", ["-un"], { encoding: "utf8" }).stdout.trim();
-  try {
-    // The bytes are stored correctly; it is `-w` that prints hex. A pretty-printed item (an older
-    // CLI, a hand-edited one) is exactly the case the backup must survive.
-    const item = JSON.stringify({ claudeAiOauth: { accessToken: "at-old" }, mcpOAuth: { keep: "me" } }, null, 2);
-    const seed = spawnSync("security", ["-i"], {
-      input: `add-generic-password -U -a "${acct}" -s "${svc}" -X "${Buffer.from(item, "utf8").toString("hex")}"\n`,
-      encoding: "utf8",
-    });
-    assert.equal(seed.status, 0, seed.stderr);
-    assert.match(readItem(svc).stdout.trim(), /^[0-9a-f]+$/, "a value with 0x0a reads back as hex, not text");
+  const svc = "am-quota-test-hex";
+  // The bytes are stored correctly; it is `-w` that prints hex. A pretty-printed item (an older
+  // CLI, a hand-edited one) is exactly the case the backup must survive.
+  const item = JSON.stringify({ claudeAiOauth: { accessToken: "at-old" }, mcpOAuth: { keep: "me" } }, null, 2);
+  const seed = kc.run(["-i"], {
+    input: `add-generic-password -U -a "${kc.account}" -s "${svc}" -X "${Buffer.from(item, "utf8").toString("hex")}"\n`,
+  });
+  assert.equal(seed.status, 0, seed.stderr);
+  assert.match(readItem(kc, svc).stdout.trim(), /^[0-9a-f]+$/, "a value with 0x0a reads back as hex, not text");
 
-    const payload = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
-    const backup = keychainBackupPath(home, "claude", STAMP);
-    assert.equal(sh(keychainBackupScript(), svc, backup).status, 0);
+  const payload = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
+  const backup = keychainBackupPath(home, "claude", STAMP);
+  assert.equal(kc.sh(keychainBackupScript(), svc, backup).status, 0);
+  assert.equal(readFileSync(backup, "utf8"), Buffer.from(item, "utf8").toString("hex"), "the backup is the raw bytes");
 
-    // Replace the item the way a switch does, then undo it.
-    writeFileSync(payload, SECRET);
-    assert.equal(sh(keychainScript(), svc, payload).status, 0);
-    assert.equal(sh(keychainRestoreScript(), svc, backup, "restore").status, 0);
-    const got = readItem(svc).stdout.trim();
-    assert.equal(Buffer.from(got, "hex").toString("utf8"), item, "the old bytes, newline and all");
-  } finally {
-    forget(svc);
-  }
+  // Replace the item the way a switch does, then undo it.
+  writeFileSync(payload, SECRET);
+  assert.equal(kc.sh(keychainScript(), svc, payload).status, 0);
+  assert.equal(kc.item(svc), SECRET);
+  assert.equal(kc.sh(keychainRestoreScript(), svc, backup, "restore").status, 0);
+  assert.deepEqual(kc.bytes(svc), Buffer.from(item, "utf8"), "the old bytes, newline and all");
+  const got = readItem(kc, svc).stdout.trim();
+  assert.equal(Buffer.from(got, "hex").toString("utf8"), item, "and -w still prints them as hex");
 });
 
 test("install: three backups are kept, not one per click", () => {
@@ -255,19 +266,18 @@ test("payload: Codex is pretty-printed, Claude is one line — what the Keychain
   assert.deepEqual(JSON.parse(codex).tokens.account_id, "acc-1");
 });
 
-test("keychain: a service name with spaces is quoted, so the item addressed is the item named", { skip: !darwin }, () => {
+test("keychain: a service name with spaces is quoted, so the item addressed is the item named", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("write with spaces");
-  try {
-    const p = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), p).status, 0);
-    writeFileSync(p, SECRET);
-    const out = sh(keychainScript(), svc, p);
-    assert.equal(out.status, 0, out.stderr);
-    assert.equal(readItem(svc).stdout.replace(/\n+$/, ""), SECRET, "the real service (and the default one) holds a space");
-  } finally {
-    forget(svc);
-  }
+  const svc = "am-quota-test write with spaces";
+  const p = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), p).status, 0);
+  writeFileSync(p, SECRET);
+  const out = kc.sh(keychainScript(), svc, p);
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(kc.lines()[0], addLine(kc, svc, Buffer.byteLength(SECRET)), "one quoted service word");
+  assert.ok(kc.services().every((s) => s === svc), `every call named the whole service, saw: ${kc.services().join(" | ")}`);
+  assert.equal(readItem(kc, svc).stdout.replace(/\n+$/, ""), SECRET, "the real service (and the default one) holds a space");
 });
 
 test("the item budget sits under the shell's own one-line guard", () => {
@@ -277,20 +287,18 @@ test("the item budget sits under the shell's own one-line guard", () => {
   assert.ok(KEYCHAIN_BYTES <= bytes, "an item this check passes must also pass keychainScript's guard");
 });
 
-test("keychain: a multi-line payload is refused instead of stored as hex text", { skip: !darwin }, () => {
+test("keychain: a multi-line payload is refused instead of stored as hex text", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("multiline");
-  try {
-    const p = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), p).status, 0);
-    writeFileSync(p, JSON.stringify({ claudeAiOauth: { accessToken: "at-" + "0".repeat(40) } }, null, 2) + "\n");
-    const out = sh(keychainScript(), svc, p);
-    assert.equal(out.status, 75, "a refusal before the add: no rollback, because nothing changed");
-    assert.match(out.stderr, /multi-line credential/);
-    assert.equal(readItem(svc).status, 44, "nothing was stored");
-  } finally {
-    forget(svc);
-  }
+  const svc = "am-quota-test-multiline";
+  const p = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), p).status, 0);
+  writeFileSync(p, JSON.stringify({ claudeAiOauth: { accessToken: "at-" + "0".repeat(40) } }, null, 2) + "\n");
+  const out = kc.sh(keychainScript(), svc, p);
+  assert.equal(out.status, 75, "a refusal before the add: no rollback, because nothing changed");
+  assert.match(out.stderr, /multi-line credential/);
+  assert.deepEqual(kc.calls(), [], "security was never called");
+  assert.equal(readItem(kc, svc).status, 44, "nothing was stored");
 });
 
 test("sweep: payloads and item backups older than an hour are removed, and a missing folder is fine", () => {
@@ -310,29 +318,29 @@ test("sweep: payloads and item backups older than an hour are removed, and a mis
   assert.equal(sh(sweepScript(), join(home, "does-not-exist")).status, 0, "a missing folder is not an error");
 });
 
-test("keychain: a failed file install after a successful item write rolls the item back", { skip: !darwin }, () => {
+test("keychain: a failed file install after a successful item write rolls the item back", () => {
+  const kc = keychain();
   const home = dir();
-  const svc = service("rollback");
-  try {
-    const payload = payloadPath(home, "claude", STAMP);
-    assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
-    const first = JSON.stringify({ claudeAiOauth: { accessToken: "at-old-0123456789abcdef" }, mcpOAuth: { keep: "me" } });
-    writeFileSync(payload, first);
-    assert.equal(sh(keychainScript(), svc, payload).status, 0, "seed the old item");
+  const svc = "am-quota-test-rollback";
+  const payload = payloadPath(home, "claude", STAMP);
+  assert.equal(sh(prepareScript(), payloadDir(home), payload).status, 0);
+  const first = JSON.stringify({ claudeAiOauth: { accessToken: "at-old-0123456789abcdef" }, mcpOAuth: { keep: "me" } });
+  writeFileSync(payload, first);
+  assert.equal(kc.sh(keychainScript(), svc, payload).status, 0, "seed the old item");
 
-    // The panel's order: back the item up, write it, then install the file.
-    const backup = keychainBackupPath(home, "claude", STAMP);
-    assert.equal(sh(keychainBackupScript(), svc, backup).status, 0);
-    writeFileSync(payload, JSON.stringify({ claudeAiOauth: { accessToken: "at-new-0123456789abcdef" } }));
-    assert.equal(sh(keychainScript(), svc, payload).status, 0, "the item took the new credential");
+  // The panel's order: back the item up, write it, then install the file.
+  const backup = keychainBackupPath(home, "claude", STAMP);
+  assert.equal(kc.sh(keychainBackupScript(), svc, backup).status, 0);
+  const second = JSON.stringify({ claudeAiOauth: { accessToken: "at-new-0123456789abcdef" } });
+  writeFileSync(payload, second);
+  assert.equal(kc.sh(keychainScript(), svc, payload).status, 0, "the item took the new credential");
+  assert.equal(kc.item(svc), second);
 
-    const target = join(home, "locked", "creds.json");   // its parent cannot be created: it is a file
-    writeFileSync(join(home, "locked"), "not a directory");
-    assert.notEqual(sh(installScript(STAMP), payload, target).status, 0, "the file step fails");
+  const target = join(home, "locked", "creds.json");   // its parent cannot be created: it is a file
+  writeFileSync(join(home, "locked"), "not a directory");
+  assert.notEqual(sh(installScript(STAMP), payload, target).status, 0, "the file step fails");
 
-    assert.equal(sh(keychainRestoreScript(), svc, backup, "restore").status, 0);
-    assert.equal(readItem(svc).stdout.replace(/\n+$/, ""), first, "Claude is back on the old account, error and all");
-  } finally {
-    forget(svc);
-  }
+  assert.equal(kc.sh(keychainRestoreScript(), svc, backup, "restore").status, 0);
+  assert.equal(kc.item(svc), first, "Claude is back on the old account, error and all");
+  assert.equal(readItem(kc, svc).stdout.replace(/\n+$/, ""), first);
 });
