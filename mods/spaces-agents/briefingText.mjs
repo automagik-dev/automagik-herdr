@@ -125,10 +125,20 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 /** The pack's installed briefing script under an app home. */
 export const briefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/mods/spaces-agents/briefing.mjs`;
 
-/** The hook command: no `node` on the agent's PATH means no briefing and no error. */
+/** The pack's runtime finder (bin/run.sh: node 22.7 or later, else bun) under an app home. */
+export const runnerPath = (appHome) => `${appHome.replace(/\/+$/, "")}/mods/spaces-agents/bin/run.sh`;
+
+const shQuoted = (path) => `"${path.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
+
+/**
+ * The hook command: run.sh finds a runtime even where the agent's PATH has no `node`; finding
+ * none, it says so on stderr and exits 127, which Claude shows without blocking the prompt. No
+ * run.sh (a rollback to an older pack, an uninstall): exit 0 and nothing, never a blocked turn
+ * (`sh <missing file>` exits 2 under dash, and 2 blocks a Claude prompt).
+ */
 export function hookCommand(appHome) {
-  const quoted = briefingPath(appHome).replace(/[\\"$`]/g, (c) => `\\${c}`);
-  return `command -v node >/dev/null && node "${quoted}" || true`;
+  const runner = shQuoted(runnerPath(appHome));
+  return `[ ! -f ${runner} ] || sh ${runner} ${shQuoted(briefingPath(appHome))}`;
 }
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -136,10 +146,12 @@ const OURS = /\/mods\/spaces-agents\/briefing\.mjs/;
 
 /**
  * Merges the briefing hook into a settings.local.json text (null: no file yet). Every other
- * key and hook is kept. An entry already naming the pack's briefing.mjs counts as present:
- * the same command leaves the file alone, another path (the app home moved) is updated in
- * place. A text that isn't a JSON object, or whose `hooks` or `UserPromptSubmit` has
- * another shape, is never rewritten: `error` says why.
+ * key and hook is kept. The one entry naming the pack's briefing.mjs is ours: the same command
+ * leaves the file alone, and any other (the older `command -v node … node "…" || true` form,
+ * which loses the briefing where PATH has no node, or another app home) has its `command`
+ * replaced in place, its other fields kept: never a second entry. A text that isn't a JSON
+ * object, or whose `hooks` or `UserPromptSubmit` has another shape, is never rewritten:
+ * `error` says why.
  * Returns { text, changed } or { error }.
  */
 export function mergeHook(existing, command) {

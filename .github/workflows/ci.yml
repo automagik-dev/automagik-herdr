@@ -40,6 +40,9 @@ jobs:
             node --check "$f"
           done
           sh -n install.sh
+          sh -n mods/spaces-agents/bin/run.sh
+          sh -n mods/spaces-agents/bin/automagik-herdr
+          shellcheck -s sh install.sh mods/spaces-agents/bin/run.sh mods/spaces-agents/bin/automagik-herdr
 
       - name: One version
         run: node scripts/version.mjs check

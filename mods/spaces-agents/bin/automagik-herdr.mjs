@@ -4,7 +4,8 @@
 // sidebar (model.js, launchArgs.js, briefingText.mjs, models.js, briefing.mjs' gathering),
 // with herdr-core reached through `hc` directly. Plain node (≥ 24): no `herdr` or `gpui`
 // import, no Herdr window.
-// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
+// Install: ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr ~/.local/bin/automagik-herdr
+// (that wrapper runs this file through bin/run.sh, which finds node 22.7+ or bun without node on PATH).
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
@@ -27,7 +28,7 @@ import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, reso
 import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
   ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan, worktreeFolder }
   from "../workers.js";
-import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
+import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
@@ -1157,23 +1158,36 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   if (opts.check && opts.rollback) throw new CliError("Give --check or --rollback, not both.", 2);
   const where = { ...(io.env ? { env: io.env } : {}), ...(io.fetch ? { fetch: io.fetch } : {}), ...(io.modsDir ? { modsDir: io.modsDir } : {}) };
   const failed = (what, e) => new CliError(`${what}: ${String(e?.message ?? e).split("\n")[0]}`);
+  // The pack just swapped (or one an older CLI installed) may name its CLI otherwise
+  // (bin/automagik-herdr, or only the .mjs before it): the ~/.local/bin link follows, so a
+  // rollback never leaves it dangling. Idempotent, never fatal; `--check` changes nothing.
+  const relink = () => {
+    try {
+      const r = relinkCli({ modsDir: io.modsDir ?? defaultModsDir(io.env ?? process.env), binDir: io.binDir ?? binDirOf(io.env ?? process.env) });
+      return { relinked: r, note: r ? ` ${r.link} now points at ${r.to}.` : "" };
+    } catch (e) {
+      return { relinked: null, note: ` The automagik-herdr link was not repointed (${String(e?.message ?? e).split("\n")[0]}): run install.sh again.` };
+    }
+  };
   if (opts.rollback) {
     let r;
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}) }); } catch (e) { throw failed("Nothing rolled back", e); }
-    return opts.json ? { rolledBack: r } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.`;
+    const { relinked, note } = relink();
+    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${note}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
     throw failed(opts.check ? "Couldn't check for updates" : "Not updated", e);
   }
-  if (opts.json) return r;
+  const { relinked, note } = opts.check ? { relinked: null, note: "" } : relink();
+  if (opts.json) return opts.check ? r : { ...r, relinked };
   const current = r.current ?? "not installed";
-  if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).`;
+  if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
-  return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.`;
+  return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
 }
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
@@ -1216,4 +1230,9 @@ export async function main(argv = process.argv.slice(2)) {
 
 // Run as a program (also through the ~/.local/bin symlink, hence the realpath), not on import.
 const invoked = (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href; } catch { return null; } })();
-if (import.meta.url === invoked) process.exitCode = await main();
+if (import.meta.url === invoked) {
+  // An update made by an older CLI (0.3.4 and before) left the link on the .mjs, which needs node
+  // on PATH: the first start that has a runtime moves it to the wrapper. Silent, never fatal.
+  try { relinkCli(); } catch { /* the link stays; `automagik-herdr update` reports why */ }
+  process.exitCode = await main();
+}

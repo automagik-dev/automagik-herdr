@@ -4,8 +4,8 @@
 // blocks end to end and the silent exits; then launch.js afterBind over the Herdr stand-ins.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,8 @@ process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "herdr-xdg-"));
 process.on("exit", () => rmSync(process.env.XDG_CONFIG_HOME, { recursive: true, force: true }));
 const NODE_DIR = dirname(process.execPath);
+// AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs briefing.mjs with that runtime instead.
+const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const SCRIPT = new URL("../mods/spaces-agents/briefing.mjs", import.meta.url).pathname;
 // briefing.mjs under test runs with its times multiplied by SCALE (HERDR_BRIEFING_TIME_SCALE):
 // each fake hc call is a node process, which a loaded machine can take seconds to start, and the
@@ -147,10 +149,52 @@ test("cap: 4,000-character instructions and twelve members with long reports sta
   assert.ok(huge.endsWith("</herdr-bot>"));
 });
 
-test("hook command: names the installed script by its absolute path, quoted, and never fails", () => {
+test("hook command: runs the installed script through bin/run.sh when it is there, both quoted", () => {
   assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs");
-  assert.equal(hookCommand("/Users/x/.config/herdr-app"), 'command -v node >/dev/null && node "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs" || true');
-  assert.equal(hookCommand('/odd "$HOME`'), 'command -v node >/dev/null && node "/odd \\"\\$HOME\\`/mods/spaces-agents/briefing.mjs" || true');
+  const run = "/Users/x/.config/herdr-app/mods/spaces-agents/bin/run.sh";
+  assert.equal(hookCommand("/Users/x/.config/herdr-app"),
+    `[ ! -f "${run}" ] || sh "${run}" "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs"`);
+  const odd = '/odd \\"\\$HOME\\`/mods/spaces-agents';
+  assert.equal(hookCommand('/odd "$HOME`'), `[ ! -f "${odd}/bin/run.sh" ] || sh "${odd}/bin/run.sh" "${odd}/briefing.mjs"`);
+});
+
+test("hook command, run by sh: the script gets stdin; no run.sh exits 0 silently; no runtime is 127, never 2", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-hookcmd-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const app = join(root, "app with 'quotes' $x");
+  const pack = join(app, "mods/spaces-agents");
+  mkdirSync(join(pack, "bin"), { recursive: true });
+  writeFileSync(join(pack, "briefing.mjs"), 'let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => console.log(`briefed ${s}`));\n');
+  const hook = (env) => spawnSync("/bin/sh", ["-c", hookCommand(app)], { input: '{"prompt":"hi"}', encoding: "utf8",
+    env: { HOME: root, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath), ...env } });
+  // A rollback to a pack without run.sh, or an uninstall: nothing, exit 0.
+  const missing = hook();
+  assert.deepEqual([missing.status, missing.stdout, missing.stderr], [0, "", ""]);
+  copyFileSync(new URL("../mods/spaces-agents/bin/run.sh", import.meta.url), join(pack, "bin/run.sh"));
+  const ran = hook();
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(ran.stdout, 'briefed {"prompt":"hi"}\n');
+  const none = hook({ AUTOMAGIK_HERDR_RUNTIME_DIRS: "" });
+  assert.equal(none.status, 127);
+  assert.match(none.stderr, /needs Node\.js 22\.7 or later, or Bun/);
+});
+
+test("hook merge: an older `node` hook is upgraded in place to the run.sh form, then left alone", () => {
+  // The form written before bin/run.sh (v0.3.4 and earlier).
+  const oldForm = (home) => `command -v node >/dev/null && node "${briefingPath(home).replace(/[\\"$`]/g, (c) => `\\${c}`)}" || true`;
+  for (const home of ["/h", '/odd "$HOME`', "/old-home"]) {
+    const text = JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [
+      { hooks: [{ type: "command", command: "brain recall" }] },
+      { hooks: [{ type: "command", command: oldForm(home), timeout: 10 }] },
+    ] } }, null, 2);
+    const up = mergeHook(text, hookCommand("/h"));
+    assert.equal(up.changed, true, home);
+    assert.deepEqual(JSON.parse(up.text), { permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [
+      { hooks: [{ type: "command", command: "brain recall" }] },
+      { hooks: [{ type: "command", command: hookCommand("/h"), timeout: 10 }] },
+    ] } }, "only our entry's command changes; never a second entry");
+    assert.deepEqual(mergeHook(up.text, hookCommand("/h")), { text: up.text, changed: false }, "a second run leaves it alone");
+  }
 });
 
 test("hook merge: keeps every other key and hook, adds ours once, updates a moved path, leaves odd files alone", () => {
@@ -264,9 +308,9 @@ async function scratch(t) {
       env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
         HERDR_BRIEFING_TIME_SCALE: String(SCALE), ...env },
     };
-    if (input === undefined) return run(process.execPath, [SCRIPT], options);
+    if (input === undefined) return run(RUNTIME, [SCRIPT], options);
     return new Promise((resolve, reject) => {
-      const child = execFile(process.execPath, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
+      const child = execFile(RUNTIME, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
       child.stdin.end(input);
     });
   };

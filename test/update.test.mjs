@@ -3,15 +3,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import {
   LATEST_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, installUpdate, latestRelease, noticeText, parseSums,
-  pickUpdate, prevDirOf, readVersion, rollback, stateDirOf, unsafeEntries, verifySha256,
+  pickUpdate, prevDirOf, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/spaces-agents/update.mjs";
+import { cmdUpdate } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
 
 const UPDATE = fileURLToPath(new URL("../mods/spaces-agents/update.mjs", import.meta.url));
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -346,4 +347,100 @@ test("update.mjs install needs --from and --version (install.sh's entry), else a
   const r = spawnSync(process.execPath, [script, "install", "--from", "/nowhere.tgz"], { encoding: "utf8" });
   assert.equal(r.status, 2);
   assert.match(r.stdout, /install --from <tgz> --version <v>/);
+});
+
+test("relinkCli: our link follows the pack's entry (the wrapper, or the .mjs before it); any other is left", (t) => {
+  const { home, mods } = appHome("0.4.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binDir = join(home, "local-bin"); // a scratch ~/.local/bin
+  mkdirSync(binDir);
+  const link = join(binDir, "automagik-herdr");
+  const bin = join(mods, "spaces-agents", "bin");
+  const wrapper = join(bin, "automagik-herdr"), mjs = join(bin, "automagik-herdr.mjs");
+  mkdirSync(bin);
+  writeFileSync(mjs, "#!/usr/bin/env node\n");
+  const point = (to) => { rmSync(link, { force: true }); symlinkSync(to, link); };
+  // A pack from before the wrapper: a link to the .mjs is already right; one to a missing wrapper is repointed.
+  point(mjs);
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  point(wrapper);
+  assert.deepEqual(relinkCli({ modsDir: mods, binDir }), { link, from: wrapper, to: mjs });
+  assert.equal(readlinkSync(link), mjs);
+  // A pack with the wrapper: the .mjs link (absolute or relative) moves to it, once.
+  writeFileSync(wrapper, "#!/bin/sh\n");
+  assert.deepEqual(relinkCli({ modsDir: mods, binDir }), { link, from: mjs, to: wrapper });
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  point(relative(binDir, mjs));
+  assert.equal(relinkCli({ modsDir: mods, binDir }).to, wrapper);
+  // Not ours: another target, a regular file, no link at all.
+  point("/somewhere/else/automagik-herdr.mjs");
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  assert.equal(readlinkSync(link), "/somewhere/else/automagik-herdr.mjs");
+  rmSync(link);
+  writeFileSync(link, "mine\n");
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  assert.equal(readFileSync(link, "utf8"), "mine\n");
+  rmSync(link);
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  assert.equal(existsSync(link), false);
+});
+
+test("update --rollback to a pack without the wrapper repoints the link at its .mjs, and back again", async (t) => {
+  const { home, mods } = appHome("0.4.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binDir = join(home, "local-bin");
+  mkdirSync(binDir);
+  const link = join(binDir, "automagik-herdr");
+  const pack = join(mods, "spaces-agents");
+  mkdirSync(join(pack, "bin"));
+  for (const f of ["automagik-herdr", "automagik-herdr.mjs"]) writeFileSync(join(pack, "bin", f), "x\n");
+  const prev = packDir(join(home, "automagik-herdr"), "0.3.2"); // the kept pack: no wrapper
+  cpSync(prev, prevDirOf(mods), { recursive: true });
+  rmSync(prev, { recursive: true });
+  mkdirSync(join(prevDirOf(mods), "bin"));
+  writeFileSync(join(prevDirOf(mods), "bin", "automagik-herdr.mjs"), "x\n");
+  symlinkSync(join(pack, "bin", "automagik-herdr"), link);
+  const io = { modsDir: mods, binDir, env: { HOME: join(home, "no-such-home") } };
+  const back = await cmdUpdate({ rollback: true }, [], io);
+  assert.match(back, /^Rolled back to Automagik Herdr 0\.3\.2 .* now points at .*automagik-herdr\.mjs\.$/);
+  assert.equal(readlinkSync(link), join(pack, "bin", "automagik-herdr.mjs"));
+  const json = await cmdUpdate({ rollback: true, json: true }, [], io);
+  assert.equal(json.rolledBack.version, "0.4.0");
+  assert.deepEqual(json.relinked, { link, from: join(pack, "bin", "automagik-herdr.mjs"), to: join(pack, "bin", "automagik-herdr") });
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+});
+
+test("update when already up to date (an older CLI did the update) still moves our link to the wrapper", async (t) => {
+  const { home, mods } = appHome("0.4.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binDir = join(home, "local-bin");
+  mkdirSync(binDir);
+  const link = join(binDir, "automagik-herdr");
+  const bin = join(mods, "spaces-agents", "bin");
+  mkdirSync(bin);
+  for (const f of ["automagik-herdr", "automagik-herdr.mjs"]) writeFileSync(join(bin, f), "x\n");
+  symlinkSync(join(bin, "automagik-herdr.mjs"), link);
+  const io = { modsDir: mods, binDir, env: {}, fetch: fakeFetch({ [LATEST_URL]: release("0.4.0") }) };
+  assert.equal(await cmdUpdate({ check: true }, [], io), "Automagik Herdr 0.4.0 is installed; the latest release is 0.4.0. Up to date.");
+  assert.equal(readlinkSync(link), join(bin, "automagik-herdr.mjs"), "--check changes nothing");
+  assert.match(await cmdUpdate({}, [], io), /Up to date\. .*automagik-herdr now points at .*bin\/automagik-herdr\.$/);
+  assert.equal(readlinkSync(link), join(bin, "automagik-herdr"));
+  assert.equal(await cmdUpdate({}, [], io), "Automagik Herdr 0.4.0 is installed; the latest release is 0.4.0. Up to date.", "idempotent");
+});
+
+test("any CLI start moves our link from the .mjs to the installed pack's wrapper (scratch HOME and app home)", (t) => {
+  const { home, mods } = appHome("0.4.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const bin = join(mods, "spaces-agents", "bin");
+  mkdirSync(bin);
+  for (const f of ["automagik-herdr", "automagik-herdr.mjs"]) writeFileSync(join(bin, f), "x\n");
+  const binDir = join(home, "home", ".local", "bin");
+  mkdirSync(binDir, { recursive: true });
+  const link = join(binDir, "automagik-herdr");
+  symlinkSync(join(bin, "automagik-herdr.mjs"), link);
+  const cli = fileURLToPath(new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url));
+  const r = spawnSync(process.execPath, [cli, "--version"], { encoding: "utf8",
+    env: { HOME: join(home, "home"), HERDR_APP_HOME: home, PATH: process.env.PATH, AUTOMAGIK_HERDR_NO_UPDATE: "1" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readlinkSync(link), join(bin, "automagik-herdr"));
 });

@@ -297,7 +297,7 @@ newest when there are several.
 
 Start and Attach add one `UserPromptSubmit` hook to `.claude/settings.local.json` in the
 bot's session folder, never to the shared `settings.json`, and keep that file out of git
-through the clone's own exclude file. The hook runs `node <app home>/mods/spaces-agents/briefing.mjs`.
+through the clone's own exclude file. The hook runs `sh <app home>/mods/spaces-agents/bin/run.sh <app home>/mods/spaces-agents/briefing.mjs` (nothing when run.sh is missing); a hook in the older `node` form is upgraded to it the next time the bot starts or attaches.
 It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
@@ -306,8 +306,9 @@ already running may need `/hooks` once to load the hook.
 ### Requirements
 
 - macOS, Herdr and herdr-core (`hc`).
-- Node 22.7 or later, for the CLI, the briefing and updates. The sidebar works without it, but
-  its update check needs it.
+- Node 22.7 or later, or Bun, for the CLI, the briefing and updates, found automatically
+  (`bin/run.sh`: node on PATH, nvm, Homebrew, then bun), even where PATH has no node.
+  install.sh needs Node. The sidebar works without either, but its update check needs Node.
 - herdr-core's typed notes left on (`~/.config/herdr-core/config.toml` must not say
   `notes = false`).
 
@@ -320,7 +321,7 @@ cp -R mods/spaces-agents ~/.config/herdr-app/mods/
 mkdir -p ~/.config/herdr-app/layouts ~/.local/bin
 cp mods/spaces-agents/layouts/automagik.json ~/.config/herdr-app/layouts/
 herdr-app do layout.switch '{"name":"automagik"}'
-ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr.mjs ~/.local/bin/automagik-herdr
+ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr ~/.local/bin/automagik-herdr
 ```
 
 Herdr never overwrites a mod folder that is already there. If you run your own

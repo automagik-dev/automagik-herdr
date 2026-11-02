@@ -190,6 +190,12 @@ node_ok() {
 }
 herdr_ok() { [ -d "$APPS/Herdr.app" ] || command -v herdr-app >/dev/null 2>&1; }
 
+# What $LINK points at: the pack's bin/automagik-herdr (it runs the .mjs through bin/run.sh, which
+# finds node 22.7+ or bun even where PATH has no node), or the .mjs itself in a pack from before it.
+cli_target() {
+  if [ -f "$PACK/bin/automagik-herdr" ]; then echo "$PACK/bin/automagik-herdr"; else echo "$PACK/bin/automagik-herdr.mjs"; fi
+}
+
 install() {
   # ---- a. macOS ----
   os=$(uname -s)
@@ -239,7 +245,7 @@ install() {
   [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-$WANT.tgz."
 
   installed=$(cat "$PACK/VERSION" 2>/dev/null || echo none)
-  target=$PACK/bin/automagik-herdr.mjs
+  target=$(cli_target)
   if [ "$installed" = "$VERSION" ] && [ -f "$MARK" ] && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
     say "Automagik Herdr $VERSION is already up to date ($PACK, $LINK)."
     offer_switch
@@ -303,6 +309,9 @@ install() {
   offer_switch
 
   # ---- e. the command ----
+  # A link to the older target (the .mjs, whose `#!/usr/bin/env node` needs node on PATH) is
+  # repointed at the wrapper like any other link; a regular file stays.
+  target=$(cli_target)
   chmod +x "$target"
   mkdir -p "$BIN_DIR"
   if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then

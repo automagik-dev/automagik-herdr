@@ -22,7 +22,8 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync,
+  symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -189,6 +190,38 @@ export function rollback({ modsDir = defaultModsDir(), name = PACK_NAME } = {}) 
   }
   if (had) renameSync(swap, prev);
   return { pack, prev: had ? prev : null, version: readVersion(pack) };
+}
+
+/** Where install.sh links the CLI: $HOME/.local/bin/automagik-herdr. */
+export const CLI_LINK = "automagik-herdr";
+/** $HOME/.local/bin, or null without a HOME (then no link is looked at). */
+export const binDirOf = (env = process.env) => (env.HOME ? join(env.HOME, ".local", "bin") : null);
+
+/**
+ * Points the CLI link at the entry the installed pack has: bin/automagik-herdr (it runs the .mjs
+ * through bin/run.sh, which finds node 22.7+ or bun where PATH has none) or, in a pack from before
+ * it (a rollback), bin/automagik-herdr.mjs. Only a link to one of those two in this pack is ours;
+ * a file, a missing link or one pointing elsewhere is left alone. Cheap (an lstat, a readlink)
+ * and idempotent: the CLI runs it on every start. Returns `{ link, from, to }` when it
+ * repointed the link, else null; throws only when the swap itself fails.
+ */
+export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir = binDirOf() } = {}) {
+  if (!binDir) return null;
+  const link = join(binDir, CLI_LINK);
+  if (!isLink(link)) return null;
+  const from = readlinkSync(link);
+  const bin = join(resolve(modsDir), name, "bin");
+  const wrapper = join(bin, "automagik-herdr");
+  const mjs = join(bin, "automagik-herdr.mjs");
+  const now = resolve(dirname(link), from);
+  if (now !== wrapper && now !== mjs) return null;
+  const to = isFile(wrapper) ? wrapper : mjs;
+  if (now === to) return null;
+  const tmp = join(binDir, `.${CLI_LINK}.relink-${process.pid}`);
+  rmSync(tmp, { force: true });
+  symlinkSync(to, tmp);
+  try { renameSync(tmp, link); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  return { link, from, to };
 }
 
 /** `{ current, latest, update, disabled }`: latest is the newest release's version or null; update from pickUpdate. */
