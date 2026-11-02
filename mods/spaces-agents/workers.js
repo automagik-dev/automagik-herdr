@@ -16,6 +16,9 @@ export const WORKER_EFFORT_LABEL = "worker.effort";
 /** The Claude session a terminal runs, set by the briefing hook when it changes. */
 export const SESSION_LABEL = "agent.session";
 
+/** A value the agent would read as an option (a model, a task text starting with a dash). */
+export const optionLike = (value) => typeof value === "string" && value.trimStart().startsWith("-");
+
 /** An effort level as the agents spell them (low, medium, high, xhigh, max, …). */
 export const EFFORT_SHAPE = /^[a-z][a-z0-9-]{0,31}$/;
 
@@ -47,6 +50,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     if (agent === fallback) model = defaults.model;
     else warnings.push(`${bot.name}'s worker model ${defaults.model} is for ${fallback}; ${agent} runs its own default.`);
   }
+  if (model && optionLike(model)) return { error: `"${model}" isn't a model: it starts with a dash, so ${agent} would read it as an option.` };
   let effort = pick.effort || defaults.effort || null;
   if (effort && !EFFORT_SHAPE.test(effort)) return { error: `"${effort}" isn't an effort level (low, medium, high, …).` };
   if (model && !modelArgs(agent, model).length) {
@@ -81,6 +85,9 @@ export function branchSlug(branch) {
   return String(branch).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 64) || "task";
 }
 
+/** The exclude line that keeps task worktrees out of the main checkout's `git add -A`. */
+export const WORKTREES_EXCLUDE = "/.claude/worktrees/";
+
 /** Where a new task worktree goes: `<main checkout>/.claude/worktrees/<slug>`. */
 export const worktreeFolder = (mainCheckout, branch) => `${mainCheckout === "/" ? "" : mainCheckout.replace(/\/+$/, "")}/.claude/worktrees/${branchSlug(branch)}`;
 
@@ -100,14 +107,14 @@ export function parseWorktrees(text) {
 
 /**
  * The refs a new task branch may start from, in order: `--base` alone when given; else
- * origin/HEAD's branch, then dev, then main (each as origin's, then local). The caller takes
+ * origin/HEAD's branch, then dev, then main, then master (each as origin's, then local). The caller takes
  * the first that git verifies.
  */
 export function baseCandidates(given, originHead) {
   if (given) return [given];
   const out = [];
   if (originHead) out.push(originHead);
-  for (const name of ["dev", "main"]) out.push(`origin/${name}`, name);
+  for (const name of ["dev", "main", "master"]) out.push(`origin/${name}`, name);
   return [...new Set(out)];
 }
 

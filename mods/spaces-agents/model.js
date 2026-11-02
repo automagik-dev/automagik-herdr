@@ -78,7 +78,9 @@ export function workerProblem(worker) {
   if (worker === undefined) return null;
   if (!isObject(worker)) return "worker is not an object";
   const bad = WORKER_FIELDS.filter((k) => worker[k] !== undefined && !isText(worker[k]));
-  return bad.length ? `worker ${bad.join(", ")} not text` : null;
+  if (bad.length) return `worker ${bad.join(", ")} not text`;
+  const dashed = WORKER_FIELDS.filter((k) => typeof worker[k] === "string" && worker[k].trimStart().startsWith("-"));
+  return dashed.length ? `worker ${dashed.join(", ")} starts with a dash (an agent would read it as an option)` : null;
 }
 
 /**

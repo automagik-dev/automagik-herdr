@@ -168,11 +168,11 @@ export function mergeHook(existing, command) {
 /** The line that keeps every per-person settings file out of git, local to one clone. */
 export const EXCLUDE_LINE = "**/.claude/settings.local.json";
 
-/** An exclude file's text with EXCLUDE_LINE added (null: no file yet), or null when it is there. */
-export function withExclude(existing) {
+/** An exclude file's text with `line` added (null: no file yet), or null when it is there. */
+export function withExclude(existing, line = EXCLUDE_LINE) {
   const text = existing ?? "";
-  if (text.split("\n").some((l) => l.trim() === EXCLUDE_LINE)) return null;
-  return `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${EXCLUDE_LINE}\n`;
+  if (text.split("\n").some((l) => l.trim() === line)) return null;
+  return `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${line}\n`;
 }
 
 // ---- a member's latest report (Decision 10), shared by briefing.mjs and the CLI ----
@@ -246,13 +246,14 @@ export async function ensureExcluded(folder, io) {
  * (never the shared settings.json) and keeps that file out of git. Writes nothing when the
  * pack's briefing.mjs isn't under `appHome`. Never rejects: every problem is a warning.
  * Resolves { written, warnings } (`written`: the hook entry was added or updated).
+ * `lost`: what a failure costs, for the warnings (default: the bot's briefing).
  */
-export async function installHook(botName, folder, appHome, io) {
+export async function installHook(botName, folder, appHome, io, { lost = null } = {}) {
   const warnings = [];
   const script = briefingPath(appHome);
   try {
     if ((await io.read(script)) === null) {
-      warnings.push(`${botName} gets no per-turn briefing: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
+      warnings.push(`${lost ?? `${botName} gets no per-turn briefing`}: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
         + "whose name is taken. The README's install step fixes it: move the old spaces-agents clone out of mods/, remove the "
         + "renamed copy, and copy the pack in again as mods/spaces-agents.");
       return { written: false, warnings };
@@ -269,7 +270,7 @@ export async function installHook(botName, folder, appHome, io) {
     await io.write(path, merged.text, before);
     return { written: true, warnings };
   } catch (e) {
-    warnings.push(`${botName} gets no briefing: ${e?.message ?? e}`);
+    warnings.push(`${lost ?? `${botName} gets no briefing`}: ${e?.message ?? e}`);
     return { written: false, warnings };
   }
 }

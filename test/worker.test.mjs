@@ -3,7 +3,7 @@
 // with the fake `hc` first on PATH (test/fake-hc.mjs). The real hc is never run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,12 +34,12 @@ const term = (address, { bot: b, cwd }) => ({ address, name: address, cwd, state
   labels: b ? { bot: b } : {}, foreground: { argv: ["claude"], cwd, pid: 4000 }, status: { app: "claude-code", state: "idle" } });
 
 /** A scratch world: a git project on main with its bots, a fake hc whose t1..t3 are panes in it. */
-function scene(t, { file = team() } = {}) {
+function scene(t, { file = team(), branch = "main", briefing = true } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-worker-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
   mkdirSync(project);
-  git(project, "init", "-q", "-b", "main");
+  git(project, "init", "-q", "-b", branch);
   git(project, "commit", "-q", "--allow-empty", "-m", "start");
   mkdirSync(join(project, ".herdr"));
   writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
@@ -51,7 +51,7 @@ function scene(t, { file = team() } = {}) {
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
   mkdirSync(join(app, "mods/spaces-agents"), { recursive: true });
-  writeFileSync(join(app, "mods/spaces-agents/briefing.mjs"), "// stand-in\n");
+  if (briefing) writeFileSync(join(app, "mods/spaces-agents/briefing.mjs"), "// stand-in\n");
   const statePath = join(root, "hc.json");
   const logPath = join(root, "hc.log");
   const terminals = [term("t1", { bot: ID.dev, cwd: project }), term("t2", { cwd: project }), term("t3", { bot: ID.stray, cwd: project }),
@@ -64,12 +64,21 @@ function scene(t, { file = team() } = {}) {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: from ? { ...env, HC_TERMINAL_ID: from } : env, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
+  const cliAsync = (args, { from = "t1" } = {}) => new Promise((resolve) => {
+    execFile(process.execPath, [CLI, ...args], { cwd: project, env: { ...env, HC_TERMINAL_ID: from }, encoding: "utf8" },
+      (e, out, err) => resolve({ code: e ? e.code : 0, out, err }));
+  });
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const runs = () => calls().filter((c) => c[0] === "run");
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const ledger = () => { const p = join(app, "automagik-herdr/workers.jsonl"); return existsSync(p) ? readLedger(readFileSync(p, "utf8")) : []; };
   const bots = () => JSON.parse(readFileSync(join(project, ".herdr/bots.json"), "utf8"));
-  return { root, project, app, cli, calls, runs, hcState, ledger, bots };
+  const finish = (address) => {
+    const st = hcState();
+    st.terminals.find((x) => x.address === address).state = "finished";
+    writeFileSync(statePath, JSON.stringify(st));
+  };
+  return { root, project, app, cli, cliAsync, calls, runs, hcState, ledger, bots, finish };
 }
 const after = (args) => args.slice(args.indexOf("--") + 1);
 const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
@@ -83,7 +92,7 @@ test("worker: the bot's worker defaults are used, and per-task --agent/--model/-
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["codex", "gpt-5.5", "medium"]);
   assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
-  const o = s.cli(["worker", "review it", "--branch", "feat/login", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
+  const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
   assert.deepEqual(after(s.runs()[1]), ["claude", "--model", "opus", "--effort", "max", "review it"]);
@@ -125,7 +134,8 @@ test("worker --branch creates the task worktree from the base; a second call reu
   assert.equal(first.json().base, "dev", "dev before main when there is no origin");
   assert.equal(git(wt, "symbolic-ref", "--short", "HEAD").trim(), "feat/login");
   assert.equal(git(s.project, "symbolic-ref", "--short", "HEAD").trim(), "main");
-  const second = s.cli(["worker", "two", "--branch", "feat/login", "--json"]);
+  // Another bot's worker on the same task (dev, tester and reviewer share a worktree).
+  const second = s.cli(["worker", "two", "--branch", "feat/login", "--json"], { from: "t4" });
   assert.equal(second.code, 0, second.err);
   assert.equal(second.json().worktree, wt);
   assert.equal(second.json().created, false);
@@ -315,7 +325,7 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(branchSlug("Feat/Login Form"), "feat-login-form");
   assert.deepEqual(parseWorktrees("worktree /p\nHEAD 1\nbranch refs/heads/main\n\nworktree /p/w\nHEAD 2\ndetached\n"),
     [{ path: "/p", branch: "main", detached: false, bare: false }, { path: "/p/w", branch: null, detached: true, bare: false }]);
-  assert.deepEqual(baseCandidates(null, "origin/dev"), ["origin/dev", "dev", "origin/main", "main"]);
+  assert.deepEqual(baseCandidates(null, "origin/dev"), ["origin/dev", "dev", "origin/main", "main", "origin/master", "master"]);
   assert.deepEqual(baseCandidates("v1", "origin/dev"), ["v1"]);
   assert.equal(startRow({ kind: "seat", terminal: "t1", botId: ID.main, at: 0 }).at, "1970-01-01T00:00:00.000Z");
   assert.deepEqual(readLedger('{"a":1}\n{torn\n\n[1]\n{"b":2}\n'), [{ a: 1 }, { b: 2 }]);
@@ -334,4 +344,63 @@ test("the bot briefing says a bot doesn't code: one worker per task, checked, en
   assert.match(WORKER_LINE, /automagik-herdr worker/);
   assert.match(WORKER_LINE, /hc kill/);
   assert.ok(text.length <= BRIEFING_LIMIT);
+});
+
+// ---- review fixes ----
+
+test("worker: one live worker per task per bot, named in the refusal; other bots may share the task", async (t) => {
+  const s = scene(t);
+  assert.equal(s.cli(["worker", "one", "--branch", "feat/login"]).code, 0);
+  const again = s.cli(["worker", "again", "--branch", "feat/login"]);
+  assert.equal(again.code, 1);
+  assert.match(again.err, /Dev already has a live worker on feat\/login: t100\. Check it \(hc read t100\) or end it \(hc kill t100\)/);
+  assert.equal(s.runs().length, 1);
+  assert.equal(s.cli(["worker", "test it", "--branch", "feat/login"], { from: "t4" }).code, 0, "the captain's worker on the same task");
+  s.finish("t100");
+  assert.equal(s.cli(["worker", "again", "--branch", "feat/login"]).code, 0, "the first one ended: a new one may start");
+  // Two calls at once for the same task: one starts, the other is refused.
+  const both = await Promise.all([s.cliAsync(["worker", "c", "--branch", "feat/conc"]), s.cliAsync(["worker", "c", "--branch", "feat/conc"])]);
+  assert.deepEqual(both.map((r) => r.code).sort(), [0, 1]);
+  assert.equal(s.runs().filter((r) => r.includes("task=feat/conc")).length, 1);
+});
+
+test("worker: a model starting with a dash is refused, from --model, --worker-model or bots.json", (t) => {
+  const file = team();
+  file.bots[2].worker = { agent: "claude", model: "--dangerously-skip-permissions" };
+  const s = scene(t, { file });
+  const flag = s.cli(["worker", "x", "--branch", "feat/x", "--model=--dangerously-skip-permissions"]);
+  assert.equal(flag.code, 2);
+  assert.match(flag.err, /starts with a dash/);
+  assert.equal(s.cli(["edit", "Genie", "--worker-model=-x"], { from: null }).code, 2);
+  // The stored one is invalid: dropped on reading, so the worker runs its agent's default.
+  assert.match(parseBots(JSON.stringify(file)).warnings.join("\n"), /worker model starts with a dash/);
+  const r = s.cli(["worker", "x", "--branch", "feat/x", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(after(s.runs()[0]), ["claude", "x"]);
+});
+
+test("worker: task worktrees are excluded from the main checkout; master is the last base; colliding folders are named", (t) => {
+  const s = scene(t, { branch: "master" });
+  const r = s.cli(["worker", "x", "--branch", "feat/a", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().base, "master");
+  assert.ok(readFileSync(join(s.project, ".git/info/exclude"), "utf8").split("\n").includes("/.claude/worktrees/"));
+  const status = git(s.project, "status", "--porcelain", "--untracked-files=all");
+  assert.equal(status.split("\n").some((l) => l.includes(".claude/")), false, status);
+  const clash = s.cli(["worker", "y", "--branch", "Feat-A"]);
+  assert.equal(clash.code, 1);
+  assert.match(clash.err, /Branch Feat-A uses the same folder as branch feat\/a/);
+});
+
+test("worker: --project must be the calling pane's project; a missing hook script names the usage link", (t) => {
+  const s = scene(t, { briefing: false });
+  const other = join(s.root, "plain");
+  mkdirSync(other);
+  const r = s.cli(["worker", "x", "--branch", "feat/x", "--project", other]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /--project .*plain isn't the project of t1/);
+  assert.equal(s.cli(["worker", "x", "--branch", "feat/x", "--project", s.project, "--agent", "claude"]).code, 0);
+  const w = s.cli(["worker", "y", "--branch", "feat/y", "--agent", "claude"]);
+  assert.match(w.err, /The feat\/y worker's Claude session won't be linked to usage/);
+  assert.doesNotMatch(w.err, /gets no/);
 });

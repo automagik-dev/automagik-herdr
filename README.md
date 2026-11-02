@@ -130,8 +130,12 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
 - **Where:** `--worktree DIR` uses an existing worktree of the bot's project. `--branch B`
   reuses the worktree already on `B`, or makes `<main checkout>/.claude/worktrees/<slug>`
   with `git worktree add -b B`. After a fetch, a new branch starts from `--base`, else
-  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`. The main checkout is
-  never a worker's folder, and its HEAD is never moved.
+  `origin/B`, else origin/HEAD's branch, else `dev`, else `main`, else `master`. The main
+  checkout is never a worker's folder, and its HEAD is never moved. `/.claude/worktrees/` goes
+  into the clone's own git exclude, so `git add -A` in the main checkout never picks a
+  worktree up.
+- **One per task:** a bot gets one live worker per task. A second `worker` for the same bot
+  and branch is refused and names the live one; other bots' workers may share the task.
 - **What runs:** `--agent`, `--model` and `--effort` for this task, else the bot's `worker`
   defaults in `.herdr/bots.json`, else the bot's own agent with that agent's defaults. A
   default model belongs to the default worker agent, so a task that picks another agent
@@ -148,10 +152,13 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   once the task merges. The bot's briefing says so every turn. As an hc child, a worker
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
-  `<app home>/automagik-herdr/workers.jsonl` (`kind` `worker` or `seat`, terminal, pid,
-  bot, task, worktree, agent, model, effort, time). The briefing hook appends a `session` row
-  and sets the terminal's `agent.session` label when a Claude session changes. The rows
-  outlive the terminals, so usage can be tied to bots and tasks afterwards.
+  `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
+  terminal, pid, botId, task, worktree, agent, model, effort, at }` (`at` is ISO 8601; a
+  seat's `task` is null). The briefing hook appends `{ event: "session", terminal, session,
+  transcript, at }` and sets the terminal's `agent.session` label when a Claude session
+  changes. A session row can repeat when the label write fails, so consumers dedupe session
+  rows on (terminal, session). There is no end row: a worker's end comes from hc or from its
+  session. The rows outlive the terminals, so usage can be tied to bots and tasks afterwards.
 
 ## The Create form
 

@@ -21,11 +21,11 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
   paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
-import { installHook } from "../briefingText.mjs";
+import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, LEDGER_FILE, baseCandidates, branchSlug, ledgerLine, ledgerPath, parseWorktrees, startRow, workerArgs,
-  workerPlan, worktreeFolder } from "../workers.js";
+import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
+  ledgerPath, optionLike, parseWorktrees, startRow, workerArgs, workerPlan, worktreeFolder } from "../workers.js";
 import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 
@@ -192,20 +192,28 @@ function takeOverStale(lock) {
   try { unlinkSync(aside); } catch { /* gone already */ }
 }
 
-function withLock(lock, fn) {
+function takeLock(lock) {
   const token = `${process.pid} ${randomUUID()}`;
   const until = Date.now() + LOCK_WAIT;
   for (;;) {
-    try { writeFileSync(lock, token, { flag: "wx" }); break; } catch (e) {
+    try { writeFileSync(lock, token, { flag: "wx" }); return token; } catch (e) {
       if (e?.code !== "EEXIST") throw e;
       takeOverStale(lock);
       if (Date.now() > until) throw new Error(`${lock} is held by another automagik-herdr`);
       pause(5 + Math.floor(Math.random() * 20));
     }
   }
-  try { return fn(); } finally {
-    try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
-  }
+}
+function dropLock(lock, token) {
+  try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
+}
+function withLock(lock, fn) {
+  const token = takeLock(lock);
+  try { return fn(); } finally { dropLock(lock, token); }
+}
+async function withLockAsync(lock, fn) {
+  const token = takeLock(lock);
+  try { return await fn(); } finally { dropLock(lock, token); }
 }
 
 /**
@@ -310,8 +318,8 @@ const hookIo = {
 };
 
 /** Merges the per-turn briefing hook for a Claude bot; never throws: { written, warnings }. */
-export function writeBriefingHook(bot, folder, appHomeDir = appHome()) {
-  return installHook(bot.name, folder, appHomeDir, hookIo);
+export function writeBriefingHook(bot, folder, appHomeDir = appHome(), options = {}) {
+  return installHook(bot.name, folder, appHomeDir, hookIo, options);
 }
 
 // ---- arguments ----
@@ -503,6 +511,7 @@ function workerDefaults(opts, entry) {
   const model = opts["worker-model"];
   if (model === "") delete w.model;
   else if (model !== undefined) {
+    if (optionLike(model)) throw new CliError(`--worker-model: "${model}" starts with a dash, so an agent would read it as an option.`, 2);
     const agent = w.agent ?? entry.agent;
     const list = agent ? knownModels(agent, modelIo()) : [];
     if (list.length && !list.includes(model)) throw new CliError(`--worker-model: ${model} isn't a known ${agent} model. Pick one of: ${list.join(", ")}.`);
@@ -920,7 +929,11 @@ async function callingBot(opts) {
   const address = me.address ?? self;
   const botId = me.labels?.[BOT_LABEL];
   if (!botId) throw new CliError(`${address} isn't a bot's pane (it has no ${BOT_LABEL} label). Only a bot starts workers.`);
-  const key = opts.project !== undefined ? await namedKeyOf(opts.project) : await keyOf(me.cwd ?? me.foreground?.cwd ?? process.cwd());
+  const key = await keyOf(me.cwd ?? me.foreground?.cwd ?? process.cwd());
+  if (opts.project !== undefined) {
+    const named = await namedKeyOf(opts.project);
+    if (named !== key) throw new CliError(`--project ${named} isn't the project of ${address}, ${key}. A bot starts workers only in its own project.`);
+  }
   const project = loadProject(key);
   const bot = project.file.bots.find((b) => b.id === botId);
   if (!bot) throw new CliError(`${address} plays bot ${botId}, which ${under(key, BOTS_PATH)} doesn't define. A bot starts workers only in its own project.`);
@@ -964,7 +977,14 @@ async function branchWorktree(branch, base, key, warnings) {
     return { worktree: realDir(hit.path) ?? hit.path, branch, created: false, base: null };
   }
   const path = worktreeFolder(key, branch);
+  const same = parseWorktrees(listed).find((w) => (realDir(w.path) ?? w.path) === (realDir(path) ?? path));
+  if (same) {
+    throw new CliError(`Branch ${branch} uses the same folder as branch ${same.branch ?? "(a detached HEAD)"}: ${path}. `
+      + "Pick another branch name, or pass --worktree to work in that one.");
+  }
   if (existsSync(path)) throw new CliError(`${path} is there already, but not as a worktree on ${branch}. Move it, or pass --worktree.`);
+  const unexcluded = await excludeWorktrees(key);
+  if (unexcluded) warnings.push(unexcluded);
   const has = async (ref) => (await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], key)) !== null;
   let args;
   let from = null;
@@ -987,10 +1007,36 @@ async function branchWorktree(branch, base, key, warnings) {
   return { worktree: realDir(path) ?? path, branch, created: true, base: from };
 }
 
+/**
+ * Keeps the task worktrees out of the main checkout's `git add -A`: WORKTREES_EXCLUDE in the
+ * clone's own exclude file, as the briefing hook's settings file is. A warning, or null.
+ */
+async function excludeWorktrees(key) {
+  let path = null;
+  try {
+    path = (await git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], key))?.trim() || null;
+    if (!path) throw new Error("git gave no exclude path");
+    const before = readText(path);
+    const after = withExclude(before, WORKTREES_EXCLUDE);
+    if (after === null) return null;
+    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    await hookIo.write(path, after, before);
+    return null;
+  } catch (e) {
+    return `Couldn't add ${WORKTREES_EXCLUDE} to ${path ?? "the git exclude file"} (${e?.message ?? e}); keep .claude/worktrees out of the main checkout's commits.`;
+  }
+}
+
+/** The live terminals carrying this bot's worker label for `branch` (any machine hc reaches). */
+async function liveWorkers(botId, branch) {
+  const rows = rowsOf(await hcJson(["ls", "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`]));
+  return rows.filter((r) => r?.address && (r.state === undefined || r.state === "live")).map((r) => r.address);
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
-  if (task.startsWith("-")) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
+  if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
   if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
   const { me, bot, project } = await callingBot(opts);
@@ -1005,16 +1051,31 @@ async function cmdWorker(opts, rest) {
     : await branchWorktree(opts.branch, opts.base, project.key, warnings);
   // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
   // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
-  if (plan.agent === "claude") warnings.push(...(await writeBriefingHook(bot, place.worktree)).warnings);
-  const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
-  const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-  const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
-    model: plan.model, effort: plan.effort, argv: plan.argv, task });
-  const r = await hc(args);
-  if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
-  let terminal = null;
-  try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
-  if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
+  if (plan.agent === "claude") {
+    const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
+    warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
+  }
+  // One live worker per task per bot (other bots' workers may share the task), checked and
+  // started under a lock per bot, so two calls at once can't both pass the check.
+  const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
+  try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
+  const terminal = await withLockAsync(`${lockDir}/worker-${bot.id}.lock`, async () => {
+    const live = await liveWorkers(bot.id, place.branch);
+    if (live.length) {
+      throw new CliError(`${bot.name} already has a live worker on ${place.branch}: ${live.join(", ")}. `
+        + `Check it (hc read ${live[0]}) or end it (hc kill ${live[0]}) before starting another.`);
+    }
+    const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
+    const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
+    const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
+      model: plan.model, effort: plan.effort, argv: plan.argv, task });
+    const r = await hc(args);
+    if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
+    let address = null;
+    try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
+    if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
+    return address;
+  }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: place.branch, worktree: place.worktree,
     agent: plan.agent, model: plan.model, effort: plan.effort }));
