@@ -316,7 +316,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     const before = readMarker(modsDir);
     const record = {
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
-      migrated: [...(before?.migrated ?? [])],
+      migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);

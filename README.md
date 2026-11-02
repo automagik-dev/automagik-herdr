@@ -30,7 +30,8 @@ It never touches anything it did not install:
   `automagik-herdr/backup/<mod>-<date>/`, where it stays until `--uninstall` puts it back;
 - the folders an install or update replaces are kept together in `automagik-herdr/.prev/`;
 - each mod's `.state/`, other dot paths and `node_modules` move into its new copy (a linked
-  `.state` stays a link), and Pocket Link (`mods/pocket-link`) is never read, written or moved.
+  `.state` stays a link), and Pocket Link (`mods/pocket-link`) is never read, written or moved
+  (`--uninstall` only checks that it is there, to leave the usagemeter it shares).
 
 It adds the `automagik` layout (Herdr's main layout with the Automagik sidebar) when you have
 none, and replaces it only while it is v0.2's unchanged copy. The sidebar shows only in that
@@ -40,6 +41,15 @@ after `bash -s --`: `--yes` answers every question, `--version 0.3.0` installs t
 (v0.3.0 or later), `--adopt` takes over same-named mods, `--uninstall` moves the pack out of
 `mods/`, puts back what it adopted and removes the layout if the installer added it and you
 haven't changed it.
+
+It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.2.0, the token
+meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
+`SHA256SUMS`, written atomically. It skips the download when that version is already there and
+never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
+sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
+time; there is no LaunchAgent and no daemon. `--no-usagemeter` skips the install; a failed one is
+only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
+that version and Pocket Link is not installed; usagemeter's data is kept.
 
 **From v0.2:** rerun the one-liner above. v0.2's own `automagik-herdr update` finds nothing
 newer, because later releases ship the whole pack under a new name.
