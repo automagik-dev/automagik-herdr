@@ -7,7 +7,13 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { exec, appHome, readTextFile, writeTextFile, shared, setShared, props, closeOverlay, notify, theme, layout } from "herdr";
 import * as core from "./core.js";
 
-const RECORDS = "mod-manager.installed";
+const RECORDS = "am.mods.installed";
+// The rename shim (D12): the list from before the rename is copied over once on load, and the old
+// key stays (spaces-agents/migrate.js SHARED_RENAMES).
+const SHARED_OLD = Object.freeze({ "mod-manager.installed": RECORDS });
+function carryShared() {
+  for (const [old, now] of Object.entries(SHARED_OLD)) if (shared(now) == null && shared(old) != null) setShared(now, shared(old));
+}
 const PAGE = 10;
 const FETCH = 50;
 const FOOTER = {
@@ -38,6 +44,7 @@ const short = (sha) => (sha ? sha.slice(0, 7) : "?");
 
 export default class ModManager extends View {
   init(_props, cx) {
+    carryShared();
     this.mode = "list";
     this.checks = {};
     this.catalog = null;

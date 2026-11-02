@@ -42,10 +42,17 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 // To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
 function toggleSidebar() {
   const width = find(layout(), "sidebar")?.size?.px;
-  if (!narrow()) setShared("sidebar.width", width);
-  // Mods edited before the rail went by width still read the flag.
-  setShared("sidebar.collapsed", !narrow());
-  run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
+  if (!narrow()) setShared("am.sidebar.width", width);
+  // The sidebar mod still reads the flag.
+  setShared("am.sidebar.collapsed", !narrow());
+  run("layout.resize", { id: "sidebar", px: narrow() ? (shared("am.sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
+}
+
+// The rename shim (D12): the rail's shared keys live under am.*; the values from before the rename
+// are copied over once on load, and the old keys stay (spaces-agents/migrate.js SHARED_RENAMES).
+export const SHARED_OLD = Object.freeze({ "sidebar.width": "am.sidebar.width", "sidebar.collapsed": "am.sidebar.collapsed" });
+function carryShared() {
+  for (const [old, now] of Object.entries(SHARED_OLD)) if (shared(now) == null && shared(old) != null) setShared(now, shared(old));
 }
 
 // The Mods tab: the one already showing, else a new one. A tab, so it can be resized and
@@ -83,6 +90,7 @@ export default class WorkspaceChrome extends View {
   init(_given, cx) {
     // The Bots popup is its own copy of this mod: it draws two lines and looks nothing up.
     if (props()?.botsMenu) return;
+    carryShared();
     this.pocket = false;
     this.bots = false;     // the Bots tab: only while the sidebar mod (spaces-agents) is installed
     this.phone = false;

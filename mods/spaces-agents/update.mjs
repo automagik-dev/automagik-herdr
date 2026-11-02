@@ -23,6 +23,12 @@
 //   installed-by-install.sh   the ownership record (release.js parseMarker)
 //   .prev/                    the set the last install, update or rollback replaced (.prev/.pack lists it)
 //   backup/<mod>-<date>/      a folder the person owned, moved aside on --adopt; never replaced
+//   backup/layouts-<date>/    the rename migration's backups and journal (migrateHome.mjs)
+//
+// Across the rename (Group 6a, D12) an old-named folder the record lists hands its private paths
+// to its am-* folder and leaves with the kept set; a person's own is left, or adopted on --adopt.
+// After the folders, layouts and keys.json follow the renamed folders (migrateHome.mjs), and a
+// rollback across the rename reverts those edits from the journal.
 //
 // Needs Node 22.7 or later: the installed pack has no package.json, so Node loads release.js
 // (shared with the mod, whose loader takes .js) as ESM by detecting its syntax.
@@ -34,19 +40,23 @@ import {
   statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   CATALOG_URL, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
+import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
+import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
   noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
 
 const run = promisify(execFile);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+/** Catalog URLs the pack itself has written (the current one, and the `main` one an early pack wrote). */
+const PACK_CATALOG_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
 /** The version of a pack with no VERSION file: one installed before releases, older than any. */
 export const UNRELEASED = "0.0.0";
 
@@ -65,6 +75,9 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const today = () => new Date().toISOString().slice(0, 10);
 /** A folder name the pack may own: lowercase words and dashes, never Pocket Link's. */
 const packFolder = (name) => /^[a-z0-9][a-z0-9-]*$/.test(name) && name !== POCKET_LINK;
+/** The other name of a renamed folder (old → am-*, am-* → old), or undefined. */
+const OLD_OF = Object.fromEntries(Object.entries(RENAMES).map(([old, now]) => [now, old]));
+const twinOf = (name) => (Object.hasOwn(RENAMES, name) ? RENAMES[name] : Object.hasOwn(OLD_OF, name) ? OLD_OF[name] : undefined);
 
 /** The version a pack folder carries in its VERSION file (UNRELEASED when it has none). */
 export function readVersion(packDir) {
@@ -301,11 +314,21 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     if (carried !== version) throw new Error(`${tgzPath} carries VERSION ${carried}, not ${version}: refusing it`);
 
     const before = readMarker(modsDir);
-    const record = { version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])] };
+    const record = {
+      version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
+      migrated: [...(before?.migrated ?? [])],
+    };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], left: [], adopted: [], retired: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [] };
     const moves = [];
+    // A folder the person owns moves to backup/ (never replaced) and is recorded, so --uninstall puts it back.
+    const adoptFolder = (m) => {
+      const name = backupName(modsDir, m);
+      moves.push([join(modsDir, m), join(backupOf(modsDir), name)]);
+      plan.adopted.push({ mod: m, backup: join(backupOf(modsDir), name) });
+      record.adopted.push({ mod: m, path: `backup/${name}` });
+    };
     for (const m of folders) {
       const live = join(modsDir, m), fresh = join(staging, m);
       if (isLink(live)) {
@@ -314,8 +337,15 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
         continue;
       }
       if (!exists(live)) {
-        // A folder a rollback or --uninstall moved into the kept set comes back with its state.
-        if (kept?.mods.includes(m)) carryPrivate(join(prevSetOf(modsDir), m), fresh);
+        // Across the rename: the old-named folder's private paths come into its am-* folder. The
+        // record's leaves with the kept set (below); a person's own is left, or adopted.
+        const old = own(OLD_OF, m), oldLive = old && join(modsDir, old);
+        if (old && exists(oldLive) && !isLink(oldLive)) {
+          if (owned.has(old)) { carryPrivate(oldLive, fresh); plan.renamed.push([old, m]); }
+          else if (adopt) { carryPrivate(oldLive, fresh); adoptFolder(old); }
+          else plan.left.push(old);
+        } else if (kept?.mods.includes(m)) carryPrivate(join(prevSetOf(modsDir), m), fresh);
+        // (A folder a rollback or --uninstall moved into the kept set comes back with its state.)
         plan.installed.push(m);
       } else if (owned.has(m)) {
         carryPrivate(live, fresh);
@@ -323,16 +353,21 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
         plan.replaced.push(m);
       } else if (adopt) {
         carryPrivate(live, fresh);
-        const name = backupName(modsDir, m);
-        moves.push([live, join(backupOf(modsDir), name)]);
-        plan.adopted.push({ mod: m, backup: join(backupOf(modsDir), name) });
-        record.adopted.push({ mod: m, path: `backup/${name}` });
+        adoptFolder(m);
       } else {
         plan.left.push(m);
         continue;
       }
       moves.push([fresh, live]);
       record.mods.push(m);
+    }
+    // A mod another pack mod took in (space-icon, markdown-browser): the record's leaves with the
+    // set (below); a person's own is left, or adopted, once the mod that took it in is shipped.
+    for (const [m, into] of Object.entries(ABSORBED)) {
+      const live = join(modsDir, m);
+      if (owned.has(m) || !exists(live) || isLink(live) || !(folders.includes(into) || folders.includes(RENAMES[into]))) continue;
+      if (adopt) adoptFolder(m);
+      else plan.left.push(m);
     }
     // A folder the record lists that this release no longer ships leaves mods/ with the set.
     for (const m of owned) {
@@ -356,7 +391,10 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     try { writeMarker(modsDir, record); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     keepSet(modsDir, next, keep, before, old, rename, warnings);
-    for (const m of plan.left) log(`left alone: mods/${m} (not installed by automagik-herdr; --adopt moves it to backup/ and installs the pack's)`);
+    for (const m of plan.left) {
+      const why = Object.hasOwn(ABSORBED, m) ? "the pack's sidebar or Markdown mod does its job now" : "--adopt moves it to backup/ and installs the pack's";
+      log(`left alone: mods/${m} (not installed by automagik-herdr; ${why})`);
+    }
     for (const a of plan.adopted) log(`adopted mods/${a.mod}: the original is kept in ${a.backup}`);
     for (const w of warnings) log(`warning: ${w}`);
     return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, warnings };
@@ -371,7 +409,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
  * every folder of the kept one comes back (private paths carried over), so a second rollback
  * undoes the first. Refuses, changing nothing, when a folder in the way is not the record's.
  */
-export function rollback({ modsDir = defaultModsDir(), rename = renameSync } = {}) {
+export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log = () => {} } = {}) {
   const set = readSet(modsDir);
   const prev = prevSetOf(modsDir);
   if (!set || set.mods.length === 0) throw new Error(`no earlier pack kept at ${prev}: nothing to roll back to`);
@@ -392,6 +430,10 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync } = {
       carryPrivate(live, join(prev, m));
       moves.push([live, join(next, m)]);
       out.push(m);
+    } else {
+      // Across the rename: the live twin's private paths go back with it (it leaves below).
+      const twin = twinOf(m), twinLive = twin && join(modsDir, twin);
+      if (twin && owned.has(twin) && !set.mods.includes(twin) && exists(twinLive) && !isLink(twinLive)) carryPrivate(twinLive, join(prev, m));
     }
     moves.push([join(prev, m), live]);
   }
@@ -409,12 +451,98 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync } = {
     throw error;
   }
   const warnings = [];
-  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+  // A folder the person had, adopted into backup/, comes back where mods/ is free once this
+  // rollback drops the pack's copy of it (Group 3, D10): its own name or its renamed twin left
+  // mods/; a mod the pack absorbed comes back when the set rolled back to has no am-* mod that
+  // absorbed it (am-sidebar, am-markdown). Decided from the pack's sets only, never from a
+  // person's folder that shares a name.
+  const left = new Set(out);
+  const dropped = (m) => {
+    const into = own(ABSORBED, m);
+    if (into) return !set.mods.includes(own(RENAMES, into) ?? into);
+    const copies = [m, twinOf(m)].filter(Boolean);
+    return copies.some((c) => left.has(c)) && !copies.some((c) => set.mods.includes(c));
+  };
+  const adopted = [];
+  for (const a of record.adopted) {
+    const from = join(stateDirOf(modsDir), a.path), to = join(modsDir, a.mod);
+    if (exists(to) || !exists(from) || isLink(from) || !dropped(a.mod)) { adopted.push(a); continue; }
+    try { renameSync(from, to); log(`put back mods/${a.mod} from ${a.path}`); } catch (error) {
+      warnings.push(`mods/${a.mod} stays in ${from} (${error.message})`);
+      adopted.push(a);
+    }
+  }
+  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
   let old = null;
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
   if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings);
   else warnings.push(`the folders rolled out are in ${next}`);
-  return { pack: modsDir, prev, mods: set.mods, version: set.version, warnings };
+  // The migration's edits whose mod left mods/ in this rollback are reverted from the journals
+  // (an edit to a mod still installed stays); then the references follow the folders now in
+  // place (forward again, they move again).
+  const reverted = revertRefs({ modsDir, log, warnings, left: (mod) => left.has(mod) && !set.mods.includes(mod) });
+  const migration = migrateRefs({ modsDir, log, warnings });
+  return { pack: modsDir, prev, mods: set.mods, version: set.version, reverted: reverted.restored, migration, warnings };
+}
+
+/**
+ * The rename migration after the folders (Group 6a): layouts and keys.json follow the folders
+ * the record says were renamed, each rewritten file backed up into backup/layouts-<date>/ with a
+ * journal the record lists (`migrated=`). A failure is a warning: the folders are already in place.
+ * Returns migrateHome's `{ done, skipped, journal }`, or null when it failed.
+ */
+export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
+  const home = dirname(resolve(modsDir));
+  try {
+    const p = migrationPlan(home);
+    if (!pending(p)) {
+      const kept = p.left.length ? `; ${p.left.length} reference(s) stay as they are (--adopt takes the mods you kept)` : "";
+      log(`rename migration: nothing to migrate${kept}`);
+      return { done: [], skipped: p.left, journal: null };
+    }
+    if (p.shared.length) log(`shared keys move to am.* when their mod next loads: ${p.shared.map(([o]) => o).join(", ")}`);
+    // The journal goes into the record before the first rewrite, so a rollback reverts whatever
+    // was rewritten even if the run stops part-way; without a record, nothing is rewritten.
+    const onJournal = (dir) => {
+      const record = readMarker(modsDir);
+      if (!record) throw new Error("there is no ownership record to list the journal in");
+      writeMarker(modsDir, { ...record, migrated: [...record.migrated, `backup/${basename(dir)}`] });
+    };
+    const r = applyMigration(p, { backupDir: join(backupOf(modsDir), backupName(modsDir, "layouts")), onJournal });
+    for (const line of r.done) log(line);
+    for (const s of r.skipped) log(`left: ${s.item} (${s.reason})`);
+    return r;
+  } catch (error) {
+    warnings.push(`layouts and keys were not migrated to the new names (${error.message}); the backups so far are in ${backupOf(modsDir)}`);
+    return null;
+  }
+}
+
+/**
+ * Reverts, newest journal first, every edit the record's journals list whose mod is no longer in
+ * mods/ or whose pack copy `left` this rollback (an edit pointing at a mod the pack still
+ * installs stays valid and stays); a journal with nothing
+ * left leaves the record's `migrated=` (its backups stay).
+ */
+export function revertRefs({ modsDir, log = () => {}, warnings = [], left = () => false }) {
+  const record = readMarker(modsDir);
+  const restored = [];
+  // `left(mod)`: the pack's copy of that mod left mods/ in this rollback (a person's own may be back).
+  const gone = (edit) => { const mod = editTarget(edit); return !mod || left(mod) || !exists(join(modsDir, mod)); };
+  try {
+    const still = [];
+    for (const path of [...(record?.migrated ?? [])].reverse()) {
+      const r = revertMigration(join(stateDirOf(modsDir), path), { due: gone });
+      restored.push(...r.restored);
+      if (r.remaining) still.unshift(path);
+      for (const f of r.restored) log(`restored the old names in ${f}`);
+      for (const s of r.skipped) log(`left: ${s.item} (${s.reason})`);
+    }
+    if (record && still.length !== record.migrated.length) writeMarker(modsDir, { ...record, migrated: still });
+  } catch (error) {
+    warnings.push(`the rename migration was not reverted (${error.message}); the originals are in ${backupOf(modsDir)}/layouts-*`);
+  }
+  return { restored };
 }
 
 /** A keys.json that will not parse stops the run before any folder moves. */
@@ -448,8 +576,21 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
     }
   }
   if (added) writeFileSync(keysPath, JSON.stringify(mine, null, 2) + "\n");
-  mkdirSync(join(appHome, "data", "mod-manager"), { recursive: true });
-  writeFileSync(join(appHome, "data", "mod-manager", "catalog.json"), JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
+  // The mod manager's catalog: it reads data/am-mods/catalog.json, then data/mod-manager/'s
+  // (core.js catalogUrl). Each one there that still holds a URL the pack wrote gets the current
+  // one; a URL the person set, a file it can't read or a link stays theirs. With neither, the
+  // pack's goes in data/mod-manager/.
+  const catalogs = ["am-mods", "mod-manager"].map((d) => join(appHome, "data", d, "catalog.json"));
+  for (const file of catalogs.filter(exists)) {
+    let url = null;
+    try { url = isLink(file) ? "(a link)" : JSON.parse(readFileSync(file, "utf8"))?.url ?? null; } catch { url = "(unreadable)"; }
+    if (url && !PACK_CATALOG_URLS.includes(url)) log(`kept your mod manager catalog (${url}) in ${file}`);
+    else if (url !== CATALOG_URL) writeFileSync(file, JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
+  }
+  if (!catalogs.some(exists)) {
+    mkdirSync(dirname(catalogs[1]), { recursive: true });
+    writeFileSync(catalogs[1], JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
+  }
 
   const shipped = join(tgzDir, PACK_LAYOUT);
   const ref = join(stateDirOf(modsDir), "automagik.json");
@@ -504,7 +645,9 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
-    return { ...found, installed: await applyUpdate({ tgzPath, version: found.update.version, modsDir, log }) };
+    const installed = await applyUpdate({ tgzPath, version: found.update.version, modsDir, log });
+    installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    return { ...found, installed };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -546,7 +689,7 @@ async function main(argv) {
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };
   }
   if (command === "rollback") {
-    const r = rollback({ modsDir });
+    const r = rollback({ modsDir, log });
     if (r.warnings.length) process.exitCode = 4;
     return r;
   }
@@ -555,12 +698,19 @@ async function main(argv) {
   if (opts.setup) preflightKeys(appHome);
   const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, modsDir, adopt: Boolean(opts.adopt), log });
   // Exit 4: installed, but a step after the swap did not finish (its warning says what and where).
-  if (installed.warnings.length) process.exitCode = 4;
-  if (!opts.setup) return { installed };
+  const done = () => { if (installed.warnings.length) process.exitCode = 4; };
+  if (!opts.setup) {
+    installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    done();
+    return { installed };
+  }
   const tgzDir = mkdtempSync(join(tmpdir(), "automagik-herdr-layout-"));
   try {
     await run("tar", ["-xzf", resolve(opts.from), "-C", tgzDir, PACK_LAYOUT]).catch(() => {});
     const failed = setupHome({ modsDir, tgzDir, record: readMarker(modsDir), log });
+    // After setupHome: the pack's own layout is placed first, so only the person's are migrated.
+    installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    done();
     if (failed.length && !process.exitCode) process.exitCode = 3;
     return { installed, checkFailed: failed };
   } finally {

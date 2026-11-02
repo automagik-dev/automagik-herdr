@@ -27,7 +27,7 @@ One scrolling column, `chrome` background, 13 px text.
 ## How it behaves
 
 - **Definitions** are the project's `.herdr/bots.json` (schema and validation in `model.js`):
-  every open space's folder, the projects remembered in shared `spaces-agents.projects` and the
+  every open space's folder, the projects remembered in shared `am.sidebar.projects` and the
   ones the CLI lists in `<app home>/spaces-agents-projects.json` are read on this machine or
   another, watched for edits, and written back here only.
 - **The view is pure data** (`rows.js`): which bots are live by the `bot=<id>` label on a terminal,
@@ -58,11 +58,11 @@ One scrolling column, `chrome` background, 13 px text.
 - **Updates** (`updateCheck.js`, with `update.mjs` and `release.js`): 20 seconds after load, then
   every 4 hours, `node update.mjs check --mods <app home>/mods` (node on PATH, else Homebrew's)
   asks GitHub for the latest release; a newer one gets one notice per version (shared
-  `spaces-agents.update-shown`) naming `automagik-herdr update`. A failed look is silent and
+  `am.sidebar.update-shown`) naming `automagik-herdr update`. A failed look is silent and
   retried in 30 minutes. `AUTOMAGIK_HERDR_NO_UPDATE=1` turns it off.
 - **Theme** (`theme.js`, `themes/`): the Automagik light and dark themes are copied into
   `<app home>/themes/` when absent and selected with `app.theme` once, recorded in shared
-  `spaces-agents.theme-selected`; a theme picked later is never overridden.
+  `am.sidebar.theme-selected`; a theme picked later is never overridden.
   A theme file already in `<app home>/themes/` is never overwritten, so later releases never
   update it; a theme file the person deletes is copied back on the next load.
 - **Pressing**: a space selects on click and reorders on drag (inside its machine); an agent or bot
@@ -120,10 +120,12 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
 - **Placed by the layout only**: `mod.json` says `place: none`. A mod placed `left` that a layout
   also names is docked twice; use `layouts/automagik.json` (`layout.switch {"name":"automagik"}`
   after it is copied to `<app home>/layouts/`).
-- **State**: shared `spaces-agents.icons` (space id → `{kind: "emoji", char}` or
-  `{kind: "image", file}`; an older bare path reads as an image), `spaces-agents.projects`, `spaces-agents.update-shown`,
-  `spaces-agents.theme-selected`, `space.colors` (space id → palette name, hex or `transparent`), `sidebar.collapsed`, `bots.defined` (whether this
-  computer has a bot, for the footer's Bots popup); outside the mod folder,
+- **State**: shared `am.sidebar.icons` (space id → `{kind: "emoji", char}` or
+  `{kind: "image", file}`; an older bare path reads as an image), `am.sidebar.projects`, `am.sidebar.update-shown`,
+  `am.sidebar.theme-selected`, `am.space.colors` (space id → palette name, hex or `transparent`), `am.sidebar.collapsed`, `bots.defined` (whether this
+  computer has a bot, for the footer's Bots popup); before the rename these were `spaces-agents.*`,
+  `space.colors` and `sidebar.collapsed`, copied to `am.*` once on load and left in place for one
+  release (`migrate.js` SHARED_RENAMES). Outside the mod folder,
   so replacing it loses nothing: the rename map (`${appHome()}/sidebar-agents.json`), the CLI's
   project list (`spaces-agents-projects.json`), the space icons (`space-icons/`), the copied
   themes, and the replaced pack kept for

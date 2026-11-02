@@ -1,9 +1,9 @@
 // A space's icon: an emoji, or an image kept under the app home (PNG, SVG, or an ICO
-// converted to PNG). Mapped by full space id in shared "spaces-agents.icons"; the tile's
-// colour behind it, by the same id, in shared "space.colors". Pure: the icon dialog
+// converted to PNG). Mapped by full space id in shared "am.sidebar.icons"; the tile's
+// colour behind it, by the same id, in shared "am.space.colors". Pure: the icon dialog
 // (spaceIcon.js) and the tests share it.
-export const KEY = "spaces-agents.icons";
-export const COLORS_KEY = "space.colors";
+export const KEY = "am.sidebar.icons";
+export const COLORS_KEY = "am.space.colors";
 // The sidebar's palette for a space's tile; "transparent" or a hex of your own also do.
 export const COLORS = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
 export const isHex = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v);

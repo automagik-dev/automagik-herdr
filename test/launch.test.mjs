@@ -158,7 +158,7 @@ test("startBot: a member with a live lead runs under it, in the project's space 
   const runArgs = state.hcCalls.find((a) => a[0] === "run");
   assert.deepEqual(runArgs, ["run", "--bg", "--json", "--name", "dev-cccc", "--cwd", main, "--label", `bot=${ID.dev}`,
     "--label", "herdr.space=s1", "--label", "herdr.tab=b", "--parent", "t7", "--outlive-parent", "--", "claude"]);
-  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: null }]);
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: main, machine: null }]);
 });
 
 test("startBot: lead down -> --no-parent; a live bot is focused, not started; planned refused", async (t) => {
@@ -186,7 +186,7 @@ test("attachBot: a Claude pane whose session is in another project is refused, n
   assert.match(r.refused, new RegExp(`runs in ${other}`));
   assert.match(r.refused, new RegExp(`project ${main}`));
   assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), []);
-  assert.equal(state.shared.get("spaces-agents.projects"), undefined);
+  assert.equal(state.shared.get("am.sidebar.projects"), undefined);
 });
 
 test("attachBot: a Claude session in the project's worktree passes; the label moves off the old holder", async (t) => {

@@ -244,6 +244,39 @@ test("--uninstall with nothing there before moves the pack out of mods/, never d
   assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), new RegExp(`^mods=${PACK_MODS.join(",")}$`, "m"));
 });
 
+test("a command link the person pointed elsewhere is never replaced or removed; one into this install is", (t) => {
+  const s = scratch(t);
+  const theirs = join(s.root, "elsewhere", "automagik-herdr.mjs");
+  mkdirSync(dirname(theirs), { recursive: true });
+  writeFileSync(theirs, "#!/usr/bin/env node\n");
+  mkdirSync(dirname(s.link), { recursive: true });
+  symlinkSync(theirs, s.link);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readlinkSync(s.link), theirs);
+  assert.match(r.out, /Left .*automagik-herdr alone: it points at .*elsewhere\/automagik-herdr\.mjs, not this install\./);
+  const again = s.run();
+  assert.match(again.out, /is already up to date/, "a link of the person's own doesn't make every run reinstall");
+  const gone = s.run("--uninstall");
+  assert.equal(gone.code, 0, gone.err);
+  assert.equal(readlinkSync(s.link), theirs);
+  assert.match(gone.out, /Left .*automagik-herdr: it points at .*elsewhere/);
+  // A link elsewhere under mods/ is not the pack's command: still the person's.
+  rmSync(s.link);
+  symlinkSync(join(s.mods, "other-mod", "bin", "cli.mjs"), s.link);
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(readlinkSync(s.link), join(s.mods, "other-mod", "bin", "cli.mjs"));
+  // The pack's own command path (an earlier install's, even dangling) is ours: replaced, then removed.
+  assert.equal(s.run("--uninstall").code, 0);
+  rmSync(s.link);
+  symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  assert.equal(s.run("--uninstall").code, 0);
+  assert.equal(readdirSync(dirname(s.link)).includes("automagik-herdr"), false);
+});
+
 test("not macOS: explains and exits 1; Node too old with no brew: says where to get it", (t) => {
   const linux = scratch(t, { os: "Linux" });
   const r = linux.run("--yes");

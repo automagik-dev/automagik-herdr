@@ -126,6 +126,16 @@ ask() {
 # v0.2's v1 has no `mods=` (it installed spaces-agents only, its first pack copied to $BEFORE).
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 
+# Whether $LINK is a link to the pack's own command in this app home (the sidebar folder's
+# bin/automagik-herdr.mjs, under its old or its am-* name), the only kind this script replaces
+# or removes: a link the person pointed anywhere else stays theirs.
+link_ours() {
+  [ -L "$LINK" ] || return 1
+  to=$(readlink "$LINK" 2>/dev/null) || return 1
+  case $to in "$MODS/spaces-agents/bin/automagik-herdr.mjs"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;; esac
+  return 1
+}
+
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
 # is unavailable.
 shown_layout() {
@@ -242,7 +252,8 @@ uninstall() {
   done
   unset IFS
   set +f
-  if [ -L "$LINK" ]; then rm -f "$LINK"; say "Removed $LINK."; fi
+  if link_ours; then rm -f "$LINK"; say "Removed $LINK."
+  elif [ -L "$LINK" ]; then say "Left $LINK: it points at $(readlink "$LINK"), not this install."; fi
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
 }
@@ -305,8 +316,9 @@ install() {
   installed=$(mark_get version)
   [ -n "$installed" ] || installed=none
   target=$PACK/bin/automagik-herdr.mjs
-  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null \
-    && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
+  # Up to date: this release, and the link ours to it (or the person's own, which stays).
+  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null && [ -x "$target" ] \
+    && { [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] || { [ -L "$LINK" ] && ! link_ours; }; }; then
     say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK)."
     offer_switch
     switch_hint
@@ -320,12 +332,13 @@ install() {
   want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
   [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
   say "Checksum: ok."
-  # Only the installer's two files come out here, to run them; update.mjs then lists every
-  # entry, stages every folder beside mods/, checks again, keeps the replaced set and swaps.
+  # Only the installer's files come out here, to run them; update.mjs then lists every entry,
+  # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
+  # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders.
   mkdir "$TMP/x"
-  tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js </dev/null 2>/dev/null \
-    || fail "$TGZ holds no spaces-agents/update.mjs: nothing was installed."
-  for f in update.mjs release.js; do
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js spaces-agents/migrate.js \
+    spaces-agents/migrateHome.mjs </dev/null 2>/dev/null || fail "$TGZ lacks spaces-agents' updater files: nothing was installed."
+  for f in update.mjs release.js migrate.js migrateHome.mjs; do
     { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
   done
   set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
@@ -350,6 +363,8 @@ install() {
     say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."
   elif [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
     say "Left $LINK alone: it is a file, not a link. Remove it and run this again to link automagik-herdr."
+  elif [ -L "$LINK" ] && ! link_ours; then
+    say "Left $LINK alone: it points at $(readlink "$LINK"), not this install. Remove it and run this again to link automagik-herdr."
   else
     ln -sfn "$target" "$LINK"
     say "Linked $LINK."
