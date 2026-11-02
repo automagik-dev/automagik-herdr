@@ -332,13 +332,16 @@ test("create, edit, category, start and attach list their project for the sideba
   const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
   const list = join(s.app, "spaces-agents-projects.json");
   const listed = () => JSON.parse(readFileSync(list, "utf8"));
-  writeFileSync(list, JSON.stringify(["/elsewhere"]));
+  // A folder that is there: start, attach and create take a gone one off the list (tidy).
+  const elsewhere = join(s.root, "elsewhere");
+  mkdirSync(elsewhere);
+  writeFileSync(list, JSON.stringify([elsewhere]));
   assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
-  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  assert.deepEqual(listed(), [elsewhere, s.project]);
   // Once each, the newest last.
-  writeFileSync(list, JSON.stringify([s.project, "/elsewhere"]));
+  writeFileSync(list, JSON.stringify([s.project, elsewhere]));
   assert.equal(s.cli(["edit", "Genie", "--role", "lead"]).code, 0);
-  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  assert.deepEqual(listed(), [elsewhere, s.project]);
   writeFileSync(list, "[]");
   assert.equal(s.cli(["category", "add", "--title", "Eng"]).code, 0);
   assert.deepEqual(listed(), [s.project]);
