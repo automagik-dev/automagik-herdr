@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, utimesSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -184,12 +184,12 @@ const SHARED = { "spaces-agents.icons": { s1: { kind: "emoji", char: "*" } }, "s
  * main-agents layout, a layout it can't read, the paste bindings, shared keys, the CLI's project
  * list and a catalog URL of the person's own.
  */
-function ownerHome(s) {
-  modFolder(join(s.mods, "spaces-agents"), { VERSION: "0.2.0\n", ".state/bots.txt": "kept\n" });
+function ownerHome(s, base = "0.2.0") {
+  modFolder(join(s.mods, "spaces-agents"), { VERSION: `${base}\n`, ".state/bots.txt": "kept\n" });
   modFolder(join(s.mods, "sidebar-chrome"), { ".state/rail.txt": "rail\n" });
   for (const m of ["md-menu", "mod-manager", "markdown-browser", "space-icon"]) modFolder(join(s.mods, m));
   modFolder(join(s.mods, "pocket-link"), { ".state/pairing.key": "secret\n", "bin/run": "#!/bin/sh\n" });
-  write(join(s.state, "installed-by-install.sh"), "version=0.2.0\nlayout=added\nbefore=none\n");
+  write(join(s.state, "installed-by-install.sh"), `version=${base}\nlayout=added\nbefore=none\n`);
   writeJson(join(s.home, "layouts", "main-agents.json"), MAIN_AGENTS);
   write(join(s.home, "layouts", "scratch.json"), "{ not json\n");
   writeJson(join(s.home, "keys.json"), KEYS);
@@ -395,6 +395,26 @@ test("a rollback between two am-* releases reverts nothing and writes no new bac
   assert.deepEqual(parseMarker(read(join(s.state, "installed-by-install.sh"))).migrated, [`backup/layouts-${today()}`]);
   assert.deepEqual(readdirSync(join(s.state, "backup")).filter((n) => n.startsWith("layouts-")), [`layouts-${today()}`]);
   assert.equal(read(join(s.mods, "am-sidebar", "release.txt")), "0.3.0\n");
+  assert.equal(existsSync(join(s.mods, "space-icon")), false, "am-sidebar is still in the set: space-icon stays in backup/");
+  assert.equal(existsSync(join(s.mods, "markdown-browser")), false);
+  const adopted = parseMarker(read(join(s.state, "installed-by-install.sh"))).adopted.map((a) => a.mod).sort();
+  assert.deepEqual(adopted, ["markdown-browser", "md-menu", "mod-manager", "sidebar-chrome", "space-icon"]);
+});
+
+test("rollback from am-* to a v0.2-shaped 0.3.0: both absorbed mods come back and their bindings work", (t) => {
+  const s = scratch(t);
+  ownerHome(s, "0.3.0");
+  writeJson(join(s.home, "layouts", "icons.json"), { id: "r", children: [{ id: "icons", content: { mod: "space-icon" } }] });
+  assert.equal(s.cli("install", "--from", amPack(s.root, "0.4.0"), "--version", "0.4.0", "--adopt", "--setup").code, 0);
+  const r = s.cli("rollback");
+  assert.equal(r.code, 0, r.log);
+  for (const m of ["space-icon", "markdown-browser", "md-menu", "sidebar-chrome", "mod-manager"]) assert.ok(existsSync(join(s.mods, m, "main.js")), m);
+  const keys = readJson(join(s.home, "keys.json"));
+  assert.deepEqual(keys["mod:markdown-browser"], KEYS["mod:markdown-browser"]);
+  assert.equal(keys.global["cmd-v"], "spaces-agents.paste");
+  assert.equal(readJson(join(s.home, "layouts", "icons.json")).children[0].content.mod, "space-icon");
+  const record = parseMarker(read(join(s.state, "installed-by-install.sh")));
+  assert.deepEqual([record.version, record.adopted, record.migrated], ["0.3.0", [], []]);
 });
 
 // ---- hardening (security review of #31) ----
@@ -542,7 +562,14 @@ test("the mod manager reads the person's catalog URL wherever it is; a copy hold
   writeJson(join(s.home, "data", "mod-manager", "catalog.json"), { url: "file:///catalogs/later.json" }); // changed after migrating
   assert.equal(await catalogUrl(io, s.home), "file:///catalogs/later.json");
   writeJson(join(s.home, "data", "am-mods", "catalog.json"), { url: "file:///catalogs/new.json" });
-  assert.equal(await catalogUrl(io, s.home), "file:///catalogs/new.json", "data/am-mods first when both are the person's");
+  assert.equal(await catalogUrl(io, s.home), "file:///catalogs/new.json", "no way to compare: data/am-mods first");
+  // Both the person's: the one changed last wins.
+  const sh = { ...io, exec: async (cmd, args) => ({ code: spawnSync(cmd, args).status }) };
+  const at = (f, secs) => utimesSync(join(s.home, "data", f, "catalog.json"), secs, secs);
+  at("am-mods", 1_000_000); at("mod-manager", 2_000_000);
+  assert.equal(await catalogUrl(sh, s.home), "file:///catalogs/later.json");
+  at("am-mods", 3_000_000);
+  assert.equal(await catalogUrl(sh, s.home), "file:///catalogs/new.json");
 });
 
 /** An old-named pack (this release's names): spaces-agents carries VERSION, release.js and the updater. */

@@ -44,7 +44,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, compareVersions, formatMarker, latestRelease, parseMarker, parseSums,
+  CATALOG_URL, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
@@ -77,8 +77,6 @@ const today = () => new Date().toISOString().slice(0, 10);
 const packFolder = (name) => /^[a-z0-9][a-z0-9-]*$/.test(name) && name !== POCKET_LINK;
 /** The other name of a renamed folder (old → am-*, am-* → old), or undefined. */
 const OLD_OF = Object.fromEntries(Object.entries(RENAMES).map(([old, now]) => [now, old]));
-/** The release that first took space-icon and markdown-browser into other pack mods (Groups 5a, 5b). */
-const ABSORBED_SINCE = "0.3.0";
 const twinOf = (name) => (Object.hasOwn(RENAMES, name) ? RENAMES[name] : Object.hasOwn(OLD_OF, name) ? OLD_OF[name] : undefined);
 
 /** The version a pack folder carries in its VERSION file (UNRELEASED when it has none). */
@@ -455,13 +453,15 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   const warnings = [];
   // A folder the person had, adopted into backup/, comes back where mods/ is free once this
   // rollback drops the pack's copy of it (Group 3, D10): its own name or its renamed twin left
-  // mods/; for a mod the pack absorbed, the set rolled back to predates the absorption.
+  // mods/; a mod the pack absorbed comes back when the set rolled back to has no am-* mod that
+  // absorbed it (am-sidebar, am-markdown). Decided from the pack's sets only, never from a
+  // person's folder that shares a name.
   const left = new Set(out);
   const dropped = (m) => {
     const into = own(ABSORBED, m);
-    if (into) return !(compareVersions(set.version ?? UNRELEASED, ABSORBED_SINCE) >= 0) || ![into, own(RENAMES, into)].some((c) => c && exists(join(modsDir, c)));
+    if (into) return !set.mods.includes(own(RENAMES, into) ?? into);
     const copies = [m, twinOf(m)].filter(Boolean);
-    return copies.some((c) => left.has(c)) && !copies.some((c) => exists(join(modsDir, c)));
+    return copies.some((c) => left.has(c)) && !copies.some((c) => set.mods.includes(c));
   };
   const adopted = [];
   for (const a of record.adopted) {

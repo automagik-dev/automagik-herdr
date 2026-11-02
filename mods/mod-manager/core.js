@@ -464,8 +464,9 @@ export function parseCatalog(json) {
 
 // Where the index is: the pack's installer writes data/mod-manager/catalog.json ({ url }), copied
 // to data/am-mods/ by the rename migration; the mod's own catalog.json is the copy in a checkout,
-// and the published index is the fallback. A URL the person set wins wherever it is (data/am-mods
-// first): a copy still holding a URL the pack wrote never shadows it.
+// and the published index is the fallback. A URL the person set wins wherever it is, the most
+// recently changed one when both data folders hold one (else data/am-mods first): a copy still
+// holding a URL the pack wrote never shadows it.
 const PACK_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
 export async function catalogUrl(io, appHome) {
   const found = [];
@@ -473,10 +474,17 @@ export async function catalogUrl(io, appHome) {
     try {
       const raw = await io.readText(path);
       const url = raw ? JSON.parse(raw)?.url : null;
-      if (typeof url === "string" && url) found.push(url);
+      if (typeof url === "string" && url) found.push({ path, url });
     } catch {}
   }
-  return found.find((url) => !PACK_URLS.includes(url)) ?? found[0] ?? CATALOG_URL;
+  const mine = found.filter((f) => !PACK_URLS.includes(f.url));
+  if (mine.length >= 2 && !mine[1].path.includes("/mods/")) {
+    try {
+      const newer = await io.exec("sh", ["-c", '[ "$1" -nt "$2" ]', "sh", mine[1].path, mine[0].path]);
+      if (newer?.code === 0) return mine[1].url;
+    } catch {}
+  }
+  return (mine[0] ?? found[0])?.url ?? CATALOG_URL;
 }
 
 export async function fetchCatalog(io, http, url = CATALOG_URL) {
