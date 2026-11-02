@@ -46,7 +46,8 @@ of three views:
 
 ## Built from
 
-`mods/automations/main.js`, `automations.svg` (a clock, 24×24 stroke), `mod.json`
+`mods/automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
+`automations.svg` (a clock, 24×24 stroke), `mod.json`
 (`place: "none"`, title "Automations"), `LICENSE` (this pack's Apache-2.0) and `LICENSE-upstream`
 (DnzzL's MIT, verbatim). Herdr API: `exec`, `hc`, `home`, `theme`, `terminals`, `spaces`, `run`,
 `notify`, `pickFolder`, `watchFolder`, `knownAgents`; `InputState`, `TextareaState`.
