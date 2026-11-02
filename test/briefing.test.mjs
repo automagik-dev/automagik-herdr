@@ -22,6 +22,8 @@ process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "herdr-xdg-"));
 process.on("exit", () => rmSync(process.env.XDG_CONFIG_HOME, { recursive: true, force: true }));
 const NODE_DIR = dirname(process.execPath);
+// AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs briefing.mjs with that runtime instead.
+const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const SCRIPT = new URL("../mods/spaces-agents/briefing.mjs", import.meta.url).pathname;
 // briefing.mjs under test runs with its times multiplied by SCALE (HERDR_BRIEFING_TIME_SCALE):
 // each fake hc call is a node process, which a loaded machine can take seconds to start, and the
@@ -147,10 +149,29 @@ test("cap: 4,000-character instructions and twelve members with long reports sta
   assert.ok(huge.endsWith("</herdr-bot>"));
 });
 
-test("hook command: names the installed script by its absolute path, quoted, and never fails", () => {
+test("hook command: runs the installed script through bin/run.sh, both by absolute path, quoted", () => {
   assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs");
-  assert.equal(hookCommand("/Users/x/.config/herdr-app"), 'command -v node >/dev/null && node "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs" || true');
-  assert.equal(hookCommand('/odd "$HOME`'), 'command -v node >/dev/null && node "/odd \\"\\$HOME\\`/mods/spaces-agents/briefing.mjs" || true');
+  assert.equal(hookCommand("/Users/x/.config/herdr-app"),
+    'sh "/Users/x/.config/herdr-app/mods/spaces-agents/bin/run.sh" "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs"');
+  assert.equal(hookCommand('/odd "$HOME`'),
+    'sh "/odd \\"\\$HOME\\`/mods/spaces-agents/bin/run.sh" "/odd \\"\\$HOME\\`/mods/spaces-agents/briefing.mjs"');
+});
+
+test("hook merge: an older `node` hook for the same script counts as present and is left as it is", () => {
+  // The form written before bin/run.sh (v0.3.2 and earlier), for the same app home.
+  const oldForm = (home) => `command -v node >/dev/null && node "${briefingPath(home).replace(/[\\"$`]/g, (c) => `\\${c}`)}" || true`;
+  for (const home of ["/h", '/odd "$HOME`']) {
+    const text = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: oldForm(home), timeout: 10 }] }] } }, null, 2);
+    assert.deepEqual(mergeHook(text, hookCommand(home)), { text, changed: false }, home);
+    // The new form is present too: no change either way round.
+    const now = mergeHook(null, hookCommand(home)).text;
+    assert.deepEqual(mergeHook(now, hookCommand(home)), { text: now, changed: false });
+  }
+  // An older hook for another app home (it moved) is updated in place, never doubled.
+  const text = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: oldForm("/old-home") }] }] } });
+  const moved = mergeHook(text, hookCommand("/h"));
+  assert.equal(moved.changed, true);
+  assert.deepEqual(JSON.parse(moved.text).hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: hookCommand("/h") }] }]);
 });
 
 test("hook merge: keeps every other key and hook, adds ours once, updates a moved path, leaves odd files alone", () => {
@@ -264,9 +285,9 @@ async function scratch(t) {
       env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
         HERDR_BRIEFING_TIME_SCALE: String(SCALE), ...env },
     };
-    if (input === undefined) return run(process.execPath, [SCRIPT], options);
+    if (input === undefined) return run(RUNTIME, [SCRIPT], options);
     return new Promise((resolve, reject) => {
-      const child = execFile(process.execPath, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
+      const child = execFile(RUNTIME, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
       child.stdin.end(input);
     });
   };

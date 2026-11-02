@@ -12,6 +12,8 @@ import { checkBots, parseBots } from "../mods/spaces-agents/model.js";
 import { writeBotsFile, findBot, CliError, listProject } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
 
 const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+// AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
+const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
@@ -44,7 +46,7 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
   delete env.HC_TERMINAL_ID;
   const cli = (args, { cwd = project, input } = {}) => {
-    const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
+    const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -555,7 +557,7 @@ test("errors: stderr and a non-zero exit; unknown commands and options are usage
   const broken = s.botsPath;
   writeFileSync(broken, "{nope");
   const r = s.cli(["ls"]);
-  assert.match(r.out, /not valid JSON|Unexpected token|Expected property name/);
+  assert.match(r.out, /not valid JSON|Unexpected token|Expected property name|JSON Parse error/);
 });
 
 // ---- review fixes ----

@@ -125,21 +125,33 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 /** The pack's installed briefing script under an app home. */
 export const briefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/mods/spaces-agents/briefing.mjs`;
 
-/** The hook command: no `node` on the agent's PATH means no briefing and no error. */
+/** The pack's runtime finder (bin/run.sh: node 22.7 or later, else bun) under an app home. */
+export const runnerPath = (appHome) => `${appHome.replace(/\/+$/, "")}/mods/spaces-agents/bin/run.sh`;
+
+const shQuoted = (path) => `"${path.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
+
+/**
+ * The hook command: run.sh finds a runtime even where the agent's PATH has no `node`; finding
+ * none, it says so on stderr and exits 127, which Claude shows without blocking the prompt.
+ * Hooks written before it read `command -v node >/dev/null && node "<briefing.mjs>" || true`;
+ * mergeHook leaves those as they are.
+ */
 export function hookCommand(appHome) {
-  const quoted = briefingPath(appHome).replace(/[\\"$`]/g, (c) => `\\${c}`);
-  return `command -v node >/dev/null && node "${quoted}" || true`;
+  return `sh ${shQuoted(runnerPath(appHome))} ${shQuoted(briefingPath(appHome))}`;
 }
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const OURS = /\/mods\/spaces-agents\/briefing\.mjs/;
+/** The quoted briefing.mjs path in a hook command of either form, or null. */
+const briefingOf = (command) => /"((?:[^"\\]|\\.)*\/mods\/spaces-agents\/briefing\.mjs)"/.exec(command)?.[1] ?? null;
 
 /**
  * Merges the briefing hook into a settings.local.json text (null: no file yet). Every other
  * key and hook is kept. An entry already naming the pack's briefing.mjs counts as present:
- * the same command leaves the file alone, another path (the app home moved) is updated in
- * place. A text that isn't a JSON object, or whose `hooks` or `UserPromptSubmit` has
- * another shape, is never rewritten: `error` says why.
+ * one naming the same path leaves the file alone, in the `sh run.sh` form or the older
+ * `node` one, and another path (the app home moved) is updated in place to `command`. A text
+ * that isn't a JSON object, or whose `hooks` or `UserPromptSubmit` has another shape, is never
+ * rewritten: `error` says why.
  * Returns { text, changed } or { error }.
  */
 export function mergeHook(existing, command) {
@@ -155,7 +167,8 @@ export function mergeHook(existing, command) {
   for (const group of list) {
     for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
       if (typeof h?.command !== "string" || !OURS.test(h.command)) continue;
-      if (h.command === command) return { text: existing, changed: false };
+      // Either form naming the same briefing.mjs is present: an older `node "…"` hook is kept.
+      if (h.command === command || briefingOf(h.command) === briefingOf(command)) return { text: existing, changed: false };
       h.command = command;
       settings.hooks.UserPromptSubmit = list;
       return { text: `${JSON.stringify(settings, null, 2)}\n`, changed: true };

@@ -90,11 +90,15 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
-  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\nInstalled the pack 9\.9\.0/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
+  // No node on PATH (a pane Herdr started): bin/run.sh finds one anyway.
+  const noNode = spawnSync(s.link, ["--version"], { encoding: "utf8",
+    env: { HOME: s.home, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) } });
+  assert.equal(noNode.stdout.trim(), "automagik-herdr 9.9.0", noNode.stderr);
   assert.deepEqual(s.brewCalls(), []);
   const before = lstatSync(s.pack).ino;
   const again = s.run();
@@ -103,6 +107,26 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.doesNotMatch(again.out, /Downloading|Linked/);
   assert.equal(lstatSync(s.pack).ino, before);
   assert.equal(existsSync(join(s.appHome, "automagik-herdr", "spaces-agents.prev")), false);
+});
+
+test("a link to the .mjs (installed before bin/run.sh) is repointed at the wrapper; a pinned old pack gets the .mjs", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  rmSync(s.link);
+  symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /already up to date/);
+  assert.match(r.out, /Linked /);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
+  // A release from before the wrapper: the link names the .mjs it has.
+  s.publish("9.8.0", { latest: false, edit: (dir) => rmSync(join(dir, "bin", "automagik-herdr")) });
+  const old = s.run("--yes", "--version", "9.8.0");
+  assert.equal(old.code, 0, old.err);
+  assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
+  const again = s.run("--yes", "--version", "9.8.0");
+  assert.match(again.out, /already up to date/);
 });
 
 test("a newer release replaces the installed one; --version pins one", (t) => {
