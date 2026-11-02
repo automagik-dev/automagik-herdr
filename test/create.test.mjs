@@ -86,6 +86,21 @@ test("Runs on: installed agents only, plus the bot's own agent when it isn't ins
   assert.ok(!nodes.has("bot-agent-amp"));
 });
 
+test("Runs on: gemini is never offered; a gemini bot opens on Antigravity", async () => {
+  state.agents = [...AGENTS,
+    { key: "gemini", name: "Gemini", installed: true, icon: "icons/gemini.svg", tint: false },
+    { key: "antigravity", name: "Antigravity", installed: false, icon: "icons/antigravity.svg", tint: false }];
+  const GEM = { ...KIMI, id: "b-gemaaaaaaa", name: "gem-bot", agent: "gemini" };
+  seed([MAIN, GEM]);
+  const { draw } = await open({ form: "create" });
+  draw();
+  assert.ok(!nodes.has("bot-agent-gemini"), "installed, but retired");
+  const e = await open({ form: "edit", bot: GEM.id });
+  e.draw();
+  assert.ok(!nodes.has("bot-agent-gemini"));
+  assert.ok(nodes.has("bot-agent-antigravity"), "the mapped agent is the bot's own");
+});
+
 test("Runs on: a knownAgents() failure is shown, not swallowed", async () => {
   seed([MAIN]);
   Object.defineProperty(state, "agents", { configurable: true, get() { throw new Error("no program table"); } });

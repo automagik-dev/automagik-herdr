@@ -339,3 +339,12 @@ test("UI_ICONS: the mockup's six icons as stroke-only SVG documents (tinted by s
   }
   assert.equal(uiIconFile("close"), "ui-close.svg");
 });
+
+test("formFrom: a stored gemini bot opens on antigravity with its gemini-era pin dropped; others keep theirs", () => {
+  const base = { id: "b-gemaaaaaaa", name: "g", kind: "member", look: { character: "star", colour: "blue" } };
+  const gem = formFrom({ mode: "edit", bot: { ...base, agent: "gemini", model: "gemini-2.5-pro" } });
+  assert.equal(gem.agent, "antigravity");
+  assert.equal(gem.pin, "");
+  const kept = formFrom({ mode: "edit", bot: { ...base, agent: "claude", model: "opus" } });
+  assert.deepEqual([kept.agent, kept.pin], ["claude", "opus"]);
+});

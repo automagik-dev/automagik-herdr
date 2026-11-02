@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
-import { effortArgs } from "../mods/spaces-agents/models.js";
+import { effortArgs, promptArgs } from "../mods/spaces-agents/models.js";
 import { baseCandidates, branchSlug, parseWorktrees, readLedger, sessionChange, startRow, templateAgent, workerArgs, workerPlan }
   from "../mods/spaces-agents/workers.js";
 
@@ -46,7 +46,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
-  for (const a of ["claude", "codex", "gemini"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
+  for (const a of ["claude", "codex", "agy"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
@@ -436,17 +436,25 @@ test("create and edit --worker-agent/--worker-model/--worker-effort write the fi
 
 // ---- the pure parts ----
 
-test("effortArgs: claude --effort, codex -c model_reasoning_effort, pi/omp --thinking; others none", () => {
+test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, pi/omp --thinking; others none", () => {
   assert.deepEqual(effortArgs("claude", "high"), ["--effort", "high"]);
   assert.deepEqual(effortArgs("codex", "low"), ["-c", "model_reasoning_effort=low"]);
   assert.deepEqual(effortArgs("pi", "max"), ["--thinking", "max"]);
   assert.deepEqual(effortArgs("omp", "xhigh"), ["--thinking=xhigh"]);
-  assert.deepEqual(effortArgs("gemini", "high"), []);
+  assert.deepEqual(effortArgs("antigravity", "xhigh"), ["--effort", "xhigh"]);
+  assert.deepEqual(effortArgs("grok", "high"), []);
+  assert.deepEqual(effortArgs("gemini", "high"), [], "gemini is retired");
   assert.deepEqual(effortArgs("claude", null), []);
-  const plan = workerPlan({ name: "G", agent: "gemini", worker: { effort: "high" } });
+  const plan = workerPlan({ name: "G", agent: "grok", worker: { effort: "high" } });
   assert.equal(plan.effort, null);
-  assert.deepEqual(plan.argv, ["gemini"]);
-  assert.match(plan.warnings[0], /Gemini has no effort flag; effort high left out/);
+  assert.deepEqual(plan.argv, ["grok"]);
+  assert.match(plan.warnings[0], /Grok has no effort flag; effort high left out/);
+  const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-3.1-pro", effort: "max" } });
+  assert.deepEqual(agy.argv, ["agy", "--model", "gemini-3.1-pro", "--effort", "max"]);
+  assert.deepEqual(agy.warnings, []);
+  const legacy = workerPlan({ name: "L", agent: "claude" }, { agent: "gemini", effort: "low" });
+  assert.equal(legacy.agent, "antigravity", "a typed gemini runs antigravity");
+  assert.deepEqual(legacy.argv, ["agy", "--effort", "low"]);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { agent: "nope" }).error, /isn't a coding agent/);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
 });
@@ -473,6 +481,16 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
     "--label", "worker.template=dev-sol", "--parent", "t1", "dev-sol", "do it"]);
   assert.deepEqual(runArgv(workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", argv: ["omp"], task: "t", path: "/a:/b" })),
     ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
+  // agy takes its first prompt only through -i; a bare trailing task is an error to it.
+  const agyPlan = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-3.1-pro", effort: "high" } });
+  assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", agent: agyPlan.agent,
+    model: agyPlan.model, effort: agyPlan.effort, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
+  ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "task=feat/a",
+    "--label", "worker.model=gemini-3.1-pro", "--label", "worker.effort=high", "--parent", "t1", "--",
+    "/usr/bin/env", "PATH=/x/bin", "agy", "--model", "gemini-3.1-pro", "--effort", "high", "-i", "fix the build"]);
+  assert.deepEqual(promptArgs("antigravity", "t"), ["-i", "t"]);
+  assert.deepEqual(promptArgs("claude", "t"), ["t"]);
+  assert.deepEqual(promptArgs(undefined, "t"), ["t"], "no agent named: the bare task, as before");
   assert.deepEqual(TEMPLATES.map((x) => templateAgent(x.command)), ["codex", "claude", null]);
   assert.equal(templateAgent("claude-wrapper --model x"), null, "a word of its own, not a prefix");
   assert.equal(startRow({ kind: "worker", terminal: "t9", botId: ID.dev, template: "dev-sol" }).template, "dev-sol");
