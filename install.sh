@@ -126,12 +126,13 @@ ask() {
 # v0.2's v1 has no `mods=` (it installed spaces-agents only, its first pack copied to $BEFORE).
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 
-# Whether $LINK is a link into this app home's mods/, the only kind this script replaces or
-# removes: a link the person pointed elsewhere (their own build, another app home) stays theirs.
+# Whether $LINK is a link to the pack's own command in this app home (the sidebar folder's
+# bin/automagik-herdr.mjs, under its old or its am-* name), the only kind this script replaces
+# or removes: a link the person pointed anywhere else stays theirs.
 link_ours() {
   [ -L "$LINK" ] || return 1
   to=$(readlink "$LINK" 2>/dev/null) || return 1
-  case $to in "$MODS"/*) return 0 ;; esac
+  case $to in "$MODS/spaces-agents/bin/automagik-herdr.mjs"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;; esac
   return 1
 }
 

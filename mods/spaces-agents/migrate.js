@@ -3,6 +3,12 @@
 // sidebar (its shared-key shim), migrateHome.mjs (the app-home side) and `node --test` share it.
 // Old names stay readable for one release; removing them is the contract step (v0.4.0). Apache-2.0.
 
+/**
+ * `table[name]` only when `table` has it as its own entry: a name read from a person's file
+ * (`toString`, `constructor`, `__proto__`) never reaches Object.prototype.
+ */
+export const own = (table, name) => (typeof name === "string" && Object.hasOwn(table, name) ? table[name] : undefined);
+
 /** Old folder → its am-* folder. am-quota keeps its name. */
 export const RENAMES = Object.freeze({
   "spaces-agents": "am-sidebar",
@@ -57,7 +63,7 @@ export const PATH_RENAMES = Object.freeze([
 export function carryShared(shared, setShared, olds = Object.keys(SHARED_RENAMES)) {
   const carried = [];
   for (const old of olds) {
-    const now = SHARED_RENAMES[old];
+    const now = own(SHARED_RENAMES, old);
     if (!now || shared(now) != null) continue;
     const value = shared(old);
     if (value == null) continue;
@@ -80,8 +86,8 @@ export function activeRenames(owned, present) {
   const kept = [];
   for (const old of [...Object.keys(RENAMES), ...Object.keys(ABSORBED)]) {
     if (present(old)) { kept.push(old); continue; }
-    const step = RENAMES[old] ?? ABSORBED[old];
-    const target = mine(RENAMES[step]) ? RENAMES[step] : mine(step) ? step : null;
+    const step = own(RENAMES, old) ?? own(ABSORBED, old);
+    const target = mine(own(RENAMES, step)) ? own(RENAMES, step) : mine(step) ? step : null;
     if (target) active[old] = target;
   }
   return { active, kept };
@@ -91,27 +97,42 @@ export function activeRenames(owned, present) {
 export function renameAction(action, active) {
   if (typeof action !== "string") return null;
   const open = /^mod\.open:(.+)$/.exec(action);
-  if (open) return RENAMES[open[1]] && active[open[1]] ? `mod.open:${active[open[1]]}` : null;
+  if (open) return own(RENAMES, open[1]) && own(active, open[1]) ? `mod.open:${own(active, open[1])}` : null;
   const dot = action.indexOf(".");
   if (dot <= 0) return null;
   const mod = action.slice(0, dot);
-  if (!active[mod]) return null;
-  if (KEY_RENAMES[action]) return `${active[mod]}${KEY_RENAMES[action].slice(KEY_RENAMES[action].indexOf("."))}`;
-  return RENAMES[mod] ? `${active[mod]}${action.slice(dot)}` : null;
+  const to = own(active, mod);
+  if (!to) return null;
+  const renamed = own(KEY_RENAMES, action);
+  if (renamed) return `${to}${renamed.slice(renamed.indexOf("."))}`;
+  return own(RENAMES, mod) ? `${to}${action.slice(dot)}` : null;
 }
 
 /** A keys.json section (`mod:<name>`) moved onto `active`'s name, or null. */
 export function renameSection(section, active) {
   const m = /^mod:(.+)$/.exec(section);
-  if (!m || !active[m[1]]) return null;
-  return RENAMES[m[1]] || ABSORBED_SECTIONS.includes(m[1]) ? `mod:${active[m[1]]}` : null;
+  if (!m || !own(active, m[1])) return null;
+  return own(RENAMES, m[1]) || ABSORBED_SECTIONS.includes(m[1]) ? `mod:${own(active, m[1])}` : null;
 }
 
-/** The old mod a reference (a mod id, an action or a `mod:` section) names, or null. */
-export function oldModOf(value) {
+/** The mod a reference names: a mod id, `mod.open:<mod>`, a `mod:<mod>` section or `<mod>.<command>`. */
+export function modOfRef(value) {
   if (typeof value !== "string") return null;
-  const name = /^mod\.open:(.+)$/.exec(value)?.[1] ?? /^mod:(.+)$/.exec(value)?.[1] ?? (value.includes(".") ? value.slice(0, value.indexOf(".")) : value);
-  return Object.hasOwn(RENAMES, name) || Object.hasOwn(ABSORBED, name) ? name : null;
+  return /^mod\.open:(.+)$/.exec(value)?.[1] ?? /^mod:(.+)$/.exec(value)?.[1] ?? (value.includes(".") ? value.slice(0, value.indexOf(".")) : value);
+}
+
+/** The old mod a reference names, or null. */
+export function oldModOf(value) {
+  const name = modOfRef(value);
+  return Object.hasOwn(RENAMES, name ?? "") || Object.hasOwn(ABSORBED, name ?? "") ? name : null;
+}
+
+/** The mod a journalled edit points at once applied (a layout edit's id, a key edit's action or section). */
+export function editTarget(edit) {
+  if (typeof edit?.after === "string") return edit.after;
+  const after = edit?.after;
+  if (!after || typeof after !== "object") return null;
+  return after.section !== edit.before?.section ? modOfRef(after.section) : modOfRef(after.action);
 }
 
 const isNode = (n) => n !== null && typeof n === "object" && !Array.isArray(n);
@@ -132,9 +153,9 @@ export function rewriteLayout(parsed, active) {
     if (node.children !== undefined && !Array.isArray(node.children)) return false;
     const mod = isNode(node.content) ? node.content.mod : undefined;
     if (typeof mod === "string") {
-      if (RENAMES[mod] && active[mod]) {
-        node.content.mod = active[mod];
-        edits.push({ pointer: `${pointer}/content/mod`, id: node.id ?? null, field: "content.mod", before: mod, after: active[mod] });
+      if (own(RENAMES, mod) && own(active, mod)) {
+        node.content.mod = own(active, mod);
+        edits.push({ pointer: `${pointer}/content/mod`, id: node.id ?? null, field: "content.mod", before: mod, after: own(active, mod) });
       } else if (oldModOf(mod)) left.set(mod, oldModOf(mod));
     }
     return (node.children ?? []).every((child, i) => visit(child, `${pointer}/children/${i}`));
@@ -142,9 +163,9 @@ export function rewriteLayout(parsed, active) {
   if (!visit(layout, "")) return null;
   const menu = layout.terminal_menu;
   if (typeof menu === "string") {
-    if (RENAMES[menu] && active[menu]) {
-      layout.terminal_menu = active[menu];
-      edits.push({ pointer: "/terminal_menu", id: layout.id ?? null, field: "terminal_menu", before: menu, after: active[menu] });
+    if (own(RENAMES, menu) && own(active, menu)) {
+      layout.terminal_menu = own(active, menu);
+      edits.push({ pointer: "/terminal_menu", id: layout.id ?? null, field: "terminal_menu", before: menu, after: own(active, menu) });
     } else if (oldModOf(menu)) left.set(menu, oldModOf(menu));
   }
   return { layout, edits, left: [...left].map(([ref, mod]) => ({ mod, ref })) };
@@ -168,6 +189,7 @@ export function rewriteKeys(parsed, active) {
       const toAction = renameAction(action, active) ?? action;
       if (toAction === action && oldModOf(action)) left.set(action, oldModOf(action));
       if (toSection === section && toAction === action) continue;
+      if (key === "__proto__") { left.set(`${section} ${key}`, oldModOf(action) ?? oldModOf(section)); continue; }
       if (toSection !== section && keys[toSection]?.[key] !== undefined) { left.set(`${section} ${key}`, oldModOf(section)); continue; }
       if (toSection !== section) delete keys[section][key];
       (keys[toSection] ??= {})[key] = toAction;

@@ -262,9 +262,15 @@ test("a command link the person pointed elsewhere is never replaced or removed; 
   assert.equal(gone.code, 0, gone.err);
   assert.equal(readlinkSync(s.link), theirs);
   assert.match(gone.out, /Left .*automagik-herdr: it points at .*elsewhere/);
-  // A link into this app home's mods/ (an earlier install's, even dangling) is ours: replaced, then removed.
+  // A link elsewhere under mods/ is not the pack's command: still the person's.
   rmSync(s.link);
-  symlinkSync(join(s.mods, "spaces-agents", "bin", "gone.mjs"), s.link);
+  symlinkSync(join(s.mods, "other-mod", "bin", "cli.mjs"), s.link);
+  assert.equal(s.run("--yes").code, 0);
+  assert.equal(readlinkSync(s.link), join(s.mods, "other-mod", "bin", "cli.mjs"));
+  // The pack's own command path (an earlier install's, even dangling) is ours: replaced, then removed.
+  assert.equal(s.run("--uninstall").code, 0);
+  rmSync(s.link);
+  symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
   assert.equal(s.run("--yes").code, 0);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr.mjs"));
   assert.equal(s.run("--uninstall").code, 0);

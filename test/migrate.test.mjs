@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,9 @@ import {
   ABSORBED, KEY_RENAMES, RENAMES, SHARED_RENAMES, activeRenames, carryShared, renameAction, rewriteKeys, rewriteLayout,
 } from "../mods/spaces-agents/migrate.js";
 import { apply, plan, pending, revert } from "../mods/spaces-agents/migrateHome.mjs";
-import { parseMarker } from "../mods/spaces-agents/release.js";
+import { CATALOG_URL, parseMarker } from "../mods/spaces-agents/release.js";
+import { migrateRefs, revertRefs, setupHome } from "../mods/spaces-agents/update.mjs";
+import { catalogUrl } from "../mods/mod-manager/core.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const UPDATE = join(ROOT, "mods", "spaces-agents", "update.mjs");
@@ -253,6 +255,8 @@ test("owner-shaped home, --adopt: folders, layouts, keys and paths move to the a
   const again = s.cli("install", "--from", pack, "--version", "0.3.0", "--setup");
   assert.equal(again.code, 0, again.log);
   assert.deepEqual(again.out.installed.migration.done, []);
+  assert.match(again.log, /rename migration: nothing to migrate/);
+  assert.doesNotMatch(again.log, /shared keys move|^left: /m);
   assert.equal(again.out.installed.migration.journal, null);
   assert.deepEqual(readdirSync(join(s.state, "backup")).filter((n) => n.startsWith("layouts-")), [`layouts-${today()}`]);
   assert.deepEqual({ keys: read(join(s.home, "keys.json")), layout: read(join(s.home, "layouts", "main-agents.json")) }, before);
@@ -338,7 +342,7 @@ test("apply journals before it writes; revert undoes only what still holds the m
   assert.deepEqual(back.restored, [join(s.home, "keys.json")]);
   assert.deepEqual(readJson(join(s.home, "keys.json")), { global: { "cmd-v": "spaces-agents.paste", "cmd-x": "pane.close" } });
   assert.match(back.skipped[0].reason, /no longer am-sidebar\.close_pane/);
-  assert.deepEqual(revert(backupDir), { restored: [], skipped: [] }, "a reverted journal is not applied twice");
+  assert.deepEqual(revert(backupDir), { restored: [], skipped: [], remaining: 0 }, "a reverted journal is not applied twice");
 });
 
 test("before the folder rename (this release's old-named pack), markdown-browser.open already reaches md-menu", (t) => {
@@ -391,4 +395,214 @@ test("a rollback between two am-* releases reverts nothing and writes no new bac
   assert.deepEqual(parseMarker(read(join(s.state, "installed-by-install.sh"))).migrated, [`backup/layouts-${today()}`]);
   assert.deepEqual(readdirSync(join(s.state, "backup")).filter((n) => n.startsWith("layouts-")), [`layouts-${today()}`]);
   assert.equal(read(join(s.mods, "am-sidebar", "release.txt")), "0.3.0\n");
+});
+
+// ---- hardening (security review of #31) ----
+
+/** A home where spaces-agents became am-sidebar: the record lists am-sidebar, spaces-agents is gone. */
+function renamedHome(s) {
+  modFolder(join(s.mods, "am-sidebar"));
+  write(join(s.state, "installed-by-install.sh"), "version=0.3.0\nmods=am-sidebar\nbefore=none\n");
+}
+const LAYOUT = { id: "r", type: "row", children: [{ id: "s", type: "block", content: { mod: "spaces-agents" } }] };
+
+test("names inherited from Object.prototype are never taken for renames", (t) => {
+  const s = scratch(t);
+  write(join(s.state, "installed-by-install.sh"), "version=0.3.0\nmods=\nbefore=none\n");
+  const layout = { id: "root", terminal_menu: "toString", children: [{ id: "a", content: { mod: "constructor" } }, { id: "b", content: { mod: "__proto__" } }] };
+  const keys = { global: { "cmd-1": "toString.run", "cmd-2": "mod.open:constructor", "cmd-3": "hasOwnProperty.x" }, "mod:valueOf": { x: "y" } };
+  writeJson(join(s.home, "layouts", "p.json"), layout);
+  writeJson(join(s.home, "keys.json"), keys);
+  const p = plan(s.home);
+  assert.equal(pending(p), false);
+  assert.deepEqual(p.left, []);
+  const active = { "spaces-agents": "am-sidebar" };
+  assert.equal(renameAction("constructor.run", active), null);
+  assert.equal(renameAction("mod.open:__proto__", active), null);
+  assert.deepEqual(rewriteLayout(layout, active).edits, []);
+  assert.deepEqual(rewriteKeys(keys, active).edits, []);
+  assert.deepEqual(activeRenames(new Set(["toString"]), () => false).active, {});
+});
+
+test("a rewrite that fails part-way is already in the record; a rollback reverts what was written", { skip: process.getuid?.() === 0 }, (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  writeJson(join(s.home, "layouts", "f.json"), LAYOUT);
+  writeJson(join(s.home, "keys.json"), { global: { "cmd-v": "spaces-agents.paste" } });
+  chmodSync(s.home, 0o555); // keys.json can't be replaced; layouts/ still can
+  const warnings = [];
+  let r;
+  try { r = migrateRefs({ modsDir: s.mods, warnings }); } finally { chmodSync(s.home, 0o755); }
+  assert.deepEqual(warnings, []);
+  assert.equal(readJson(join(s.home, "layouts", "f.json")).children[0].content.mod, "am-sidebar");
+  assert.deepEqual(readJson(join(s.home, "keys.json")), { global: { "cmd-v": "spaces-agents.paste" } });
+  assert.match(r.skipped.find((x) => x.item.endsWith("keys.json")).reason, /not rewritten/);
+  assert.deepEqual(parseMarker(read(join(s.state, "installed-by-install.sh"))).migrated, [`backup/layouts-${today()}`]);
+  assert.deepEqual(revertRefs({ modsDir: s.mods }).restored, [], "am-sidebar is still installed: its edits stay");
+  assert.deepEqual(revertRefs({ modsDir: s.mods, left: (m) => m === "am-sidebar" }).restored, [join(s.home, "layouts", "f.json")]);
+  assert.deepEqual(readJson(join(s.home, "layouts", "f.json")), LAYOUT);
+  assert.deepEqual(parseMarker(read(join(s.state, "installed-by-install.sh"))).migrated, [], "a fully reverted journal leaves the record");
+  // If the journal can't be recorded, nothing is rewritten.
+  writeJson(join(s.home, "layouts", "g.json"), LAYOUT);
+  assert.throws(() => apply(plan(s.home), { backupDir: join(s.state, "backup", "layouts-y"), onJournal: () => { throw new Error("no record"); } }), /no record/);
+  assert.deepEqual(readJson(join(s.home, "layouts", "g.json")), LAYOUT);
+});
+
+test("revert writes only this home's layouts and keys.json, and reads no journal through a link", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "outside");
+  writeJson(join(outside, "victim.json"), { terminal_menu: "am-sidebar" });
+  const crafted = join(s.state, "backup", "layouts-crafted");
+  writeJson(join(crafted, "journal.json"), { version: 1,
+    layouts: [{ file: join(outside, "victim.json"), edits: [{ pointer: "/terminal_menu", id: null, field: "terminal_menu", before: "X", after: "am-sidebar" }] }],
+    keys: { file: join(outside, "victim.json"), edits: [] } });
+  const r = revert(crafted);
+  assert.deepEqual(r.restored, []);
+  assert.equal(r.skipped.length, 2);
+  assert.deepEqual(readJson(join(outside, "victim.json")), { terminal_menu: "am-sidebar" });
+  // A backup folder that is a link: its journal is never read.
+  writeJson(join(outside, "j", "journal.json"), { version: 1, layouts: [{ file: join(s.home, "layouts", "v.json"), edits: [{ pointer: "/terminal_menu", field: "terminal_menu", before: "X", after: "Y" }] }] });
+  writeJson(join(s.home, "layouts", "v.json"), { terminal_menu: "Y" });
+  symlinkSync(join(outside, "j"), join(s.state, "backup", "layouts-link"));
+  write(join(s.state, "installed-by-install.sh"), "version=0.3.0\nmods=am-sidebar\nbefore=none\nmigrated=backup/layouts-link\n");
+  assert.deepEqual(revertRefs({ modsDir: s.mods }).restored, []);
+  assert.deepEqual(readJson(join(s.home, "layouts", "v.json")), { terminal_menu: "Y" });
+  assert.ok(existsSync(join(outside, "j", "journal.json")), "not marked reverted either");
+});
+
+test("links are the person's: a linked layout, layouts/ or keys.json is reported, never replaced; no fixed temp name", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "b.json"), LAYOUT);
+  writeJson(join(outside, "keys.json"), { global: { "cmd-v": "spaces-agents.paste" } });
+  writeJson(join(s.home, "layouts", "a.json"), LAYOUT);
+  write(join(outside, "target.txt"), "target\n");
+  symlinkSync(join(outside, "target.txt"), join(s.home, "layouts", "a.json.am-tmp"));
+  symlinkSync(join(outside, "b.json"), join(s.home, "layouts", "b.json"));
+  symlinkSync(join(outside, "keys.json"), join(s.home, "keys.json"));
+  const before = { b: read(join(outside, "b.json")), keys: read(join(outside, "keys.json")) };
+  const r = migrateRefs({ modsDir: s.mods });
+  assert.deepEqual(r.done.length, 1, "a.json only");
+  assert.equal(read(join(outside, "target.txt")), "target\n");
+  assert.ok(lstatSync(join(s.home, "layouts", "b.json")).isSymbolicLink());
+  assert.ok(lstatSync(join(s.home, "keys.json")).isSymbolicLink());
+  assert.deepEqual({ b: read(join(outside, "b.json")), keys: read(join(outside, "keys.json")) }, before);
+  assert.equal(r.skipped.filter((x) => /a link/.test(x.reason)).length, 2);
+  // layouts/ itself a link: nothing in it is read or written.
+  const o = scratch(t);
+  renamedHome(o);
+  writeJson(join(o.root, "elsewhere", "c.json"), LAYOUT);
+  symlinkSync(join(o.root, "elsewhere"), join(o.home, "layouts"));
+  assert.equal(pending(plan(o.home)), false);
+  assert.deepEqual(readJson(join(o.root, "elsewhere", "c.json")), LAYOUT);
+});
+
+test("a layout too deep to read is reported, and the others still migrate", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const n = 20000;
+  write(join(s.home, "layouts", "deep.json"), '{"children":['.repeat(n) + '{"content":{"mod":"spaces-agents"}}' + "]}".repeat(n));
+  writeJson(join(s.home, "layouts", "ok.json"), LAYOUT);
+  const warnings = [];
+  const r = migrateRefs({ modsDir: s.mods, warnings });
+  assert.deepEqual(warnings, []);
+  assert.equal(readJson(join(s.home, "layouts", "ok.json")).children[0].content.mod, "am-sidebar");
+  assert.ok(r.skipped.some((x) => x.item.endsWith("deep.json")));
+});
+
+test("the mod manager catalog: a pack URL in either folder is brought up to date; the person's is kept", (t) => {
+  const s = scratch(t);
+  const amMods = join(s.home, "data", "am-mods", "catalog.json"), old = join(s.home, "data", "mod-manager", "catalog.json");
+  const tgzDir = join(s.root, "empty");
+  mkdirSync(tgzDir);
+  const setup = () => { const lines = []; setupHome({ modsDir: s.mods, tgzDir, record: { mods: [] }, log: (l) => lines.push(l) }); return lines.join("\n"); };
+  writeJson(amMods, { url: CATALOG_URL.replace("/dev/", "/main/") }); // copied by the migration from an early pack's
+  writeJson(old, { url: "file:///catalogs/mine.json" });
+  const log = setup();
+  assert.deepEqual(readJson(amMods), { url: CATALOG_URL }, "the copy core.js reads first does not shadow the pack's URL");
+  assert.deepEqual(readJson(old), { url: "file:///catalogs/mine.json" });
+  assert.match(log, /kept your mod manager catalog \(file:\/\/\/catalogs\/mine\.json\)/);
+  writeJson(amMods, { url: "https://example.test/index.json" });
+  setup();
+  assert.deepEqual(readJson(amMods), { url: "https://example.test/index.json" }, "an override in the folder core.js reads first is kept");
+  rmSync(join(s.home, "data"), { recursive: true });
+  setup();
+  assert.deepEqual(readJson(old), { url: CATALOG_URL });
+  assert.equal(existsSync(amMods), false);
+});
+
+test("the mod manager reads the person's catalog URL wherever it is; a copy holding the pack's never shadows it", async (t) => {
+  const s = scratch(t);
+  const io = { readText: async (path) => read(path) };
+  writeJson(join(s.home, "data", "mod-manager", "catalog.json"), { url: CATALOG_URL });
+  writeJson(join(s.home, "data", "am-mods", "catalog.json"), { url: CATALOG_URL }); // the migration's copy
+  assert.equal(await catalogUrl(io, s.home), CATALOG_URL);
+  writeJson(join(s.home, "data", "mod-manager", "catalog.json"), { url: "file:///catalogs/later.json" }); // changed after migrating
+  assert.equal(await catalogUrl(io, s.home), "file:///catalogs/later.json");
+  writeJson(join(s.home, "data", "am-mods", "catalog.json"), { url: "file:///catalogs/new.json" });
+  assert.equal(await catalogUrl(io, s.home), "file:///catalogs/new.json", "data/am-mods first when both are the person's");
+});
+
+/** An old-named pack (this release's names): spaces-agents carries VERSION, release.js and the updater. */
+function oldPack(root, version, mods = ["md-menu", "spaces-agents"]) {
+  const tree = join(root, `old-pack-${version}`);
+  for (const m of mods) modFolder(join(tree, m), { "release.txt": `${version}\n` });
+  write(join(tree, "spaces-agents", "VERSION"), `${version}\n`);
+  write(join(tree, "spaces-agents", "release.js"), `export const PACK_MODS = ${JSON.stringify(mods)};\n`);
+  write(join(tree, "spaces-agents", "update.mjs"), "// the pack's updater\n");
+  const out = join(root, `automagik-herdr-pack-old-${version}.tgz`);
+  execFileSync("tar", ["-czf", out, "-C", tree, ...readdirSync(tree)], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+  return out;
+}
+const MD_KEYS = { "mod:markdown-browser": { "cmd-o": "markdown-browser.open" }, global: { "cmd-v": "spaces-agents.paste" } };
+/** v0.2.2: spaces-agents by the installer (v1 record), md-menu by hand, a markdown-browser binding. */
+function v022Home(s) {
+  modFolder(join(s.mods, "spaces-agents"), { VERSION: "0.2.2\n" });
+  modFolder(join(s.mods, "md-menu"), { "mine.txt": "mine\n" });
+  write(join(s.state, "installed-by-install.sh"), "version=0.2.2\nlayout=added\nbefore=none\n");
+  writeJson(join(s.home, "keys.json"), MD_KEYS);
+}
+
+test("v0.2.2 → this release with --adopt → rollback: the md-menu edit is reverted, the hand-installed md-menu returns", (t) => {
+  const s = scratch(t);
+  v022Home(s);
+  const r = s.cli("install", "--from", oldPack(s.root, "0.3.0"), "--version", "0.3.0", "--adopt", "--setup");
+  assert.equal(r.code, 0, r.log);
+  assert.deepEqual(readJson(join(s.home, "keys.json"))["mod:md-menu"], { "cmd-o": "md-menu.open" });
+  assert.deepEqual(parseMarker(read(join(s.state, "installed-by-install.sh"))).migrated, [`backup/layouts-${today()}`]);
+  const back = s.cli("rollback");
+  assert.equal(back.code, 0, back.log);
+  const keys = readJson(join(s.home, "keys.json"));
+  assert.deepEqual(keys["mod:markdown-browser"], MD_KEYS["mod:markdown-browser"]);
+  assert.equal(keys["mod:md-menu"], undefined);
+  assert.equal(read(join(s.mods, "md-menu", "mine.txt")), "mine\n", "the person's md-menu is back from backup/");
+  assert.equal(read(join(s.mods, "spaces-agents", "VERSION")), "0.2.2\n");
+  const record = parseMarker(read(join(s.state, "installed-by-install.sh")));
+  assert.deepEqual([record.mods, record.adopted, record.migrated], [["spaces-agents"], [], []]);
+});
+
+test("0.3.1 → rollback to 0.3.0: md-menu stays installed, so its edit stays, and the record keeps the journal", (t) => {
+  const s = scratch(t);
+  v022Home(s);
+  assert.equal(s.cli("install", "--from", oldPack(s.root, "0.3.0"), "--version", "0.3.0", "--adopt", "--setup").code, 0);
+  assert.equal(s.cli("install", "--from", oldPack(s.root, "0.3.1"), "--version", "0.3.1", "--setup").code, 0);
+  const keys = read(join(s.home, "keys.json"));
+  const back = s.cli("rollback");
+  assert.equal(back.code, 0, back.log);
+  assert.equal(read(join(s.home, "keys.json")), keys);
+  assert.equal(read(join(s.mods, "md-menu", "release.txt")), "0.3.0\n");
+  const record = parseMarker(read(join(s.state, "installed-by-install.sh")));
+  assert.deepEqual(record.migrated, [`backup/layouts-${today()}`]);
+  assert.equal(record.adopted.length, 1, "the person's md-menu stays in backup/");
+  assert.ok(existsSync(join(s.state, "backup", `layouts-${today()}`, "journal.json")));
+});
+
+test("a layout block of an absorbed mod is reported as removable", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  writeJson(join(s.home, "layouts", "icons.json"), { id: "r", children: [{ id: "icons", content: { mod: "space-icon" } }, LAYOUT.children[0]] });
+  const r = migrateRefs({ modsDir: s.mods });
+  assert.ok(r.skipped.some((x) => /icons\.json: space-icon$/.test(x.item) && /space-icon is part of am-sidebar now, so this shows nothing: you can remove it/.test(x.reason)));
 });
