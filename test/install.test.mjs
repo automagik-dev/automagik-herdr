@@ -344,8 +344,8 @@ test("a v0.2.0-shaped home: rerunning install.sh installs the pack beside it, th
   mkdirSync(join(s.pack, ".state"));
   writeFileSync(join(s.pack, ".state", "projects.json"), "[]\n");
   writeFileSync(join(s.pack, "VERSION"), "0.2.2\n");
-  // The layout v0.2 shipped, byte for byte (its sha is V020_LAYOUT_SHA256).
-  const v020 = execFileSync("git", ["show", "v0.2.0:mods/spaces-agents/layouts/automagik.json"], { cwd: ROOT });
+  // The layout v0.2 shipped, byte for byte (`git show v0.2.0:mods/spaces-agents/layouts/automagik.json`).
+  const v020 = readFileSync(join(ROOT, "test", "fixtures", "layout-v0.2.0.json"));
   assert.equal(createHash("sha256").update(v020).digest("hex"), V020_LAYOUT_SHA256);
   const layout = join(s.appHome, "layouts", "automagik.json");
   mkdirSync(dirname(layout));
