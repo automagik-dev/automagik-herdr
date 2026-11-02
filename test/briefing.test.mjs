@@ -12,7 +12,9 @@ import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/spaces-agents/model.js";
-import { briefingText, directMembers, mergeHook, hookCommand, briefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT } from "../mods/spaces-agents/briefingText.mjs";
+import {
+  briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
+} from "../mods/spaces-agents/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, timeScale } from "../mods/spaces-agents/briefing.mjs";
 const { afterBind } = await import("../mods/spaces-agents/launch.js");
 
@@ -147,10 +149,12 @@ test("cap: 4,000-character instructions and twelve members with long reports sta
   assert.ok(huge.endsWith("</herdr-bot>"));
 });
 
-test("hook command: names the installed script by its absolute path, quoted, and never fails", () => {
+test("hook command: names the stable entry point by its absolute path, quoted, and never fails", () => {
   assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs");
-  assert.equal(hookCommand("/Users/x/.config/herdr-app"), 'command -v node >/dev/null && node "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs" || true');
-  assert.equal(hookCommand('/odd "$HOME`'), 'command -v node >/dev/null && node "/odd \\"\\$HOME\\`/mods/spaces-agents/briefing.mjs" || true');
+  assert.equal(stableBriefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/automagik-herdr/briefing.mjs");
+  assert.equal(hookCommand("/Users/x/.config/herdr-app"), 'command -v node >/dev/null && node "/Users/x/.config/herdr-app/automagik-herdr/briefing.mjs" || true');
+  assert.equal(legacyHookCommand("/Users/x/.config/herdr-app"), 'command -v node >/dev/null && node "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs" || true');
+  assert.equal(hookCommand('/odd "$HOME`'), 'command -v node >/dev/null && node "/odd \\"\\$HOME\\`/automagik-herdr/briefing.mjs" || true');
 });
 
 test("hook merge: keeps every other key and hook, adds ours once, updates a moved path, leaves odd files alone", () => {
@@ -422,6 +426,7 @@ async function session(t) {
   const appHome = join(root, "herdr-app");
   mkdirSync(join(appHome, "mods", "spaces-agents"), { recursive: true });
   writeFileSync(join(appHome, "mods", "spaces-agents", "briefing.mjs"), "// installed\n");
+  writeFileSync(join(appHome, "mods", "spaces-agents", "briefingEntry.mjs"), "// the entry point\n");
   const proj = join(root, "proj");
   await run("git", ["init", "-q", proj]);
   await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: proj });
@@ -441,6 +446,7 @@ test("afterBind: a Claude bot gets the hook merged into settings.local.json, set
   const local = JSON.parse(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8"));
   assert.equal(local.model, "opus");
   assert.deepEqual(local.hooks.UserPromptSubmit.map((g) => g.hooks[0].command), ["brain recall", hookCommand(appHome)]);
+  assert.equal(readFileSync(stableBriefingPath(appHome), "utf8"), "// the entry point\n", "the entry point put in place");
   assert.equal(readFileSync(join(proj, ".claude", "settings.json"), "utf8"), shared);
   assert.deepEqual(state.notes, []);
   assert.match(readFileSync(join(proj, ".git", "info", "exclude"), "utf8"), /^\*\*\/\.claude\/settings\.local\.json$/m);
@@ -449,6 +455,23 @@ test("afterBind: a Claude bot gets the hook merged into settings.local.json, set
   assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: false });
   assert.equal(JSON.parse(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8")).hooks.UserPromptSubmit.length, 2);
   assert.equal(readFileSync(join(proj, ".git", "info", "exclude"), "utf8").split(EXCLUDE_LINE).length, 2);
+  assert.deepEqual(state.notes, []);
+});
+
+test("afterBind: a v0.3 hook moves onto the entry point in place; with no entry point to place, the folder's own path", async (t) => {
+  const { appHome, proj } = await session(t);
+  mkdirSync(join(proj, ".claude"));
+  const file = join(proj, ".claude", "settings.local.json");
+  writeFileSync(file, JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: legacyHookCommand(appHome), timeout: 10 }] }] } }));
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: true });
+  const moved = JSON.parse(readFileSync(file, "utf8"));
+  assert.deepEqual(moved.hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: hookCommand(appHome), timeout: 10 }] }], "updated, not doubled");
+  assert.deepEqual(moved.permissions, { allow: ["Bash(ls)"] });
+  // A pack with no entry point to copy (and none placed): the hook names the folder's own script.
+  rmSync(stableBriefingPath(appHome));
+  rmSync(join(appHome, "mods", "spaces-agents", "briefingEntry.mjs"));
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: true });
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).hooks.UserPromptSubmit[0].hooks[0].command, legacyHookCommand(appHome));
   assert.deepEqual(state.notes, []);
 });
 

@@ -28,7 +28,9 @@
 // Across the rename (Group 6a, D12) an old-named folder the record lists hands its private paths
 // to its am-* folder and leaves with the kept set; a person's own is left, or adopted on --adopt.
 // After the folders, layouts and keys.json follow the renamed folders (migrateHome.mjs), and a
-// rollback across the rename reverts those edits from the journal.
+// rollback across the rename reverts those edits from the journal. Then the briefing hooks follow
+// (Group 6b, migrateHooks.mjs): onto <app home>/automagik-herdr/briefing.mjs when the installed
+// sidebar ships it, back to v0.3's path when it doesn't, and the CLI link follows the sidebar folder.
 //
 // Needs Node 22.7 or later: the installed pack has no package.json, so Node loads release.js
 // (shared with the mod, whose loader takes .js) as ESM by detecting its syntax.
@@ -49,6 +51,7 @@ import {
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
+import { CLI_LINK, botPaneFolders, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
   noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
@@ -409,7 +412,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
  * every folder of the kept one comes back (private paths carried over), so a second rollback
  * undoes the first. Refuses, changing nothing, when a folder in the way is not the record's.
  */
-export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log = () => {} } = {}) {
+export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log = () => {}, binDir = null, window = false } = {}) {
   const set = readSet(modsDir);
   const prev = prevSetOf(modsDir);
   if (!set || set.mods.length === 0) throw new Error(`no earlier pack kept at ${prev}: nothing to roll back to`);
@@ -482,7 +485,8 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   // place (forward again, they move again).
   const reverted = revertRefs({ modsDir, log, warnings, left: (mod) => left.has(mod) && !set.mods.includes(mod) });
   const migration = migrateRefs({ modsDir, log, warnings });
-  return { pack: modsDir, prev, mods: set.mods, version: set.version, reverted: reverted.restored, migration, warnings };
+  const hooks = moveHooks({ modsDir, log, warnings, binDir, window });
+  return { pack: modsDir, prev, mods: set.mods, version: set.version, reverted: reverted.restored, migration, hooks, warnings };
 }
 
 /**
@@ -543,6 +547,32 @@ export function revertRefs({ modsDir, log = () => {}, warnings = [], left = () =
     warnings.push(`the rename migration was not reverted (${error.message}); the originals are in ${backupOf(modsDir)}/layouts-*`);
   }
   return { restored };
+}
+
+/** Where install.sh links the CLI: $HOME/.local/bin. */
+export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".local", "bin");
+/** Whether `modsDir` is in the app home Herdr runs by default: only then are the open spaces asked for. */
+export const liveHome = (modsDir) => dirname(resolve(modsDir)) === join(homedir(), ".config", "herdr-app");
+
+/**
+ * The briefing hooks and the CLI link after the folders and references (Group 6b, migrateHooks.mjs
+ * syncHooks and relink). `binDir`: the folder holding the CLI link (null: the link is not looked at);
+ * `window`: also the open spaces' and the bot panes' folders (`herdr-app ls`, `hc`). A failure is a warning.
+ * Returns `{ hooks, link }` (hooks: syncHooks's result or null; link: the line logged or null).
+ */
+export function moveHooks({ modsDir, log = () => {}, warnings = [], binDir = null, window = false }) {
+  let hooks = null;
+  let link = null;
+  try { hooks = syncHooks({ modsDir, extra: window ? [...openSpaces(), ...botPaneFolders()] : [], log }); } catch (error) {
+    warnings.push(`the briefing hooks were not moved (${error.message}); each rewritten settings.local.json has its backup beside it`);
+  }
+  if (binDir) {
+    try {
+      link = relink({ binDir, modsDir, owned: new Set(readMarker(modsDir)?.mods ?? []) });
+      if (link) log(link);
+    } catch (error) { warnings.push(`${join(binDir, CLI_LINK)} was not repointed (${error.message})`); }
+  }
+  return { hooks, link };
 }
 
 /** A keys.json that will not parse stops the run before any folder moves. */
@@ -639,7 +669,7 @@ export async function checkForUpdate({ fetch = globalThis.fetch, env = process.e
 }
 
 /** check, then download, verify and apply when there is an update. `{ current, latest, update, installed }`. */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), log } = {}) {
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), log, binDir = null, window = false } = {}) {
   const found = await checkForUpdate({ fetch, env, modsDir });
   if (!found.update) return { ...found, installed: null };
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
@@ -647,6 +677,7 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
     const installed = await applyUpdate({ tgzPath, version: found.update.version, modsDir, log });
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window });
     return { ...found, installed };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -682,14 +713,16 @@ async function main(argv) {
   const { command, opts } = parseArgs(argv);
   const modsDir = opts.mods ?? defaultModsDir();
   const log = (line) => process.stderr.write(`${line}\n`);
+  // The CLI link and the open spaces belong to this computer's own app home; install.sh links the CLI itself.
+  const host = { binDir: binDirOf(), window: liveHome(modsDir) };
   if (command === "check" || (command === "update" && opts.check)) return checkForUpdate({ modsDir });
   if (command === "apply" || command === "update") {
-    const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined });
+    const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, ...host });
     if (command === "apply" || opts.json) return r;
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };
   }
   if (command === "rollback") {
-    const r = rollback({ modsDir, log });
+    const r = rollback({ modsDir, log, ...host });
     if (r.warnings.length) process.exitCode = 4;
     return r;
   }
@@ -701,6 +734,7 @@ async function main(argv) {
   const done = () => { if (installed.warnings.length) process.exitCode = 4; };
   if (!opts.setup) {
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window });
     done();
     return { installed };
   }
@@ -710,6 +744,7 @@ async function main(argv) {
     const failed = setupHome({ modsDir, tgzDir, record: readMarker(modsDir), log });
     // After setupHome: the pack's own layout is placed first, so only the person's are migrated.
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window });
     done();
     if (failed.length && !process.exitCode) process.exitCode = 3;
     return { installed, checkFailed: failed };

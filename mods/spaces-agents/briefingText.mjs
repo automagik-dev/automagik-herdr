@@ -122,17 +122,38 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 
 // ---- the hook entry and the git exclude (written by launch.js afterBind) ----
 
-/** The pack's installed briefing script under an app home. */
+/** The pack's installed briefing script under an app home (the sidebar folder's own copy). */
 export const briefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/mods/spaces-agents/briefing.mjs`;
 
-/** The hook command: no `node` on the agent's PATH means no briefing and no error. */
-export function hookCommand(appHome) {
-  const quoted = briefingPath(appHome).replace(/[\\"$`]/g, (c) => `\\${c}`);
+/**
+ * The hook's entry point, relative to the app home (Group 6b): a shim outside mods/ that runs
+ * whichever sidebar folder's briefing.mjs is there (am-sidebar, else spaces-agents), so a hook
+ * pointing at it survives the folder's rename and a rollback across it. The pack ships it as
+ * ENTRY_SOURCE in the sidebar folder; the installer, the updater and installHook put it in place.
+ */
+export const STABLE_BRIEFING = "automagik-herdr/briefing.mjs";
+export const ENTRY_SOURCE = "briefingEntry.mjs";
+/** The hook's entry point under an app home. */
+export const stableBriefingPath = (appHome) => `${appHome.replace(/\/+$/, "")}/${STABLE_BRIEFING}`;
+
+/** The hook command for a script path: no `node` on the agent's PATH means no briefing and no error. */
+export function commandFor(script) {
+  const quoted = script.replace(/[\\"$`]/g, (c) => `\\${c}`);
   return `command -v node >/dev/null && node "${quoted}" || true`;
+}
+/** The hook command the pack writes: through the stable entry point. */
+export const hookCommand = (appHome) => commandFor(stableBriefingPath(appHome));
+/** The command v0.2.0 to v0.3.x wrote (straight at mods/spaces-agents), which a rollback restores. */
+export const legacyHookCommand = (appHome) => commandFor(briefingPath(appHome));
+/** The script a command of commandFor's shape names, or null for any other shape. */
+export function scriptOf(command) {
+  const m = /^command -v node >\/dev\/null && node "((?:[^"\\]|\\.)*)" \|\| true$/.exec(String(command ?? ""));
+  return m ? m[1].replace(/\\(.)/g, "$1") : null;
 }
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
-const OURS = /\/mods\/spaces-agents\/briefing\.mjs/;
+/** A command naming the pack's briefing: the stable entry, or either sidebar folder's own copy. */
+export const OURS = /\/(?:automagik-herdr|mods\/spaces-agents|mods\/am-sidebar)\/briefing\.mjs/;
 
 /**
  * Merges the briefing hook into a settings.local.json text (null: no file yet). Every other
@@ -242,9 +263,30 @@ export async function ensureExcluded(folder, io) {
 }
 
 /**
+ * The command a hook gets: through the stable entry point, which is put in place from the pack's
+ * ENTRY_SOURCE when it is missing (a pack the installer didn't place, or one an older updater
+ * installed). When it can't be, the sidebar folder's own path, so the bot still gets its briefing.
+ */
+async function entryCommand(appHome, io) {
+  const read = async (path) => { try { return await io.read(path); } catch { return null; } };
+  const entry = stableBriefingPath(appHome);
+  if ((await read(entry)) !== null) return hookCommand(appHome);
+  const script = briefingPath(appHome);
+  const source = await read(`${script.slice(0, script.lastIndexOf("/"))}/${ENTRY_SOURCE}`);
+  if (source === null) return legacyHookCommand(appHome);
+  try {
+    await io.mkdir(entry.slice(0, entry.lastIndexOf("/")));
+    await io.write(entry, source, null);
+    return hookCommand(appHome);
+  } catch {
+    return legacyHookCommand(appHome);
+  }
+}
+
+/**
  * Merges the per-turn briefing hook, if absent, into `<folder>/.claude/settings.local.json`
- * (never the shared settings.json) and keeps that file out of git. Writes nothing when the
- * pack's briefing.mjs isn't under `appHome`. Never rejects: every problem is a warning.
+ * (never the shared settings.json) and keeps that file out of git. The hook runs the stable
+ * entry point (Group 6b). Writes nothing when the pack's briefing.mjs isn't under `appHome`. Never rejects: every problem is a warning.
  * Resolves { written, warnings } (`written`: the hook entry was added or updated).
  * `lost`: what a failure costs, for the warnings (default: the bot's briefing).
  */
@@ -263,7 +305,7 @@ export async function installHook(botName, folder, appHome, io, { lost = null } 
     const excluded = await ensureExcluded(folder, io);
     if (excluded) warnings.push(excluded);
     const before = await io.read(path);
-    const merged = mergeHook(before, hookCommand(appHome));
+    const merged = mergeHook(before, await entryCommand(appHome, io));
     if (merged.error) throw new Error(`${path} was left as it is: ${merged.error}.`);
     if (!merged.changed) return { written: false, warnings };
     if (before === null) await io.mkdir(`${folder}/.claude`);
