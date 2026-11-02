@@ -26,6 +26,8 @@ import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
 import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
+import { plan as tidyPlan, planText } from "../tidy.js";
+import { fixNonVisual, readState } from "./state.mjs";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
 export class CliError extends Error {
@@ -233,6 +235,17 @@ export function listProject(key, dir = appHome()) {
   return false;
 }
 
+/** Takes keys off the CLI's project list (tidy's registry prune), under listProject's lock. */
+export function unlistProjects(keys, dir = appHome()) {
+  const path = `${dir}/${PROJECTS_FILE}`;
+  withLock(`${path}.lock`, () => {
+    let text;
+    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return; throw e; }
+    const next = `${JSON.stringify(listedProjects(text).filter((k) => !keys.includes(k)), null, 2)}\n`;
+    if (next !== text) fsIo.replace(path, next);
+  });
+}
+
 /** A bot by id, else by its name (exact, then ignoring case), unique in the project. */
 export function findBot(file, ref) {
   if (!ref) throw new CliError("Name a bot (its id or its name).", 2);
@@ -346,6 +359,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   attach <bot> <terminal>       tie a running pane to the bot
   detach <bot>                  take the bot's label off its panes (a removed bot: by its id)
   brief <bot>                   print the bot's per-turn briefing as it would be now
+  tidy                          what drifted in the window, labels and project list, as a plan;
+                                changes nothing (--json: the plan's actions)
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back
 
@@ -866,8 +881,30 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.`;
 }
 
+// ---- tidy (sidebar-rules Group 2) ----
+
+const tidyIo = () => ({ run: runProgram, home: home(), appHome: appHome(), prune: (keys) => unlistProjects(keys) });
+
+/** `tidy`: the plan (tidy.js), read from hc, herdr-app, git and the files; it changes nothing. */
+async function cmdTidy(opts) {
+  let state;
+  try { state = await readState(tidyIo(), { window: true }); } catch (e) { throw new CliError(`Can't plan: ${e?.message ?? e}`); }
+  const actions = tidyPlan(state, { now: Date.now(), home: home(), appHome: appHome() });
+  return opts.json ? actions : planText(actions);
+}
+
+/** After start, attach and create: the plan's non-visual fixes only; a failure only warns. */
+async function tidyQuietly() {
+  try {
+    const io = tidyIo();
+    const actions = tidyPlan(await readState(io, { window: false }), { now: Date.now(), home: io.home, appHome: io.appHome });
+    report(await fixNonVisual(actions.filter((a) => !a.visual), io));
+  } catch (e) { report([`tidy: ${e?.message ?? e}`]); }
+}
+const TIDIES = new Set(["start", "attach", "create"]);
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, attach: cmdAttach, detach: cmdDetach, brief: cmdBrief, update: cmdUpdate };
+  start: cmdStart, attach: cmdAttach, detach: cmdDetach, brief: cmdBrief, update: cmdUpdate, tidy: cmdTidy };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "attach", "detach", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
@@ -896,6 +933,7 @@ export async function main(argv = process.argv.slice(2)) {
     const out = await run(opts, rest);
     if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     else if (out) process.stdout.write(`${out}\n`);
+    if (TIDIES.has(command)) await tidyQuietly();
     return 0;
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
