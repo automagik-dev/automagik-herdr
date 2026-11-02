@@ -4,7 +4,7 @@
 // goes in the sidebar (A8), and the rows a fold state leaves showing (A7). Pure: no `herdr`,
 // `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
 
-import { BOT_LABEL, mainBotOf, effectiveLead } from "./model.js";
+import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
 import { shownModel, defaultModelFrom } from "./models.js";
 
@@ -270,4 +270,72 @@ export function argvEntry(get, created) {
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */
 export function knownBots(projects) {
   return new Set((projects ?? []).flatMap((p) => p.file?.bots?.map((b) => b.id) ?? []));
+}
+
+/** Every terminal a tree holds: each live bot's pane and every bot's helpers, folded or not. */
+function treeTerminals(tree) {
+  const out = new Set();
+  const walk = (n) => {
+    if (!n) return;
+    if (n.live?.terminal) out.add(n.live.terminal);
+    for (const h of n.helpers ?? []) out.add(h.terminal);
+    for (const m of n.members ?? []) walk(m);
+  };
+  walk(tree?.main);
+  for (const c of tree?.categories ?? []) for (const n of c.bots) walk(n);
+  for (const n of tree?.uncategorised ?? []) walk(n);
+  return out;
+}
+
+// R3's place of a bot among its siblings: captains (by rank, or a bot with no rank that leads
+// others) first, then by rank in RANKS order, then the unranked; file order within each.
+const rankOf = (n) => (n.bot.rank ? RANKS.indexOf(n.bot.rank) : n.members.length ? 0 : RANKS.length);
+const byRank = (nodes) => nodes.map((n, i) => [n, i]).sort(([a, i], [b, j]) => rankOf(a) - rankOf(b) || i - j)
+  .map(([n]) => ({ ...n, members: byRank(n.members) }));
+
+/** A tree with every bot's siblings in R3 order (byRank); categories keep bots.json order. */
+export function rankedTree(tree) {
+  if (!tree) return tree;
+  return { ...tree, main: tree.main ? { ...tree.main, members: byRank(tree.main.members) } : null,
+    categories: tree.categories.map((c) => ({ ...c, bots: byRank(c.bots) })), uncategorised: byRank(tree.uncategorised) };
+}
+
+/**
+ * R3 (sidebar-rules D2): one space's rows, in the order the sidebar draws them. First the
+ * project's bot tree when placeTrees put it in this space (visibleRows under `open` over
+ * rankedTree: the main bot; categories in bots.json order, each with its captains, then its
+ * members by rank; each bot's helpers beneath it), then
+ * the plain agents not tied to a bot, each followed by its sub-agents, then shells. A bot is
+ * never drawn below a plain agent, and a terminal the tree holds (a bot's pane, or a helper
+ * of any bot, folded or not) is not listed again as an agent or a shell; nor is what such an
+ * agent started. `agents`: [{ terminal, subs?: [{ terminal, depth }] }] in the caller's
+ * order; `shells`: [{ terminal }]. Each descriptor: { kind: "main" | "category" | "bot" |
+ * "helper" | "notice" | "agent" | "shell", id, depth, terminal (null when none) } plus what
+ * it was made from: `row` (visibleRows' row), `agent` and `sub`, or `shell`.
+ */
+export function spaceRowOrder({ tree = null, agents = [], shells = [], open = new Map() } = {}) {
+  const out = [];
+  const seen = tree ? treeTerminals(tree) : new Set();
+  if (tree) {
+    for (const r of visibleRows(rankedTree(tree), open)) {
+      const terminal = r.kind === "helper" ? r.helper.terminal : r.node?.live?.terminal ?? null;
+      out.push({ kind: r.kind === "planned" ? "bot" : r.kind, id: r.id, depth: r.guides.length, terminal, row: r });
+    }
+  }
+  for (const a of agents ?? []) {
+    if (!a?.terminal || seen.has(a.terminal)) continue;
+    seen.add(a.terminal);
+    out.push({ kind: "agent", id: `a:${a.terminal}`, depth: 0, terminal: a.terminal, agent: a });
+    for (const s of a.subs ?? []) {
+      if (!s?.terminal || seen.has(s.terminal)) continue;
+      seen.add(s.terminal);
+      out.push({ kind: "agent", id: `a:${s.terminal}`, depth: (s.depth ?? 0) + 1, terminal: s.terminal, agent: a, sub: s });
+    }
+  }
+  for (const s of shells ?? []) {
+    if (!s?.terminal || seen.has(s.terminal)) continue;
+    seen.add(s.terminal);
+    out.push({ kind: "shell", id: `s:${s.terminal}`, depth: 0, terminal: s.terminal, shell: s });
+  }
+  return out;
 }

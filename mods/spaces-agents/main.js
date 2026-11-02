@@ -20,7 +20,7 @@ import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./up
 import { startBot, attachBot, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, visibleRows, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -293,48 +293,54 @@ export default class Spaces extends View {
     });
   }
 
-  // A space's agents, in agents() order, then their sub-agents.
-  agentRows(w, tree, t) {
+  // A space's plain agents (none drawn as a bot), in agents() order, each with its
+  // sub-agents: spaceRowOrder's `agents`.
+  spaceAgents(w) {
     const tabs = new Set((w.tabs ?? []).map((c) => c.id));
-    const indent = tree ? 44 : 20;
-    const shown = focused()?.agent;
     const asBot = (a) => this.botOf.has(a.address) || (a.core && this.botOf.has(a.core));
-    return [...this.agentList, ...this.extraList].filter((a) => tabs.has(a.tab) && !asBot(a)).flatMap((a) => {
-      if (!a.extra) this.order.push(a.address);
-      const pic = icon(a.program, 14, t.foreground);
-      const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
-      const idle = a.status === "idle" && !a.focused;
-      const row = h_flex().id(`ag-${a.address}`).h(26).flex_none().pl(indent).pr(8).gap(8).items_center().rounded(8).text_size(12.5)
-        .cursor_pointer()
-        .when(a.focused, (el) => el.bg(t.selected))
-        .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
-        // Not in agents() (no status, or a renamed machine): agent.focus wouldn't know it; its pane does.
-        .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : run("agent.focus", { terminal: a.address })))
-        // "Attach as bot…": the clone has no terminal menu of its own, so the row's right-click.
-        .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address }, "popup")))
-        .when(Boolean(pic), (el) => el.child(pic))
-        .child(div().flex_1().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(a.extra ? a.name : this.agentName(a)))
-        .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
-        .child(a.extra && !a.status
-          ? div().id(`unknown-${a.address}`).size(7).mx(3).flex_none().rounded(4).bg(t.unknown).tooltip("No status reported")
-          : this.status(t, a));
-      const subs = this.kids(a.core ?? a.address).map(({ k, lines }) => {
-        const on = k.address === shown;
-        const kpic = icon(k.program, 13, t.foreground);
-        return h_flex().id(`sub-${k.address}`).h(24).flex_none().pl(indent + 4).pr(8).items_center().rounded(8).text_size(12)
-          .cursor_pointer()
-          .when(on, (el) => el.bg(t.raised))
-          .hover((s) => s.bg(t.hover))
-          .on_click(() => run("agent.focus", { terminal: k.address }))
-          .children(lines.map((l) => div().self_start().mt(-4).w(8).h(16).mr(3).flex_none()
-            .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
-            .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(6))))
-          .when(Boolean(kpic), (el) => el.child(div().mr(7).child(kpic)))
-          .child(div().flex_1().min_w(0).truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
-          .child(this.status(t, { status: kidStatus(k, this.listed) }));
-      });
-      return [row, ...subs];
-    });
+    return [...this.agentList, ...this.extraList].filter((a) => tabs.has(a.tab) && !asBot(a)).map((a) => ({
+      terminal: a.core ?? a.address, a,
+      subs: this.kids(a.core ?? a.address).map(({ k, lines }) => ({ terminal: k.address, depth: lines.length - 1, k, lines })),
+    }));
+  }
+
+  // A plain agent's row. `indent`: 44 under a worktree space, else 20.
+  agentRow(a, indent, t) {
+    if (!a.extra) this.order.push(a.address);
+    const pic = icon(a.program, 14, t.foreground);
+    const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+    const idle = a.status === "idle" && !a.focused;
+    return h_flex().id(`ag-${a.address}`).h(26).flex_none().pl(indent).pr(8).gap(8).items_center().rounded(8).text_size(12.5)
+      .cursor_pointer()
+      .when(a.focused, (el) => el.bg(t.selected))
+      .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
+      // Not in agents() (no status, or a renamed machine): agent.focus wouldn't know it; its pane does.
+      .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : run("agent.focus", { terminal: a.address })))
+      // "Attach as bot…": the clone has no terminal menu of its own, so the row's right-click.
+      .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address }, "popup")))
+      .when(Boolean(pic), (el) => el.child(pic))
+      .child(div().flex_1().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(a.extra ? a.name : this.agentName(a)))
+      .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
+      .child(a.extra && !a.status
+        ? div().id(`unknown-${a.address}`).size(7).mx(3).flex_none().rounded(4).bg(t.unknown).tooltip("No status reported")
+        : this.status(t, a));
+  }
+
+  // A plain agent's sub-agent, with the tree lines in front of it.
+  subRow(k, lines, indent, t) {
+    const on = k.address === focused()?.agent;
+    const kpic = icon(k.program, 13, t.foreground);
+    return h_flex().id(`sub-${k.address}`).h(24).flex_none().pl(indent + 4).pr(8).items_center().rounded(8).text_size(12)
+      .cursor_pointer()
+      .when(on, (el) => el.bg(t.raised))
+      .hover((s) => s.bg(t.hover))
+      .on_click(() => run("agent.focus", { terminal: k.address }))
+      .children(lines.map((l) => div().self_start().mt(-4).w(8).h(16).mr(3).flex_none()
+        .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
+        .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(6))))
+      .when(Boolean(kpic), (el) => el.child(div().mr(7).child(kpic)))
+      .child(div().flex_1().min_w(0).truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
+      .child(this.status(t, { status: kidStatus(k, this.listed) }));
   }
 
   // The agents list's grouped-view name: a tab someone named or the agent's own
@@ -496,9 +502,9 @@ export default class Spaces extends View {
       .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
   }
 
-  // One tree's rows (visibleRows decides which show), in one block.
-  botBlock(tree, t, dark) {
-    const rows = visibleRows(tree, this.open).map((r) => {
+  // One tree's rows (visibleRows decides which show, unless given), in one block.
+  botBlock(tree, t, dark, shown = visibleRows(tree, this.open)) {
+    const rows = shown.map((r) => {
       if (r.kind === "category") return this.categoryRow(r, t);
       if (r.kind === "helper") return this.helperRow(r, t);
       if (r.kind === "notice") return h_flex().id(`row-${r.id}`).px(8).py(4).gap(6).text_size(11).text_color(t.dim)
@@ -885,10 +891,26 @@ export default class Spaces extends View {
     const dark = isDark(t.chrome);
     const { at, rest } = placeTrees(rows.map((r) => r.w.id), this.trees);
     const byId = new Map(this.trees.map((tr) => [projectId(tr), tr]));
-    const treeAfter = (r) => (at.has(r.w.id) ? this.botBlock(byId.get(at.get(r.w.id)), t, dark) : []);
-    const tail = collapsed ? [] : rest.flatMap((id) => [this.projectHeader(byId.get(id), t), ...this.botBlock(byId.get(id), t, dark)]);
-    // A space's row, then (expanded) its agents beneath it, then the bot tree placed there.
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.agentRows(r.w, r.tree, t), ...treeAfter(r)]);
+    const treeRows = (tree) => spaceRowOrder({ tree, open: this.open }).map((d) => d.row);
+    const tail = collapsed ? [] : rest.flatMap((id) => [this.projectHeader(byId.get(id), t),
+      ...this.botBlock(byId.get(id), t, dark, treeRows(byId.get(id)))]);
+    // A space's row, then (expanded) its rows in R3 order (spaceRowOrder): the bot tree placed
+    // there, then its plain agents with their sub-agents. Built in that order, so this.order
+    // (agent cycling) follows the drawn order.
+    const draw = (r) => {
+      if (collapsed) return [this.compact(r, t)];
+      const tree = at.has(r.w.id) ? byId.get(at.get(r.w.id)) : null;
+      const shown = spaceRowOrder({ tree, agents: this.spaceAgents(r.w), shells: [], open: this.open });
+      const indent = r.tree ? 44 : 20;
+      const out = [this.row(r, t)];
+      const treeRows = shown.filter((d) => d.row).map((d) => d.row);
+      if (treeRows.length) out.push(...this.botBlock(tree, t, dark, treeRows));
+      for (const d of shown) {
+        if (d.kind !== "agent") continue;
+        out.push(d.sub ? this.subRow(d.sub.k, d.sub.lines, indent, t) : this.agentRow(d.agent.a, indent, t));
+      }
+      return out;
+    };
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
