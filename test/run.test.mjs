@@ -85,7 +85,15 @@ test("no node anywhere: bun on PATH, then ~/.bun/bin/bun", (t) => {
   const homeBun = s.fake(join(s.home, ".bun/bin/bun"), "1.4.4");
   assert.equal(s.run(["/x/s.mjs"]).lines[0], homeBun);
   const pathBun = s.fake(join(s.path, "bun"), "1.4.4");
-  assert.equal(s.run(["/x/s.mjs"]).lines[0], pathBun);
+  // --no-env-file first: bun would otherwise read the working folder's .env into the process.
+  assert.deepEqual(s.run(["/x/s.mjs", "a"]).lines, [pathBun, "3", "--no-env-file", "/x/s.mjs", "a"]);
+});
+
+test("$NVM_DIR, when set, is where the nvm nodes are looked for", (t) => {
+  const s = scratch(t);
+  s.fake(join(s.home, ".nvm/versions/node/v24.0.0/bin/node"), "v24.0.0");
+  const custom = s.fake(join(s.root, "nvm/versions/node/v22.7.0/bin/node"), "v22.7.0");
+  assert.equal(s.run(["/x/s.mjs"], { env: { NVM_DIR: join(s.root, "nvm") } }).lines[0], custom);
 });
 
 test("nothing found: one line on stderr naming what is needed and how to get it, exit 127", (t) => {
@@ -135,4 +143,13 @@ test("under bun (skipped without it): the CLI's --version, directly and as run.s
   const viaRun = s.run([CLI, "--version"]);
   assert.equal(viaRun.code, 0, viaRun.err);
   assert.equal(viaRun.out.trim(), `automagik-herdr ${VERSION}`);
+  // A project's .env stays out: run from a folder holding one, the CLI never sees its keys.
+  const project = join(s.root, "project");
+  mkdirSync(project);
+  writeFileSync(join(project, ".env"), "HC_TERMINAL_ID=leaked\n");
+  const probe = join(s.root, "probe.mjs");
+  writeFileSync(probe, "console.log(process.env.HC_TERMINAL_ID ?? 'clean');\n");
+  const env = spawnSync("/bin/sh", [RUN, probe], { cwd: project, encoding: "utf8",
+    env: { HOME: s.home, PATH: s.path, AUTOMAGIK_HERDR_RUNTIME_DIRS: "" } });
+  assert.equal(env.stdout.trim(), "clean", env.stderr);
 });

@@ -4,8 +4,8 @@
 // blocks end to end and the silent exits; then launch.js afterBind over the Herdr stand-ins.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -149,29 +149,52 @@ test("cap: 4,000-character instructions and twelve members with long reports sta
   assert.ok(huge.endsWith("</herdr-bot>"));
 });
 
-test("hook command: runs the installed script through bin/run.sh, both by absolute path, quoted", () => {
+test("hook command: runs the installed script through bin/run.sh when it is there, both quoted", () => {
   assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs");
+  const run = "/Users/x/.config/herdr-app/mods/spaces-agents/bin/run.sh";
   assert.equal(hookCommand("/Users/x/.config/herdr-app"),
-    'sh "/Users/x/.config/herdr-app/mods/spaces-agents/bin/run.sh" "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs"');
-  assert.equal(hookCommand('/odd "$HOME`'),
-    'sh "/odd \\"\\$HOME\\`/mods/spaces-agents/bin/run.sh" "/odd \\"\\$HOME\\`/mods/spaces-agents/briefing.mjs"');
+    `[ ! -f "${run}" ] || sh "${run}" "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs"`);
+  const odd = '/odd \\"\\$HOME\\`/mods/spaces-agents';
+  assert.equal(hookCommand('/odd "$HOME`'), `[ ! -f "${odd}/bin/run.sh" ] || sh "${odd}/bin/run.sh" "${odd}/briefing.mjs"`);
 });
 
-test("hook merge: an older `node` hook for the same script counts as present and is left as it is", () => {
-  // The form written before bin/run.sh (v0.3.2 and earlier), for the same app home.
+test("hook command, run by sh: the script gets stdin; no run.sh exits 0 silently; no runtime is 127, never 2", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-hookcmd-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const app = join(root, "app with 'quotes' $x");
+  const pack = join(app, "mods/spaces-agents");
+  mkdirSync(join(pack, "bin"), { recursive: true });
+  writeFileSync(join(pack, "briefing.mjs"), 'let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => console.log(`briefed ${s}`));\n');
+  const hook = (env) => spawnSync("/bin/sh", ["-c", hookCommand(app)], { input: '{"prompt":"hi"}', encoding: "utf8",
+    env: { HOME: root, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath), ...env } });
+  // A rollback to a pack without run.sh, or an uninstall: nothing, exit 0.
+  const missing = hook();
+  assert.deepEqual([missing.status, missing.stdout, missing.stderr], [0, "", ""]);
+  copyFileSync(new URL("../mods/spaces-agents/bin/run.sh", import.meta.url), join(pack, "bin/run.sh"));
+  const ran = hook();
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(ran.stdout, 'briefed {"prompt":"hi"}\n');
+  const none = hook({ AUTOMAGIK_HERDR_RUNTIME_DIRS: "" });
+  assert.equal(none.status, 127);
+  assert.match(none.stderr, /needs Node\.js 22\.7 or later, or Bun/);
+});
+
+test("hook merge: an older `node` hook is upgraded in place to the run.sh form, then left alone", () => {
+  // The form written before bin/run.sh (v0.3.4 and earlier).
   const oldForm = (home) => `command -v node >/dev/null && node "${briefingPath(home).replace(/[\\"$`]/g, (c) => `\\${c}`)}" || true`;
-  for (const home of ["/h", '/odd "$HOME`']) {
-    const text = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: oldForm(home), timeout: 10 }] }] } }, null, 2);
-    assert.deepEqual(mergeHook(text, hookCommand(home)), { text, changed: false }, home);
-    // The new form is present too: no change either way round.
-    const now = mergeHook(null, hookCommand(home)).text;
-    assert.deepEqual(mergeHook(now, hookCommand(home)), { text: now, changed: false });
+  for (const home of ["/h", '/odd "$HOME`', "/old-home"]) {
+    const text = JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [
+      { hooks: [{ type: "command", command: "brain recall" }] },
+      { hooks: [{ type: "command", command: oldForm(home), timeout: 10 }] },
+    ] } }, null, 2);
+    const up = mergeHook(text, hookCommand("/h"));
+    assert.equal(up.changed, true, home);
+    assert.deepEqual(JSON.parse(up.text), { permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [
+      { hooks: [{ type: "command", command: "brain recall" }] },
+      { hooks: [{ type: "command", command: hookCommand("/h"), timeout: 10 }] },
+    ] } }, "only our entry's command changes; never a second entry");
+    assert.deepEqual(mergeHook(up.text, hookCommand("/h")), { text: up.text, changed: false }, "a second run leaves it alone");
   }
-  // An older hook for another app home (it moved) is updated in place, never doubled.
-  const text = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: oldForm("/old-home") }] }] } });
-  const moved = mergeHook(text, hookCommand("/h"));
-  assert.equal(moved.changed, true);
-  assert.deepEqual(JSON.parse(moved.text).hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: hookCommand("/h") }] }]);
 });
 
 test("hook merge: keeps every other key and hook, adds ours once, updates a moved path, leaves odd files alone", () => {

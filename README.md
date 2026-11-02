@@ -297,7 +297,7 @@ newest when there are several.
 
 Start and Attach add one `UserPromptSubmit` hook to `.claude/settings.local.json` in the
 bot's session folder, never to the shared `settings.json`, and keep that file out of git
-through the clone's own exclude file. The hook runs `sh <app home>/mods/spaces-agents/bin/run.sh <app home>/mods/spaces-agents/briefing.mjs`.
+through the clone's own exclude file. The hook runs `sh <app home>/mods/spaces-agents/bin/run.sh <app home>/mods/spaces-agents/briefing.mjs` (nothing when run.sh is missing); a hook in the older `node` form is upgraded to it the next time the bot starts or attaches.
 It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was

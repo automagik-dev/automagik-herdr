@@ -194,16 +194,19 @@ export function rollback({ modsDir = defaultModsDir(), name = PACK_NAME } = {}) 
 
 /** Where install.sh links the CLI: $HOME/.local/bin/automagik-herdr. */
 export const CLI_LINK = "automagik-herdr";
-export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".local", "bin");
+/** $HOME/.local/bin, or null without a HOME (then no link is looked at). */
+export const binDirOf = (env = process.env) => (env.HOME ? join(env.HOME, ".local", "bin") : null);
 
 /**
  * Points the CLI link at the entry the installed pack has: bin/automagik-herdr (it runs the .mjs
  * through bin/run.sh, which finds node 22.7+ or bun where PATH has none) or, in a pack from before
  * it (a rollback), bin/automagik-herdr.mjs. Only a link to one of those two in this pack is ours;
- * a file, a missing link or one pointing elsewhere is left alone. Returns `{ link, from, to }`
- * when it repointed the link, else null; throws only when the swap itself fails.
+ * a file, a missing link or one pointing elsewhere is left alone. Cheap (an lstat, a readlink)
+ * and idempotent: the CLI runs it on every start. Returns `{ link, from, to }` when it
+ * repointed the link, else null; throws only when the swap itself fails.
  */
 export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir = binDirOf() } = {}) {
+  if (!binDir) return null;
   const link = join(binDir, CLI_LINK);
   if (!isLink(link)) return null;
   const from = readlinkSync(link);

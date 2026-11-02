@@ -5,9 +5,9 @@
 # Herdr starts panes with its own PATH, which often has no `node` (nvm and bun put theirs in
 # folders only a login shell adds), and Homebrew's node can lose its link. So this looks, in order:
 #   1. `node` on PATH, if it is 22.7 or later;
-#   2. the newest nvm node, 22.7 or later (~/.nvm/versions/node/*/bin/node);
+#   2. the newest nvm node, 22.7 or later ($NVM_DIR, else ~/.nvm: versions/node/*/bin/node);
 #   3. /opt/homebrew/bin/node, then /usr/local/bin/node, 22.7 or later;
-#   4. `bun` on PATH, then ~/.bun/bin/bun.
+#   4. `bun` on PATH, then ~/.bun/bin/bun, with --no-env-file (no project .env read in).
 # A candidate counts only when `<it> --version` runs, so a dangling link is passed over. None
 # found: one line on stderr, exit 127. Nothing is read from stdin: the script gets all of it (a
 # Claude hook's JSON). For tests: AUTOMAGIK_HERDR_RUNTIME_DIRS, a colon list, replaces
@@ -45,7 +45,7 @@ if c=$(command -v node 2>/dev/null) && node_ok "$c"; then exec "$c" "$@"; fi
 
 # 2. the newest nvm node
 best=
-for c in "${HOME:-}"/.nvm/versions/node/*/bin/node; do
+for c in "${NVM_DIR:-${HOME:-}/.nvm}"/versions/node/*/bin/node; do
   node_ok "$c" || continue
   if [ -z "$best" ] || [ "$MAJ" -gt "$BMAJ" ] \
     || { [ "$MAJ" -eq "$BMAJ" ] && { [ "$MIN" -gt "$BMIN" ] || { [ "$MIN" -eq "$BMIN" ] && [ "$PAT" -gt "$BPAT" ]; }; }; }; then
@@ -54,7 +54,8 @@ for c in "${HOME:-}"/.nvm/versions/node/*/bin/node; do
 done
 if [ -n "$best" ]; then exec "$best" "$@"; fi
 
-# 3. Homebrew's node (Apple silicon, then Intel)
+# 3. Homebrew's node (Apple silicon, then Intel). AUTOMAGIK_HERDR_RUNTIME_DIRS is a test override
+# only: tests set it so the real Homebrew node can't be found; nothing else sets it.
 rest=${AUTOMAGIK_HERDR_RUNTIME_DIRS-/opt/homebrew/bin:/usr/local/bin}
 while [ -n "$rest" ]; do
   dir=${rest%%:*}
@@ -62,9 +63,10 @@ while [ -n "$rest" ]; do
   if [ -n "$dir" ] && node_ok "$dir/node"; then exec "$dir/node" "$@"; fi
 done
 
-# 4. bun
+# 4. bun. Bun reads a .env from the working folder by default; --no-env-file keeps a project's
+# .env out of the CLI, the briefing and the hc processes they start.
 for c in "$(command -v bun 2>/dev/null)" "${HOME:-}/.bun/bin/bun"; do
-  if [ -n "$c" ] && [ -x "$c" ] && "$c" --version </dev/null >/dev/null 2>&1; then exec "$c" "$@"; fi
+  if [ -n "$c" ] && [ -x "$c" ] && "$c" --version </dev/null >/dev/null 2>&1; then exec "$c" --no-env-file "$@"; fi
 done
 
 echo "automagik-herdr needs Node.js 22.7 or later, or Bun: none on PATH, in ~/.nvm, /opt/homebrew/bin, /usr/local/bin or ~/.bun/bin$OLD. Install one: brew install node (or: curl -fsSL https://bun.sh/install | bash)" >&2
