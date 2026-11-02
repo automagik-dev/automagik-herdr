@@ -67,9 +67,22 @@ One scrolling column, `chrome` background, 13 px text.
   update it; a theme file the person deletes is copied back on the next load.
 - **Pressing**: a space selects on click and reorders on drag (inside its machine); an agent or bot
   row focuses its pane; a bot row's right-click offers Edit, Start and Attach; an agent's offers
-  "Attach as bot…"; the space's tile opens `space-icon`. **New bot** and **Bot settings** live in
-  the footer's Bots tab (`sidebar-chrome`), which opens this mod's `create` and `pick` forms; the
+  "Attach as bot…"; the space's tile opens the icon dialog (below). **New bot** and
+  **Bot settings** live in the footer's Bots tab (`sidebar-chrome`), which opens this mod's `create` and `pick` forms; the
   `pick` list with no bot yet shows one **New bot** line that opens the form. Commands: `spaces-agents.new-bot`, `edit`, `start`, `attach`, `refresh`.
+- **Icon dialog** (`spaceIcon.js`, `spaceIconModel.js`, `emoji-data.js`; formerly the separate
+  `space-icon` mod): the space's tile opens this mod again as a 440 × 520 dialog with props
+  `{spaceIcon: <space id>}`, and `init` hands it to `SpaceIconDialog`, as it does the bot form.
+  Three tabs. **Emoji**: a searchable grid of 1,741 emoji (Unicode's names, generated from
+  `unicodedata`; 84 per page), a typed or pasted one (`Paste` reads the clipboard through
+  `osascript`) — one emoji, no spaces or ASCII, at most twelve code points, so a flag or a joined
+  family passes and a word does not. **Image**: drop or type a `.png` (square, 16–2048 px, ≤5 MB),
+  a whole `.svg`, or an `.ico` converted to PNG with `sips`; kept as
+  `<app home>/space-icons/<space>-<time>.<ext>`, and the file it replaces is deleted. Emoji and
+  image apply and close. **Colour**: six palette swatches, `none` (transparent) or a hex, applied
+  live with the dialog left open; it shows behind an emoji or the letter, an image covers it.
+  `Use letter` removes the icon. Search is by Unicode name ("grinning", not "happy"); flags are not
+  listed, paste one.
 - **Paste**: `spaces-agents.paste` / `paste_image` put the clipboard into a terminal, sending it as
   a real PNG to another machine (`paste.js`, `clipboard-png.jxa`).
 - **Names** for terminals that report no status come from `${appHome()}/sidebar-agents.json`.
@@ -82,7 +95,8 @@ and poses as SVG text), `model.js`, `models.js` (agents, their models and the fl
 `formModel.js` (the form and its rules), `launch.js` + `launchArgs.js` (Start, Attach, pane
 labels), `briefing.mjs` + `briefingText.mjs`, `updateCheck.js` + `update.mjs` + `release.js`
 (updates; `VERSION` is the installed version), `theme.js` + `themes/automagik-light.json` and
-`automagik-dark.json`, `argv.js`, `paste.js`, `clipboard-png.jxa`, `bin/automagik-herdr.mjs` (the
+`automagik-dark.json`, `spaceIcon.js` + `spaceIconModel.js` + `emoji-data.js` (the icon dialog),
+`argv.js`, `paste.js`, `clipboard-png.jxa`, `bin/automagik-herdr.mjs` (the
 same rules from a terminal, through `hc`, plus `update`), `layouts/automagik.json` (Herdr's `main`
 layout with the pack in place of `spaces` and `agents`), and `mod.json` (`place: none`, titled
 "Automagik Sidebar", `cloned_from` recorded). Tests for every pure module live in the
@@ -91,7 +105,8 @@ repository's `test/`.
 Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run`, `openOverlay`,
 `closeOverlay`, `exec`, `hc`, `theme`, `themes`, `settings`, `shared`, `setShared`, `watchFolder`,
 `window`, `nextCommand`, `readTextFile`, `writeTextFile`, `pickFolder`, `appHome`, `home`,
-`knownAgents`, `notify`, `props`, `setAgentOrder`.
+`knownAgents`, `notify`, `props`, `setAgentOrder`; `fs/promises`. Programs: `git`, `sips` and
+`osascript` (the icon dialog).
 
 ## Watch out
 
@@ -105,11 +120,13 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
 - **Placed by the layout only**: `mod.json` says `place: none`. A mod placed `left` that a layout
   also names is docked twice; use `layouts/automagik.json` (`layout.switch {"name":"automagik"}`
   after it is copied to `<app home>/layouts/`).
-- **State**: shared `spaces-agents.icons`, `spaces-agents.projects`, `spaces-agents.update-shown`,
-  `spaces-agents.theme-selected`, `space.colors`, `sidebar.collapsed`, `bots.defined` (whether this
+- **State**: shared `spaces-agents.icons` (space id → `{kind: "emoji", char}` or
+  `{kind: "image", file}`; an older bare path reads as an image), `spaces-agents.projects`, `spaces-agents.update-shown`,
+  `spaces-agents.theme-selected`, `space.colors` (space id → palette name, hex or `transparent`), `sidebar.collapsed`, `bots.defined` (whether this
   computer has a bot, for the footer's Bots popup); outside the mod folder,
   so replacing it loses nothing: the rename map (`${appHome()}/sidebar-agents.json`), the CLI's
-  project list (`spaces-agents-projects.json`), the copied themes, and the replaced pack kept for
+  project list (`spaces-agents-projects.json`), the space icons (`space-icons/`), the copied
+  themes, and the replaced pack kept for
   rollback (`<app home>/automagik-herdr/`).
 - **Another machine's project** is read, never written; a live bot there is shown, not started.
 - **This file and `preview.png`** are for people reading the repository; an installed copy
@@ -120,4 +137,6 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
 `herdr-app check mods/spaces-agents` passes; a project's `.herdr/bots.json` shows as a tree with
 characters and statuses; Create writes an entry the CLI then lists; Start opens a pane carrying the
 bot's labels; Attach ties an existing pane; a Claude bot receives its briefing before a turn; the
-Automagik theme shows after the first load and a theme picked later stays.
+Automagik theme shows after the first load and a theme picked later stays; a space's tile opens
+the icon dialog, a grid cell sets its emoji, a dropped SVG becomes its icon and `none` leaves the
+tile transparent.
