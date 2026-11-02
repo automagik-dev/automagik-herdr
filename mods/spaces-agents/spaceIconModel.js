@@ -81,7 +81,8 @@ export function withColor(colors, id, value) {
 
 // The kept image a change leaves behind, to delete: only one of ours, under space-icons/.
 function leftover(old, next) {
-  return old?.kind === "image" && old.file.startsWith("space-icons/") && old.file !== next?.file ? old.file : null;
+  const ours = typeof old?.file === "string" && old.file.startsWith("space-icons/") && !old.file.split("/").includes("..");
+  return old?.kind === "image" && ours && old.file !== next?.file ? old.file : null;
 }
 
 // The icons map with `id` set to `value` ({kind: "emoji", char} or {kind: "image", file}),

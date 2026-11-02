@@ -9,7 +9,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { closeOverlay, theme, spaces, shared, setShared, appHome, home, exec } from "herdr";
 import * as fs from "fs/promises";
 import { chars, names } from "./emoji-data.js";
-import { COLORS, COLORS_KEY, KEY, colorError, emojiError, emojiHits, iconFile, isHex, kindOf, pngError, readIcon, svgError,
+import { COLORS, COLORS_KEY, KEY, MAX_BYTES, colorError, emojiError, emojiHits, iconFile, isHex, kindOf, pngError, readIcon, svgError,
   tileFill, withColor, withIcon, withoutIcon } from "./spaceIconModel.js";
 
 // The picker: a grid of cells per page, narrow enough for a 440 px dialog.
@@ -123,6 +123,12 @@ export class SpaceIconDialog {
       try {
         let bytes, ext = kind;
         const unreadable = "Can't read that file (it must exist, in your home folder).";
+        // Size first, so a huge drop is refused before it is read (or converted) at all.
+        let size;
+        // Herdr's fs has no stat: wc -c counts the bytes without reading them into this mod.
+        try { const r = await exec("wc", ["-c", path]); size = r.code === 0 ? Number(r.stdout.trim().split(/\s+/)[0]) : NaN; } catch { size = NaN; }
+        if (!Number.isFinite(size)) throw new Error(unreadable);
+        if (size > MAX_BYTES) throw new Error(`Too large: ${(size / 1048576).toFixed(1)} MB (at most 5 MB).`);
         if (kind === "svg") {
           let text;
           try { text = await fs.readFile(path, "utf8"); } catch { throw new Error(unreadable); }

@@ -102,6 +102,7 @@ test("a new icon replaces the old one and names the kept image to delete, only o
   assert.deepEqual(model.withIcon({ w1: image("space-icons/w1-1.png") }, "w1", emoji), { map: { w1: emoji }, drop: "space-icons/w1-1.png" });
   assert.equal(model.withIcon({ w1: image("space-icons/w1-1.png") }, "w1", image("space-icons/w1-1.png")).drop, null);
   assert.equal(model.withIcon({ w1: image("/Users/x/logo.png") }, "w1", emoji).drop, null);
+  assert.equal(model.withIcon({ w1: image("space-icons/../../x") }, "w1", emoji).drop, null, "a path that climbs out is never deleted");
   // A bare path is an image from before emoji existed.
   assert.equal(model.withIcon({ w1: "space-icons/old.png" }, "w1", emoji).drop, "space-icons/old.png");
   assert.deepEqual(model.withoutIcon({ w1: emoji, w2: emoji }, "w1"), { map: { w2: emoji }, drop: null });
