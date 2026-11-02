@@ -117,6 +117,30 @@ test("create from a worktree writes the main checkout's file (Decision 15); --pr
   assert.ok(existsSync(join(other, ".herdr/bots.json")));
 });
 
+test("create --project names the project itself outside git, never the parent project above it", (t) => {
+  const s = scene(t);
+  // The owner's case: repos (no git) holds another project's bots.json; child under it has none.
+  const repos = join(s.root, "repos");
+  const child = join(repos, "child");
+  mkdirSync(join(repos, ".herdr"), { recursive: true });
+  mkdirSync(child);
+  const parentText = `${JSON.stringify(team(), null, 2)}\n`;
+  writeFileSync(join(repos, ".herdr/bots.json"), parentText);
+  const r = s.cli(["create", "--name", "Child", "--agent", "claude", "--project", child, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().project, child);
+  const own = JSON.parse(readFileSync(join(child, ".herdr/bots.json"), "utf8"));
+  assert.deepEqual(own.bots.map((b) => [b.name, b.kind]), [["Child", "main"]]);
+  assert.equal(readFileSync(join(repos, ".herdr/bots.json"), "utf8"), parentText, "the parent's file is untouched");
+  // Run from inside child with no --project, the walk-up now finds child's own file first.
+  assert.equal(s.cli(["ls", "--json"], { cwd: child }).json().projects[0].project, child);
+  // A folder that isn't there is refused, not made.
+  const gone = s.cli(["create", "--name", "X", "--agent", "claude", "--project", join(repos, "nope")]);
+  assert.equal(gone.code, 2);
+  assert.match(gone.err, /is not a folder/);
+  assert.equal(existsSync(join(repos, "nope")), false);
+});
+
 test("create refuses instructions over 4,000 characters, from the flag, a file or stdin", (t) => {
   const s = scene(t);
   const long = "x".repeat(4001);

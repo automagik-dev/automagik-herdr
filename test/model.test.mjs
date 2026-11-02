@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
-  BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
+  BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
   listedProjects, withListedProject, MAX_LISTED_PROJECTS,
 } from "../mods/spaces-agents/model.js";
 
@@ -79,6 +79,27 @@ test("project key: outside git with no bots.json above, the folder itself", asyn
   const deep = join(root, "x", "y");
   mkdirSync(deep, { recursive: true });
   assert.equal(await projectKeyOf(deep, git, exists), deep);
+});
+
+test("project key: a picked folder outside git under another project's folder is its own (own), passing by it is not (key)", async (t) => {
+  // The owner's case: ~/repos/child, no git, under ~/repos holding another project's bots.json.
+  const root = scratch(t);
+  const child = join(root, "repos", "child");
+  mkdirSync(child, { recursive: true });
+  mkdirSync(join(root, "repos", ".herdr"));
+  writeFileSync(join(root, "repos", ".herdr", "bots.json"), "{}");
+  assert.deepEqual(await projectOf(child, git, exists), { key: join(root, "repos"), own: child });
+  assert.equal(await projectKeyOf(child, git, exists), join(root, "repos"));
+  // Once child has its own file, the walk-up finds it first.
+  mkdirSync(join(child, ".herdr"));
+  writeFileSync(join(child, ".herdr", "bots.json"), "{}");
+  assert.deepEqual(await projectOf(child, git, exists), { key: child, own: child });
+});
+
+test("project key: in git, a picked worktree or subfolder is still its main checkout", async (t) => {
+  const { main, tree } = await repo(t);
+  assert.deepEqual(await projectOf(tree, git, exists), { key: main, own: main });
+  assert.deepEqual(await projectOf(join(main, "src", "deep"), git, exists), { key: main, own: main });
 });
 
 test("project key: git missing or failing reads as outside git", async (t) => {

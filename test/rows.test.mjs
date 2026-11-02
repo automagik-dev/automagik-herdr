@@ -245,3 +245,14 @@ test("argvEntry + argvToAsk: a pane read in its sh -c wrapper is asked again on 
   assert.deepEqual(argvToAsk(rows, known, new Map([["t1", agent]])).ask, []);
   assert.deepEqual(argvEntry({}, undefined), { argv: null, created: null, settled: false });
 });
+
+test("clickActionOf: a terminal with a pane is focused; a parked one (no pane) is peeked, never kept; remote alike", async () => {
+  const { clickActionOf } = await import("../mods/spaces-agents/rows.js");
+  const panes = [{ pane: "p1", terminal: "t1dp" }, { pane: "p2", terminal: "box/t4" }, { pane: "p3", terminal: null, mod: "x" }];
+  assert.deepEqual(clickActionOf("t1dp", panes), { command: "agent.focus", args: { terminal: "t1dp" } });
+  assert.deepEqual(clickActionOf("t1pz", panes), { command: "terminal.peek", args: { terminal: "t1pz" } });
+  assert.deepEqual(clickActionOf("box/t4", panes), { command: "agent.focus", args: { terminal: "box/t4" } });
+  assert.deepEqual(clickActionOf("box/t9", panes), { command: "terminal.peek", args: { terminal: "box/t9" } });
+  assert.deepEqual(clickActionOf("t4", panes), { command: "terminal.peek", args: { terminal: "t4" } }, "a local t4 is not box/t4");
+  assert.deepEqual(clickActionOf("t1", null), { command: "terminal.peek", args: { terminal: "t1" } });
+});

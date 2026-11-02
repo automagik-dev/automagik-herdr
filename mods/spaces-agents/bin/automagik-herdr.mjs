@@ -18,7 +18,7 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
-  parseBots, plannedOf, projectKeyOf, withListedProject } from "../model.js";
+  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
   paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
 import { installHook } from "../briefingText.mjs";
@@ -67,8 +67,21 @@ export function runProgram(command, args, { cwd, timeout = 15000 } = {}) {
 }
 const git = async (args, cwd) => { const r = await runProgram("git", args, { cwd }); return r.code === 0 ? r.stdout : null; };
 
-/** The project a folder keys to (DESIGN Decision 15). */
+/** The project a folder keys to (DESIGN Decision 15): the walk-up, for the folder a command runs in. */
 export const keyOf = (folder) => projectKeyOf(resolvePath(folder), git, exists);
+
+/**
+ * The project `--project <dir>` names: the folder itself outside git, never a parent
+ * project's (its git main checkout in git). A folder that isn't there is refused.
+ */
+export async function namedKeyOf(folder) {
+  const dir = resolvePath(folder);
+  let isDir = false;
+  try { isDir = statSync(dir).isDirectory(); } catch { /* not there */ }
+  if (!isDir) throw new CliError(`--project: ${dir} is not a folder.`, 2);
+  return (await projectOf(dir, git, exists)).own;
+}
+const commandKeyOf = (opts) => (opts.project !== undefined ? namedKeyOf(opts.project) : keyOf(process.cwd()));
 
 async function hc(args) {
   const r = await runProgram("hc", args);
@@ -454,7 +467,7 @@ export function entryFrom(opts, base, project, { creating }) {
 
 // ---- commands ----
 
-async function projectFor(opts) { return loadProject(await keyOf(opts.project ?? process.cwd())); }
+async function projectFor(opts) { return loadProject(await commandKeyOf(opts)); }
 
 // The projects the sidebar shows with no space open: its remembered list, then this CLI's.
 function rememberedKeys() {
@@ -469,7 +482,7 @@ function rememberedKeys() {
 }
 
 async function cmdLs(opts) {
-  const keys = [await keyOf(opts.project ?? process.cwd())];
+  const keys = [await commandKeyOf(opts)];
   if (opts.all) for (const k of rememberedKeys()) if (!keys.includes(k)) keys.push(k);
   const projects = [];
   for (const key of keys) {

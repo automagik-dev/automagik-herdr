@@ -110,9 +110,12 @@ automagik-herdr update [--check | --rollback]
 ```
 
 - Every command takes `--json` and `--project <folder>`. Without `--project`, the project is
-  the one the current folder belongs to (its git main checkout).
-- A bot is named by its id or by its name. A refusal exits 1, a usage mistake exits 2, and
-  nothing is written.
+  the one the current folder belongs to: its git main checkout, or outside git the nearest
+  folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
+  project itself outside git, never a parent folder's project; in git it is still the main
+  checkout. A `--project` folder that isn't there is a usage mistake.
+- A bot is named by its id or by its name. A refusal exits 1, a usage mistake (such as a
+  missing `--project` folder) exits 2, and nothing is written.
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`. A member
   whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
@@ -125,6 +128,13 @@ its name, look, role and instructions (at most 4,000 characters), the agent it r
 model it uses, whom it reports to, its category, and whether it is planned for a later wave.
 The footer shows the matching `automagik-herdr create …` line, ready to copy. The form writes
 `.herdr/bots.json` in the project's main checkout.
+
+The form starts on the focused space's project. A folder picked from the project chip is the
+project itself outside git, and with no `.herdr/bots.json` yet it is a new project whose
+first bot is its main bot. When the focused folder is outside git and sits under another
+project's folder, the form asks: that parent project, or the folder as its own project. A
+focused folder that no longer exists is not used; the form asks for the folder. The sidebar
+still places panes by the walk-up, so a folder joins its own project once it has its file.
 
 ## Updates
 

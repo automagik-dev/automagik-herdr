@@ -95,6 +95,8 @@ This wish turns that branch into the product:
 **depends-on:** herdr-bots
 **blocks:** none
 
+Group 8 (release v0.3.0) also waits for sidebar-rules Groups 2–5, which land in `wish/am-pack` after Group 7 and ship with v0.3.0 (owner, 2026-11-02).
+
 ## Success Criteria
 
 - [ ] On a scratch `HERDR_APP_HOME` with plain Herdr, the curl one-liner installs the eight `am-*` mods and `layouts/automagik.json`, `herdr-app check` passes for each, and after the layout switch Herdr shows the sidebar, footer rail, tab bar and `+` menu with no mod errors.
@@ -241,7 +243,12 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
    - an ownership record: the marker lists every folder the installer put in `mods/`. Only listed folders are replaced, updated or rolled back. An old-named folder it didn't install (the owner's hand-installed sidebar-chrome, auto-tabs, …) is reported and left alone, or adopted only on an explicit yes (`--adopt`), which moves it to `<app home>/automagik-herdr/backup/<mod>-<date>/` first. That folder is never replaced, and `--uninstall` and a rollback across the rename restore from it. `.prev/` holds only pack releases. v0.2.0's `spaces-agents.before-install` also moves to `backup/`;
    - a v0.2.0 marker (`layout=added`, `before=…`) is read and carried over, and `--uninstall` handles both marker versions and the layout's new path.
    `scripts/install.mjs` is then deleted.
-4. Tests flipped and added. G11's "layouts holds only automagik.json naming only spaces-agents and stock mods" becomes "the shipped layout names only pack mods and stock mods". Add tests for:
+4. From Group 1's review (2026-11-02), owned here because this group replaces all three install paths (`scripts/install.mjs`, `update.mjs`, the mod manager's `core.js`):
+   - build each new mod folder in a staging dir next to `mods/`, carry the private paths in, then rename into place; on any failure rename the old folder back. Today a failed copy leaves a half-written mod (review probes P2, C4);
+   - a symlinked `.state` stays a link (today the carry-over turns it into a copy, probe C2);
+   - the mod manager installs at the catalog's `headCommit`, not whatever HEAD is;
+   - tests for `install.mjs`, `catalog.mjs` and `core.js`; CI runs `catalog.mjs --check` and `node --check` over every pack mod.
+5. Tests flipped and added. G11's "layouts holds only automagik.json naming only spaces-agents and stock mods" becomes "the shipped layout names only pack mods and stock mods". Add tests for:
    - a v0.2.0-shaped home upgraded by rerunning install.sh (before Group 6, the pack lands beside spaces-agents);
    - old-named folders the installer didn't write are left alone without `--adopt`;
    - adopt, then update twice: the adopted original is still in `backup/`;
@@ -361,8 +368,8 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
    - **References follow ownership:** a layout or key reference to an old name is rewritten only when that folder is pack-owned or adopted. A reference to a folder the person kept (no `--adopt`) is left and reported.
    - **Layouts** (`<app home>/layouts/*.json`, the owner's `main-agents` included): `content.mod` and the root `terminal_menu`, old id → new. Each file is backed up to `<app home>/automagik-herdr/backup/layouts-<date>/` first. A file whose structure isn't recognised is left alone and reported.
    - **keys.json:** `spaces-agents.paste`, `spaces-agents.paste_image`, `spaces-agents.close_pane`, `mod.open:mod-manager`, the `mod:markdown-browser` section, and any other `<old>.<command>` or `mod.open:<old>`, all rewritten with a backup. `mod.open:machine-add` and `mod.open:pocket-link` are not ours and are untouched.
-   - **Shared state** (`spaces-agents.icons`, `.projects`, `.pets`, `.update-shown`, `space.colors`, `sidebar.collapsed`, `sidebar.width`, `markdown-browser.slots/.show/.last` → `am.*`): never written by the installer or updater, because Herdr owns `shared.json` and saves it in the background (Herdr AGENTS.md:86-88). Each mod's in-mod shim reads `am.*` first, then the old key, and `setShared`s the `am.*` key on first load. The old keys are left in place for one release.
-   - **App-home paths:** `spaces-agents-projects.json` → `am-sidebar-projects.json` (copied); `space-icons/` stays where it is (shared state references it); `sidebar-agents.json` (the rename map) stays, read by am-sidebar; `data/mod-manager/` copied (not moved) to `data/am-mods/`, and am-mods reads the old directory as a fallback; `data/am-quota/` unchanged.
+   - **Shared state** (`spaces-agents.icons`, `.projects`, `.pets`, `.update-shown`, `.theme-selected`, `space.colors`, `sidebar.collapsed`, `sidebar.width`, `markdown-browser.slots/.show/.last` → `am.*`): never written by the installer or updater, because Herdr owns `shared.json` and saves it in the background (Herdr AGENTS.md:86-88). Each mod's in-mod shim reads `am.*` first, then the old key, and `setShared`s the `am.*` key on first load. The old keys are left in place for one release.
+   - **App-home paths:** `spaces-agents-projects.json` → `am-sidebar-projects.json` (copied only when the target is absent, so a file sidebar-rules' tidy already wrote is kept); `space-icons/` stays where it is (shared state references it); `sidebar-agents.json` (the rename map) stays, read by am-sidebar; `data/mod-manager/` copied (not moved) to `data/am-mods/`, and am-mods reads the old directory as a fallback; `data/am-quota/` unchanged.
    - **Per-mod localStorage** (auto-tabs' panel memory) can't be reached from outside the mod. Its loss is stated in the release notes.
    - **The catalog** `modNames` and titles are regenerated after Group 7.
 3. `revert(backupDir)`: applies the inverse rename to layouts and keys.json (am-* → old id, only for entries the forward run changed), so edits the person made in between are kept. The dated backups stay for manual recovery. The release notes say shared-state changes made under v0.3.0 are lost on rollback. `update.mjs rollback` calls it when the `.prev/` set holds old-named folders.
@@ -419,10 +426,11 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-ag
 
 **Deliverables:**
 1. Three PRs into `wish/am-pack`, each within the band (renames counted as moves):
-   - (a) `git mv mods/spaces-agents mods/am-sidebar`, with its mod commands (`am-sidebar.paste`, …), `bin/`, `release.js`, `openOverlay({mod: "am-sidebar"})` in Group 4's footer popup, and its tests;
+   - (a) `git mv mods/spaces-agents mods/am-sidebar`, with its mod commands (`am-sidebar.paste`, …), `bin/`, `release.js`, `openOverlay({mod: "am-sidebar"})` in Group 4's footer popup, `theme.js` and `themes/` (added by herdr-bots Group 5, merged into `wish/am-pack` at c90c954), and its tests. The theme files already copied into `<app home>/themes/` keep their names: they are the person's files and theme.js never rewrites them;
    - (b) the `am-footer`, `am-tabs`, `am-new-menu`, `am-automations`, `am-mods` and `am-markdown` folders, their `mod.json` titles, the cross-mod `mod.open`/`openOverlay` names, and their tests;
    - (c) `layouts/automagik.json`, `keys.json`, `catalog/*` (regenerated), `release.yml` paths, `scripts/version.mjs`'s VERSION path, install.sh, README, RECIPE.md, NOTICE and DESIGN references.
 2. No aliases (D12). Group 6a migrates whatever sends the old names.
+3. Before (a)'s `git mv`, merge `dev` into `wish/am-pack`, so sidebar-rules Group 1 (v0.2.1, which edits `mods/spaces-agents/main.js` and `rows.js` and adds `test/fixtures/sidebar/`) is renamed along with everything else. Git's rename detection is unreliable on the 57 KB `main.js` once both sides have edited it.
 
 **Interfaces:**
 - Consumes: Group 6a's `RENAMES` and Group 6b's stable hook.
@@ -463,7 +471,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check && sh -n install.sh && shellcheck -s sh install.sh && actionlint && node scripts/catalog.mjs --check
 ```
 
-**depends-on:** Group 7, Group 4, Group 6b
+**depends-on:** Group 7, Group 4, Group 6b, sidebar-rules Groups 2–5
 
 ---
 
@@ -520,6 +528,31 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **f7bfd23: APPROVED.** One builder note, folded in: `apply` writes a change journal that `revert` reads.
 
 ---
+
+### Group 1 — the vendored pack — 2026-11-02 (merged into wish/am-pack, a78a34d)
+
+- PRs #15, #16, #17, #21, #22 and #18, stacked, each within +2,000. Criteria review plus a separate quality review, 2 fix rounds (B 2/2).
+- Round 1, FIX-FIRST:
+  - NOTICE lacked the verbatim MIT notices;
+  - `catalog --check` failed on 3 of 4 slices;
+  - `install.mjs` accepted unknown flags (a probe installed into the live home);
+  - the mod manager `rm -rf`'d `.state` on update and remove, and could remove Pocket Link;
+  - #17 was over the size band; the catalog URL pointed at `main` (404).
+- Round 2:
+  - Pocket Link's on/off switch still moved its folder;
+  - the preflight parsed the pack's keys.json instead of the person's;
+  - the carry-over nested `.state/.state`.
+- Coordinator verification at fe3df28: the reviewers' probes (C3 no nesting; C6 `setEnabled(pocket-link)` refused with the folder in place; single-dash and typo args exit 2; a bad HOME keys.json exits 1 with 0 mods written); gate 296/296; `catalog --check` 0. The merged tree equals the reviewed top.
+- **Rulings:**
+  - `catalog/index.json` lives in the top slice only. Why: each lower slice must pass its own checks. Cost if wrong: none.
+  - The mod manager moves folders aside and refuses `pocket-link` (rulings 10–11 apply to the vendored manager too). Why: it would otherwise repeat the 18:40 incident. Cost if wrong: a small change to a vendored mod.
+  - Staging plus rename, symlinked `.state`, headCommit pinning, the missing tests and CI checks are routed to Group 3 (deliverable 4).
+
+### Group 5a — am-markdown — 2026-11-02 (merged, #19)
+
+- Round 1, FIX-FIRST: the catalog still listed markdown-browser; NOTICE lacked ohneda's copyright; no committed check for criterion 1; docs named `markdown-browser.open`.
+- Round 2: SHIP. `catalog --check` 0 (9 mods); NOTICE matches LICENSE-upstream (`diff` 0); `test/md-menu-faces.test.mjs` 3/3; 299/299. The coordinator verified the doc-only items at 634ecdb.
+- **Ruling:** the stub-runtime test is criterion 1's evidence, and the in-app click-through on a scratch home moves to Group 8. The installed `markdown-browser.open` key binding is Group 6a's.
 
 ## Files to Create/Modify
 

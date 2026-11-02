@@ -17,7 +17,7 @@ import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, ap
 import { configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
-import { discoverProjects, keyOf, writeBots } from "./bots.js";
+import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
 import { attachBot, startBot, liveTerminalOf } from "./launch.js";
 
 const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
@@ -70,6 +70,7 @@ export class BotForm {
     this.initial = null; // edit: the state as opened, for "changes only"
     this.file = null;
     this.raw = null;
+    this.choice = null; // { parent, own }: the focused folder's project, still to be picked
     this.agents = [];
     this.texts = {}; // the agents' config files (models.js configPaths), for the model line
     this.live = null; // edit of a running bot: { terminal, model }
@@ -105,8 +106,14 @@ export class BotForm {
       key = hit.key;
     }
     if (!key) {
+      // The focused space's folder, when it is still there. Outside git, a walk-up that
+      // lands on a parent's project is offered, never assumed (this.choice).
       const shown = spaces().find((s) => s.id === focused()?.space && !s.machine);
-      if (shown?.folder) key = await keyOf(shown.folder);
+      if (shown?.folder && await folderExists(shown.folder)) {
+        const found = await projectOfFolder(shown.folder);
+        if (found.key === found.own) key = found.key;
+        else this.choice = { parent: found.key, own: found.own };
+      }
     }
     if (key) await this.load(key);
     cx.notify();
@@ -114,6 +121,7 @@ export class BotForm {
 
   async load(key) {
     this.key = key;
+    this.choice = null;
     this.loadError = null;
     this.text = await readTextFile(`${key}/${BOTS_PATH}`);
     let file = { version: 1, categories: [], bots: [] };
@@ -127,7 +135,7 @@ export class BotForm {
     this.space = null;
     for (const s of spaces()) {
       if (s.machine || !s.folder) continue;
-      try { if (await keyOf(s.folder) === key) { this.space = s.name; break; } } catch {}
+      try { if (s.folder === key || await keyOf(s.folder) === key) { this.space = s.name; break; } } catch {}
     }
     if (this.mode === "edit") {
       // The entry as stored (raw), so a field the form leaves alone is written back as it was.
@@ -446,15 +454,25 @@ export class BotForm {
         .on_click((_e, cx) => cx.spawn(async (cx) => {
           const dir = await pickFolder({ prompt: "Use this project" });
           if (dir) {
-            try { await this.load(await keyOf(dir)); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
+            // A picked folder is the project itself outside git (its git main checkout in it).
+            try { await this.load(await ownKeyOf(dir)); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
           }
           cx.notify();
         })))
       .when(this.mode !== "create" && Boolean(this.key), (el) => el.tooltip(this.key));
+    // The focused folder sits under another project's folder: which project is it?
+    const pick = (id, text, key) => this.chip(t, id, text, (cx) => cx.spawn(async (cx) => {
+      try { await this.load(key); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
+      cx.notify();
+    }));
+    const choice = this.mode === "create" && !this.key && this.choice ? this.choice : null;
     return h_flex().flex_none().gap(12).px(20).py(16).items_center().border_b(1).border_color(t.border)
       .child(h_flex().flex_1().min_w(0).gap(12).items_center()
         .child(div().text_size(17).font_semibold().child(this.mode === "edit" ? "Edit bot" : "New bot"))
-        .child(chip))
+        .child(chip)
+        .when(Boolean(choice), (el) => el
+          .child(pick("bot-project-parent", `${base(choice.parent)} (parent project)`, choice.parent))
+          .child(pick("bot-project-own", `Make ${base(choice.own)} its own project`, choice.own))))
       .when(Boolean(this.loadError), (el) => el.child(div().max_w(360).text_size(11).text_color(t.ansi1).child(this.loadError)))
       .child(h_flex().id("bot-close").size(32).flex_none().items_center().justify_center().rounded(8).cursor_pointer()
         .text_color(t.muted).hover((s) => s.bg(t.hover)).tooltip("Close").accessibility_label("Close")

@@ -230,30 +230,38 @@ const parentOf = (p) => { const i = p.lastIndexOf("/"); return i <= 0 ? "/" : p.
 const baseOf = (p) => p.slice(p.lastIndexOf("/") + 1);
 
 /**
- * The project a folder belongs to (DESIGN Decision 15). In git: its main checkout, the
- * parent of `git rev-parse --path-format=absolute --git-common-dir` (for a common dir
- * not named `.git`, a bare repo or a submodule, the folder's own top level). Outside git,
- * or where git is missing or fails: the nearest folder at or above it holding
- * `.herdr/bots.json`, else the folder itself.
+ * The project a folder belongs to (DESIGN Decision 15), two ways: `{ key, own }`.
+ * In git both are its main checkout, the parent of
+ * `git rev-parse --path-format=absolute --git-common-dir` (for a common dir not named
+ * `.git`, a bare repo or a submodule, the folder's own top level). Outside git, or where git
+ * is missing or fails: `key` is the nearest folder at or above it holding
+ * `.herdr/bots.json`, else the folder itself (the walk-up, for a folder seen in passing: a
+ * pane's or a space's); `own` is the folder itself (for a folder someone picked or named
+ * as the project: never keyed to a parent project without asking).
  * `git(args, cwd)` resolves with git's stdout, or null when git failed or is missing;
  * `exists(path)` with whether that file is there. Either rejecting means the folder's
- * machine can't be asked now: projectKeyOf rejects too, never guessing "not in git".
+ * machine can't be asked now: projectOf rejects too, never guessing "not in git".
  */
-export async function projectKeyOf(folder, git, exists) {
+export async function projectOf(folder, git, exists) {
   const start = trimSlash(folder);
   const ask = async (args) => (await git(args, start))?.trim() || null;
   const common = await ask(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (common) {
     const dir = trimSlash(common);
-    if (baseOf(dir) === ".git") return parentOf(dir);
+    if (baseOf(dir) === ".git") { const main = parentOf(dir); return { key: main, own: main }; }
     const top = await ask(["rev-parse", "--show-toplevel"]);
-    if (top) return trimSlash(top);
+    if (top) return { key: trimSlash(top), own: trimSlash(top) };
   }
   for (let dir = start; ; dir = parentOf(dir)) {
-    if (await exists(`${dir === "/" ? "" : dir}/${BOTS_PATH}`)) return dir;
+    if (await exists(`${dir === "/" ? "" : dir}/${BOTS_PATH}`)) return { key: dir, own: start };
     if (dir === "/" || !dir.includes("/")) break;
   }
-  return start;
+  return { key: start, own: start };
+}
+
+/** The walk-up key of a folder seen in passing (projectOf's `key`). */
+export async function projectKeyOf(folder, git, exists) {
+  return (await projectOf(folder, git, exists)).key;
 }
 
 /** The bots under `botId` at any depth (by effective lead): none of them can be its lead. */
