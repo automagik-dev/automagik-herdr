@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { besideDirs, envInterpreter, interpreterPath } from "../mods/spaces-agents/agentPath.mjs";
@@ -49,6 +49,10 @@ test("envInterpreter: the word env runs, past -S, other flags and VAR=x; null fo
   assert.equal(envInterpreter("#!/usr/bin/env node"), "node");
   assert.equal(envInterpreter("#! /usr/bin/env -S node --no-warnings"), "node");
   assert.equal(envInterpreter("#!/usr/bin/env NODE_OPTIONS=x bun"), "bun");
+  assert.equal(envInterpreter("#!/usr/bin/env node\r"), "node", "a CRLF script's line loses its \\r");
+  assert.equal(envInterpreter("#!/usr/bin/env -u NODE_OPTIONS node"), "node", "-u takes NAME as its argument");
+  assert.equal(envInterpreter("#!/usr/bin/env -i PATH=/x -u FOO bun"), "bun");
+  assert.equal(envInterpreter("#!/usr/bin/env -i node\r"), "node");
   assert.equal(envInterpreter("#!/bin/sh"), null);
   assert.equal(envInterpreter("#!/opt/homebrew/bin/node"), null);
   assert.equal(envInterpreter("\u007fELF\u0002"), null);
@@ -113,6 +117,61 @@ test("bun: a #!/usr/bin/env bun agent gets ~/.bun/bin; bun alone never stands in
   runtime(join(s.env.HOME, ".bun/bin/bun"), "1.2.3");
   assert.equal(interpreterPath("omp", agents, s.env).path, `${join(s.env.HOME, ".bun/bin")}:${agents}`);
   assert.equal(interpreterPath("codex", agents, s.env).path, agents);
+});
+
+/** A fake runtime that leaves `<path>.ran` behind when it is run. */
+const tattler = (path, version) => exe(path, `#!/bin/sh\n: > "${path}.ran"\necho ${version}\n`);
+
+test("an unsafe folder or interpreter (world-writable) is neither run nor put on PATH", (t) => {
+  const s = scratch(t);
+  // codex and a node side by side in a 0777 folder, reached through a link in a safe PATH
+  // folder: the node there is never run.
+  const open = join(s.root, "open");
+  exe(join(open, "codex"), NODE_SCRIPT);
+  tattler(join(open, "node"), "v24.1.0");
+  chmodSync(open, 0o777);
+  const links = join(s.root, "links");
+  mkdirSync(links);
+  symlinkSync(join(open, "codex"), join(links, "codex"));
+  // A 0777 node file in a safe nvm folder, and a 0777 Homebrew folder: passed over too.
+  const nvmBin = join(s.env.NVM_DIR, "versions/node/v24.1.0/bin");
+  tattler(join(nvmBin, "node"), "v24.1.0");
+  chmodSync(join(nvmBin, "node"), 0o777);
+  const brew = join(s.root, "brew");
+  tattler(join(brew, "node"), "v24.1.0");
+  chmodSync(brew, 0o777);
+  const got = interpreterPath("codex", links, { ...s.env, AUTOMAGIK_HERDR_RUNTIME_DIRS: brew });
+  assert.equal(got.path, links);
+  assert.match(got.note, /may fail/);
+  for (const p of [join(open, "node"), join(nvmBin, "node"), join(brew, "node")]) assert.equal(existsSync(`${p}.ran`), false, `${p} was run`);
+  // The same folder made safe: its node is run and put first.
+  chmodSync(open, 0o755);
+  assert.equal(interpreterPath("codex", links, s.env).path, `${open}:${links}`);
+  assert.equal(existsSync(join(open, "node.ran")), true);
+});
+
+test("relative folders are never run or put on PATH: PATH entries, NVM_DIR, AUTOMAGIK_HERDR_RUNTIME_DIRS", (t) => {
+  const s = scratch(t);
+  const was = process.cwd();
+  process.chdir(s.root);
+  t.after(() => process.chdir(was));
+  exe(join(s.root, "rel/codex"), NODE_SCRIPT);
+  tattler(join(s.root, "rel/node"), "v24.1.0");
+  tattler(join(s.root, "relnvm/versions/node/v24.1.0/bin/node"), "v24.1.0");
+  tattler(join(s.root, "relbrew/node"), "v24.1.0");
+  const env = { ...s.env, NVM_DIR: "relnvm", AUTOMAGIK_HERDR_RUNTIME_DIRS: "relbrew:." };
+  // The agent only on a relative PATH entry: the CLI can't tell what the worker's cwd finds.
+  assert.deepEqual(interpreterPath("codex", "rel:.", env), { path: "rel:.", note: null });
+  assert.deepEqual(interpreterPath("./rel/codex", s.empty, env), { path: s.empty, note: null });
+  // The agent on an absolute entry, node only in relative folders: nothing put first.
+  const agents = join(s.root, "agents");
+  exe(join(agents, "codex"), NODE_SCRIPT);
+  const got = interpreterPath("codex", `${agents}:rel:.`, env);
+  assert.equal(got.path, `${agents}:rel:.`);
+  assert.match(got.note, /may fail/);
+  for (const p of ["rel/node", "relnvm/versions/node/v24.1.0/bin/node", "relbrew/node"]) {
+    assert.equal(existsSync(join(s.root, `${p}.ran`)), false, `${p} was run`);
+  }
 });
 
 test("a binary, a #!/bin/sh script or an agent not on PATH: PATH unchanged, nothing said", (t) => {
