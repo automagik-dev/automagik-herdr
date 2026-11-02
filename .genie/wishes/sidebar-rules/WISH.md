@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `sidebar-rules` |
 | **Date** | 2026-11-02 |
 | **Author** | Automagik Herdr Orchestrator |
@@ -60,7 +60,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 | D6 | **R2 replaced (owner addition).** Space order supports three modes together: alphabetical sort (by display name), manual order (drag), and pin (pinned spaces stay at the top, in their own order). The sidebar draws this order with a pure function. The person's choice lives in the shared key `am.sidebar.order` = `{ mode: "alpha" \| "manual", manual: slotKey[], pins: slotKey[] }`. A slot key is the project id for a project's space, else `space:<id>`. Remote machines stay grouped under their machine headers; the order applies inside each group. Worktree spaces stay under their main checkout. `tidy --apply` aligns Herdr's own order with `space.move`, so ⌘1-9 and `space.next` agree. When `am.sidebar.order` is absent, the sidebar seeds it in manual mode from Herdr's current order, so the owner's order is kept; alphabetical is a mode the owner picks. Workspace-first (#14) stays out. | The owner wants all three modes at once. A pure function means drawing never moves the window. The `am.*` key follows am-pack's rename. A project key is stable; a space id changes when a space is recreated. |
 | D7 | **R1 adapted.** A project's display name comes from a new OPTIONAL top-level field in `.herdr/bots.json` (for example `"name": "Brain"`), falling back to the main checkout's folder name. The schema stays version 1. One space per project: when Start finds no live space for the project, the CLI creates one with `herdr-app do space.new` (folder = main checkout, name = display name). Worktree spaces are kept only while a seat needs them (tidy reports the others). No squad spaces. | `parseBots` throws only on `version !== 1`, so an optional field is safe. Creating a space on Start is the owner's own action, so it is allowed. The bot tree already is the squad view. |
 | D8 | **Anti-drift tests.** Group 1 records today's messy state as fixtures under `test/fixtures/sidebar/`: `hc ls --json` rows, the `.labels` of every bot pane (`hc get <t> --json`), `herdr-app ls` spaces and tabs, and the bots.json files. They are redacted: paths under `~` only, no instructions text, no tokens. Golden expected row order and space order per rule. Every later group's acceptance includes "the recorded fixtures still give the golden order". tidy's planner is a pure function `plan(state) -> actions[]`, tested on the same fixtures; running it twice is a no-op. | Drift came back because nothing pinned the order. A recorded fixture is the real mess, not an invented one. |
-| D9 | **Needs-me float (owner addition).** A space that needs the owner moves to the top of its machine group, above pins, temporarily. It returns to its slot once that is resolved. This is the sidebar's drawing only, never `space.move`. The signal is defined once, as a pure `needsOwner(space, state)` in Group 3a. Sources: a blocked seat (a dialog, the usage-limit prompt included: hc status `blocked`); the sidebar's existing screen scan (`main.js` `scanHermes`, `this.screen`), so the badge matches today's "Needs you" chip; a failed run (hc status `error`, or a failed automation run); and a main bot's pending owner decision (the pane label `automagik-herdr.needs-owner`, see D11). A red CI ✗ shows on line 1 but is NOT a needs-owner source. | Herdr's ⌘1-9 must not reorder every time something blocks. One signal feeds both the float and the row's badge, so they never disagree. |
+| D9 | **Needs-me float (owner addition).** A space that needs the owner moves to the top of its machine group, above pins, temporarily. It returns to its slot once that is resolved. This is the sidebar's drawing only, never `space.move`. The signal is defined once, as a pure `needsOwner(space, state)` in Group 3a. Sources: a blocked seat (a dialog, the usage-limit prompt included: hc status `blocked`); the sidebar's existing screen scan (`main.js` `scanHermes`, `this.screen`), so the badge matches today's "Needs you" chip; a failed run (hc status `error`; an automation's run terminal carries `automation=<name>` and shows `error` when it fails, so this source covers automations too); and a main bot's pending owner decision (the pane label `automagik-herdr.needs-owner`, see D11). A red CI ✗ shows on line 1 but is NOT a needs-owner source. | Herdr's ⌘1-9 must not reorder every time something blocks. One signal feeds both the float and the row's badge, so they never disagree. |
 | D10 | **The space row "A with C's bar" is in scope (owner's pick, 2026-11-02),** as its own group (Group 5). The ordering functions return slot keys and row descriptors only. Rendering stays in `main.js` `row()`, so the redesign and the ordering never edit the same function. | The owner picked the design. Keeping order and rendering apart lets Groups 3a and 5 change without conflict. |
 | D11 | **A pending owner decision is a pane label.** A main bot that waits on the owner sets `automagik-herdr.needs-owner=<short text>` on its own pane with `hc label`, and removes it once answered. One briefing line tells main bots this (Group 3b). | There is no other primitive for "a decision waiting". A label is visible to the sidebar's single hc read, needs no new process, and the main bot controls it. |
 | D12 | **Owner gestures move Herdr's order too.** A drag writes the manual order to `am.sidebar.order` and switches the mode to manual. It then moves only the dragged space with `space.move`. The index comes from the dropped-on neighbour's position in `spaces()` (just after the space now above it in the base order), never from a row index. Pin, unpin and a mode switch are owner gestures as well: each runs the `space.move` calls that bring Herdr's order to the new base order (pins + mode, no float). ⌘N is not row N for spaces the float or Start reorder, until the next `tidy --apply`. | The owner's own gesture in the sidebar is the owner acting, so these `space.move` calls are allowed and keep ⌘1-9 in step. Today's handler (`main.js:973`) indexes `spaces()` by row index, which is wrong once the sidebar sorts. |
@@ -156,7 +156,7 @@ Groups 2–5 land in `wish/am-pack` and ship with v0.3.0, so this wish blocks am
 2. Redact them: paths rewritten under `~`; `instructions` emptied; no tokens, no message text, no screen text. A test fails if any fixture holds `/Users/` or a non-empty `instructions`.
 3. `rows.js`: `spaceRowOrder({ tree, agents, shells })`, pure. It returns row descriptors in R3 order: main bot; categories in bots.json order, each with captains then members by rank; each bot's helpers beneath it; then plain agents not tied to a bot; then shells. A terminal listed as a bot's helper is not listed again as a plain agent.
 4. `main.js` `grouped()`: `draw` maps `spaceRowOrder`'s descriptors to elements, so the tree comes before `agentRows`. `this.order` (agent cycling, `setAgentOrder`) is pushed in the same drawn order. `row()` itself is not touched (D10).
-5. `test/row-order.test.mjs`: golden row order per fixture space, including the owner's "Automagik Herdr" space with t187. It also records the golden space order per fixture for the default mode (alphabetical, D6) as data; Group 3a tests it and adds the manual, pinned and float cases.
+5. `test/row-order.test.mjs`: golden row order per fixture space, including the owner's "Automagik Herdr" space with t187. It also records the golden space order per fixture for alpha mode as data (the golden space order recorded here is the alpha-mode order); Group 3a tests it and adds the manual, pinned and float cases.
 
 **Interfaces:**
 - Consumes: `buildTree`, `visibleRows`, `helpersOf` (rows.js, unchanged).
@@ -183,7 +183,7 @@ node --test test/row-order.test.mjs && node --test 'test/*.test.mjs' && for f in
 **Goal:** `automagik-herdr tidy` reports every drift as a plan and changes nothing; start, attach and create fix only what the owner can't see.
 
 **Deliverables:**
-1. `mods/am-sidebar/tidy.js`, pure, imports nothing: `plan(state) → Action[]`. Rules in this group: stale registry entries (a key whose folder is gone, issue #11); bot pane labels (`role=`, `category=`, `herdr.space`) that disagree with bots.json and the project's space; strays (a pane whose project key differs from its space's project); duplicate spaces for one project (their panes move into the canonical space, the project's oldest); spaces that are already empty; worktree spaces no seat needs (reported); orphan helpers (a helper whose hc parent is not its bot's pane, D3, reported); a `automagik-herdr.needs-owner` label older than a day (reported); a project with live bots and no space.
+1. `mods/am-sidebar/tidy.js`, pure: `plan(state) → Action[]`. It imports only other pure modules (it may import `order.js`, which is pure too). Rules in this group: stale registry entries (a key whose folder is gone, issue #11); bot pane labels (`role=`, `category=`, `herdr.space`) that disagree with bots.json and the project's space; strays (a pane whose project key differs from its space's project); duplicate spaces for one project (their panes move into the canonical space, the project's oldest); spaces that are already empty; worktree spaces no seat needs (reported); orphan helpers (a helper whose hc parent is not its bot's pane, D3, reported); a `automagik-herdr.needs-owner` label older than a day (reported); a project with live bots and no space.
 2. `mods/am-sidebar/bin/state.mjs`: `readState()` builds `State` with one `hc ls --json`, one `hc get` per bot-labelled pane, one `herdr-app ls`, the bots.json files and `am-sidebar-projects.json`.
 3. `automagik-herdr tidy` prints the plan in plain lines, grouped visual / non-visual; `--json` prints `Action[]`. It writes nothing.
 4. Start, attach and create run `plan(readState())` and apply only `visual: false` actions: registry prune (rewrite `am-sidebar-projects.json`) and relabel (`hc label`). Failures become warnings, never a failed command.
@@ -214,17 +214,18 @@ node --test test/tidy.test.mjs && node --test 'test/*.test.mjs' && for f in mods
 
 **Deliverables:**
 1. `model.js`: `parseBots` keeps an optional top-level `name` (a non-empty string; anything else is left out with a warning). `displayNameOf(file, key)` returns it, else the main checkout's folder name.
-2. A new pure `order.js`: `needsOwner(space, state)` per D9 (hc status `blocked` or `error`, `state.screen`, a failed automation run, the needs-owner label), and `spaceOrder(rows, prefs, state)` per D6 and D9: floats first (oldest need first), then pins in their order, then the rest by mode (alpha: projects with bots by display name, then spaces without bots by name; manual: `prefs.manual`, unknown slots last by name). Remote machines group per machine; worktree spaces stay under their main checkout.
+2. A new pure `order.js`: `needsOwner(space, state)` per D9 (hc status `blocked` or `error`, which covers failed automation runs, `state.screen`, the needs-owner label), and `spaceOrder(rows, prefs, state)` per D6 and D9: floats first (oldest need first), then pins in their order, then the rest by mode (alpha: projects with bots by display name, then spaces without bots by name; manual: `prefs.manual`, unknown slots last by name). Remote machines group per machine; worktree spaces stay under their main checkout.
 3. `main.js`: `ordered()` uses `spaceOrder`; `row()` is not changed (D10). With no `am.sidebar.order`, the prefs are seeded in manual mode from Herdr's current order (D6). The space menu gets "Pin to top" / "Unpin" and "Sort spaces: Alphabetical / Manual". Drag, pin, unpin and mode switches follow D12.
 4. `test/order.test.mjs`: golden space order per fixture and per mode; a blocked fixture floats, and the same fixture with the status cleared returns to its slot.
 
 **Interfaces:**
 - Consumes: Group 1's `State`, fixtures and `spaceRowOrder`.
-- Produces: `displayNameOf(file, key: string) → string`; rows in `ordered()`'s shape `{w, i, g, tree}` (`w` the Herdr space, `i` its index in `spaces()`, `g` its git info, `tree` the worktree connector or null); `slotKey(space, projectKey: string|null) → string` (projectKey is `projectKeyOf`'s result); `needsOwner(space, state: State) → { since: number, terminal: string, why: "blocked"|"screen"|"error"|"automation"|"decision" }[]` (empty: no need); `spaceOrder(rows, prefs: {mode, manual, pins}, state: State) → rows`; `seedPrefs(spaces) → prefs`; `ORDER_KEY = "am.sidebar.order"`.
+- Produces: `displayNameOf(file, key: string) → string`; rows in `ordered()`'s shape `{w, i, g, tree}` (`w` the Herdr space, `i` its index in `spaces()`, `g` its git info, `tree` the worktree connector or null); `slotKey(space, projectKey: string|null) → string` (projectKey is `projectKeyOf`'s result); `needsOwner(space, state: State) → { since: number, terminal: string, why: "blocked"|"screen"|"error"|"decision" }[]` (empty: no need); `spaceOrder(rows, prefs: {mode, manual, pins}, state: State) → rows`; `seedPrefs(spaces) → prefs`; `ORDER_KEY = "am.sidebar.order"`.
 
 **Acceptance Criteria:**
 - [ ] Each mode gives its golden order on the fixtures; pins stay on top in their own order; absent prefs seed manual mode from Herdr's order.
 - [ ] The blocked fixture floats to the top, then returns; no `space.move` is called for a float (checked against the herdr stub).
+- [ ] Pin, unpin and a mode switch each call `space.move` to bring Herdr's order to the new base order (D12), checked against the herdr stub.
 - [ ] A usage-limit prompt case (a seat blocked on the usage-limit dialog) makes `needsOwner` non-empty; a red CI alone does not.
 - [ ] A bots.json with `"name": "Brain"` still parses with version 1 and sorts as "Brain"; one without it sorts by folder name.
 - [ ] The recorded fixtures still give the golden order.
@@ -245,7 +246,7 @@ node --test test/order.test.mjs && node --test 'test/*.test.mjs' && for f in mod
 **Deliverables:**
 1. `placementOf` (bin) picks the project's space from `readState()` by project key, never from `where`. Start and Attach write `herdr.space` (and `herdr.tab` when known) to it (D4).
 2. No live space for the project: Start and Attach run `herdr-app do space.new` with folder = main checkout and name = `displayNameOf` (D7), then place the bot there.
-3. `tidy.js` gains the rename rule (a project space whose name is not its display name → `rename-space`) and the order rule (Herdr's order differs from `spaceOrder` without floats → `order-spaces`).
+3. `tidy.js` (which may import the pure `order.js`, both being pure) gains the rename rule (a project space whose name is not its display name → `rename-space`) and the order rule (Herdr's order differs from `spaceOrder` without floats → `order-spaces`).
 4. `briefingText.mjs`, three lines, all inside the 9,900-character cap:
    - a bot starts helpers from its own pane (hc's default `--parent`, D3);
    - a main bot sets and clears `automagik-herdr.needs-owner` (D11);
@@ -259,7 +260,7 @@ node --test test/order.test.mjs && node --test 'test/*.test.mjs' && for f in mod
 **Acceptance Criteria:**
 - [ ] Start, and Attach, for a project with no open space create one named by display name and place the bot in it.
 - [ ] A pane whose `where` names another space is still placed by its project key.
-- [ ] The briefing shows both lines and stays under the cap.
+- [ ] The briefing shows all three lines (HELPER_LINE, NEEDS_OWNER_LINE, VERDICT_LINE) and stays under the cap.
 - [ ] The recorded fixtures still give the golden order.
 
 **Validation:**
@@ -353,6 +354,7 @@ node --test test/tidy-apply.test.mjs && node --test 'test/*.test.mjs' && for f i
 - Produces:
   - `pulseOf(space, state) → {working, idle, blocked, needYou}`;
   - `forgeOf(remoteUrl) → "gh"|"glab"|null`;
+  - `forge.js`: `mergedSince(project, sinceMs)`, `readyCount(project)`, `ciState(project)`, `failedRunsSince(project, sinceMs)`, and the cache `firstCommitCache(project)` (file `<app home>/automagik-herdr/forge-cache/<project>.json`);
   - `outputOf(merged, failedRuns, verdicts, now) → {hours: {merges, failed}[24], merged, medianMs|null, firstPass: {rate|null, covered}}`;
   - `isChore(title) → boolean`;
   - `firstPass(merged, verdicts) → {rate|null, covered}`;
@@ -401,13 +403,14 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | Recording fixtures reads the owner's live install | Medium | One read-only run with the owner's approval (AGENTS.md); redaction test in Group 1 |
 | `terminal.park` returns `{pending:true}` and nothing happens | High | Group 4 selects the tab first, checks the result, reports and skips; never loops |
 | `tidy --apply` acts on a pane it should not | High | Refusal rules (Pocket Link, other projects), dry run by default, scratch window first, one approved owner run |
-| The usage-limit prompt may not set hc status `blocked` | Medium | Group 3a checks it on a fixture; if not, the badge misses it, and a follow-up adds a detector |
+| The usage-limit prompt may not set hc status `blocked` | Medium | `needsOwner` also catches it through the screen scan; Group 3a's acceptance checks it on a fixture |
 | A main bot forgets to clear `automagik-herdr.needs-owner` | Low | Tidy reports a needs-owner label older than a day; the briefing line says to clear it |
 | The needs-me float flickers when a seat blocks and unblocks quickly | Low | Deferred hysteresis, added only if the owner reports it |
 | The mod API may not say when the sidebar is hidden | Medium | Fetch only from render-driven ticks; if Herdr renders hidden views, Group 5 stops ticks when the sidebar is collapsed |
 | A forge CLI is missing, not logged in, or fails | Low | The row shows `–` with an error tooltip, never stale numbers (Group 5 d4) |
 | Forge rate limits (many projects, history queries) | Medium | Back off on 403/429; refresh only shown spaces; persist first-commit times in `<app home>/automagik-herdr/forge-cache/` |
 | ⌘N differs from row N for spaces the float or Start reorder | Low | Stated in D12; `tidy --apply` realigns; owner gestures (drag, pin, mode) move Herdr's order at once |
+| `verdict` trusts `HC_TERMINAL_ID`, which any process can set | Low | Accepted: the first-pass metric is display-only |
 | A verdict line is forged or recorded against the wrong commit | Medium | Only a main bot's pane may call `verdict` (exit 2 otherwise), each line carries its terminal, and `firstPass` counts only a `head` among the merged PR's commits |
 | Drag indexes rows, not spaces, once the sidebar sorts | Medium | D12: the index comes from the neighbour's position in `spaces()`; a test drags in each mode |
 
@@ -418,6 +421,14 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
 
 ---
+
+### Plan review — 2026-11-02
+
+- Owner approved (in this pane): Group 1 ships now as v0.2.1 on dev; Groups 2–5 ship with am-pack v0.3.0.
+- Independent plan review, round 1: FIX-FIRST, 18 findings (4 high: duplicate spaces and park/keep recovery in tidy --apply, files shared between Groups 4 and 5, am-pack Group 8 not waiting for this wish). All applied at b15ce30.
+- Round 2: FIX-FIRST, 8 text findings. Applied, and verified by the coordinator against the text (budget 2/2).
+- **Ruling:** a failed automation run is not a separate needs-owner source. Its run terminal carries `automation=<name>` and shows hc `error`, which the error source already covers. Cost if wrong: one field and a reader in Group 3a.
+- Verdict: APPROVED. `genie wish lint` OK.
 
 ## Files to Create/Modify
 
