@@ -13,9 +13,12 @@ itself, from local logs).
   a minute. The feed changes at most every 10 minutes.
 - `space.version` must be `1`. Any other value, a missing `space` key, or a doc that doesn't parse:
   render nothing at all (no line 2, no stats button). Never crash, never show stale numbers as new.
-- A project is keyed by the absolute path of its main checkout (`space.projects["/abs/path"]`). A
-  space maps to the project whose main-checkout path it is in (a worktree space maps to its main
-  checkout's project). Spaces on other machines: nothing (the feed is this machine's).
+- A project is keyed by its main checkout's path (`space.projects["/abs/path"]`): the real path
+  (symlinks resolved) of the parent of git's common dir, as `git rev-parse --path-format=absolute
+  --git-common-dir` prints it, with no trailing slash. A space maps to the project its folder's repo
+  is keyed by; a worktree space maps to its main checkout's project. On the desktop, a worktree row
+  nested under its repo's row gets no line 2 (the repo's row has it). Spaces on other machines:
+  nothing (the feed is this machine's).
 - A space whose project is not in `space.projects`: no line 2. Its bot rows still get the stats
   button, and their cards show "–" everywhere.
 - Unknown keys anywhere are ignored. Every key is optional: a missing key is the same as `null`.
@@ -24,14 +27,16 @@ itself, from local logs).
 
 - `null` or missing shows as "–" (U+2013 EN DASH), in the dim colour. Never `0`, never blank.
 - `0` (or `0.0`) is a real value and shows formatted: `0`, `0m`, `0%`, `$0.00`.
-- A null value has no arrow. A card whose whole section is null shows its header with "–" as the
-  big number and nothing else.
+- A null value has no arrow. A card whose whole section is null or missing (`merges`, `time`,
+  `first_pass`, `spent` or `tokens` itself) shows its header (icon, title, "–" as the big number)
+  and nothing else: no `was`, no subtitle, no pie, no cells, no footer.
 
 ## 3. Number formats
 
 `round(x)` means `floor(x + 0.5)` on the IEEE double as given (JavaScript `Math.round`, Kotlin
 `Math.floor(x + 0.5)`). `fixed(x, d)` means `round(x * 10^d) / 10^d`, printed with exactly `d`
-decimals. The branch is chosen on the raw value, before rounding.
+decimals. The branch is chosen on the raw value, before rounding, except for minutes, which round
+first (`m = round(x)`) and branch on `m`.
 
 | Kind | Rule | Examples |
 |---|---|---|
@@ -118,7 +123,8 @@ channel, each channel `round()`ed. `n` items take `k = i / (n - 1)`.
   `perf` `ansi10`, `ci` `ansi4`, `build` `ansi6`, `chore` `ansi8`, `style` `ansi9`, `revert` `ansi1`;
   any other type `dim`. Slices and legend go in that order, then unknown types A–Z.
 - Models (spent and tokens cards): sort every model id in that project's `spent.by_model` and
-  `tokens.by_model` together, by code point; the i-th takes `ansi4, ansi6, ansi3, ansi5, ansi2,
+  `tokens.by_model` together, by UTF-16 code unit (JavaScript's default sort; Kotlin's
+  `String.compareTo`); the i-th takes `ansi4, ansi6, ansi3, ansi5, ansi2,
   ansi12, ansi13, ansi14` at `i mod 8`. The same model has the same colour in both cards.
 - Bot card parts: the i-th entry of `parts` (feed order) takes the same 8-colour list at `i mod 8`;
   the key `other` is always `dim`.
@@ -150,10 +156,12 @@ the body, then a footer in `dim`: `as of HH:MM`, plus `· lists trimmed to fit` 
 `space.truncated` is `true`.
 
 - **Merges**: big `merges.n` (count), `was {prev_n}`. A pie of `merges.by_type` (slice = count,
-  label inside = the count). Under it, `merges.items` of the hovered/tapped type: task id (links to
-  `url`), then `lead_min` as minutes; "–" for a null `lead_min`.
+  label inside = the count). Under it, `merges.items` of the hovered/tapped type, in feed order: task
+  id (links to `url`), then `lead_min` as minutes; "–" for a null `lead_min`. At most 9 items
+  are listed; when there are more, a last line `+N` (N = the ones not listed) in `dim`.
 - **Time** ("Worktree → merge"): big `median_min`, `was {prev_median_min}`. A pie of `time.bands`
-  with `time.bands_labels`, coloured by the 6-stop scale; label inside = the count; detail =
+  with `time.bands_labels` (a missing, null or empty label is `band N`, N counting from 1),
+  coloured by the 6-stop scale; label inside = the count; detail =
   `{label}: {count}`. Then three cells: fastest (`fastest.min`, green, task id linking to
   `fastest.url`), average (`avg_min`), slowest (`slowest.min`, red, task id linking to
   `slowest.url`).
@@ -193,7 +201,9 @@ bot means every field is null.
   `.herdr/bots.json` (its id when not found). The key `other` is labelled `other`.
 - Empty `parts`: no bar, and the legend says `no breakdown yet` in `dim`.
 
-## 9. Changes from t16r
+## 9. Changes
+
+### From t16r
 
 Requests from Pocket that don't contradict the mock are taken and recorded here, each with its date.
 
@@ -201,3 +211,13 @@ Requests from Pocket that don't contradict the mock are taken and recorded here,
   light, because the phone has no `theme()`.
 - 2026-11-02, noted (no rule change): Pocket gets bot and category names from Pocket Link, since the
   phone can't read `.herdr/bots.json`. The labels in section 8 are the same either way.
+
+### From review (t22n, PR #55)
+
+- 2026-11-02: a card whose whole section is null shows only its "–" header (section 2); the desktop
+  had still drawn the subtitle and the time cells.
+- 2026-11-02: the merges detail lists at most 9 items, then `+N` (section 7).
+- 2026-11-02: a missing band label is `band N` (section 7).
+- 2026-11-02: minutes branch on `round(x)` (section 3); models sort by UTF-16 code unit (section 5);
+  the project key is the real path of the parent of git's common dir, no trailing slash, and nested
+  worktree rows get no line 2 (section 1).
