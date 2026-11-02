@@ -127,22 +127,29 @@ ask() {
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 
 # Whether $LINK is a link to the pack's own command in this app home (the sidebar folder's
-# bin/automagik-herdr.mjs, under its old or its am-* name), the only kind this script replaces
-# or removes: a link the person pointed anywhere else stays theirs.
+# bin/automagik-herdr wrapper, which v0.3.5-v0.4.x link, or bin/automagik-herdr.mjs, under its old
+# or its am-* name), the only kind this script replaces or removes: a link the person pointed
+# anywhere else stays theirs.
 link_ours() {
   [ -L "$LINK" ] || return 1
   to=$(readlink "$LINK" 2>/dev/null) || return 1
-  case $to in "$MODS/spaces-agents/bin/automagik-herdr.mjs"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;; esac
+  case $to in
+    "$MODS/spaces-agents/bin/automagik-herdr"|"$MODS/spaces-agents/bin/automagik-herdr.mjs") return 0 ;;
+    "$MODS/am-sidebar/bin/automagik-herdr"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;;
+  esac
   return 1
 }
 
-# The CLI of the sidebar folder the ownership record lists (am-sidebar, else spaces-agents), which
-# the link points at; empty when the record lists neither.
+# The command the link points at, in the sidebar folder the ownership record lists (am-sidebar,
+# else spaces-agents): its bin/automagik-herdr wrapper when the pack ships one (it finds a node
+# where PATH has none), else bin/automagik-herdr.mjs; empty when the record lists neither folder.
 cli_target() {
   case ",$(mark_get mods)," in
-    *,am-sidebar,*) echo "$MODS/am-sidebar/bin/automagik-herdr.mjs" ;;
-    *,spaces-agents,*) echo "$PACK/bin/automagik-herdr.mjs" ;;
+    *,am-sidebar,*) dir=$MODS/am-sidebar/bin ;;
+    *,spaces-agents,*) dir=$PACK/bin ;;
+    *) return 0 ;;
   esac
+  if [ -f "$dir/automagik-herdr" ]; then echo "$dir/automagik-herdr"; else echo "$dir/automagik-herdr.mjs"; fi
 }
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
@@ -190,7 +197,9 @@ layout_notes() {
     lacks=
     for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
       'md-menu:the Markdown menu (md-menu)' 'automations:the automations panel (automations)' 'am-quota:the quota panel (am-quota)'; do
-      grep -q "\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
+      # A block naming the mod ("mod": …), or for md-menu the root's "terminal_menu": an id like
+      # "am-quota-panel" or a mention elsewhere doesn't count.
+      grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
     done
     [ -n "$lacks" ] || continue
     name=${f##*/}
@@ -391,6 +400,13 @@ install() {
   # ---- e. the command ----
   mkdir -p "$BIN_DIR"
   target=$(cli_target)
+  # Never a link to nothing: a pack whose sidebar ships no command stops here, and our link, if
+  # it now points at nothing (into the replaced folder), goes rather than dangle.
+  if [ -n "$target" ] && { [ ! -f "$target" ] || [ -L "$target" ]; }; then
+    gone=
+    if link_ours && [ ! -e "$LINK" ]; then rm -f "$LINK" && gone=" Removed $LINK, which pointed at nothing now."; fi
+    fail "the pack is installed, but ${target%/*} has neither automagik-herdr nor automagik-herdr.mjs, so automagik-herdr is not linked.$gone"
+  fi
   if [ -n "$target" ]; then chmod +x "$target"; fi
   if [ -z "$target" ]; then
     say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."

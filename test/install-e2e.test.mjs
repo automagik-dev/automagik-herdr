@@ -1,8 +1,10 @@
 // The public install path end to end (#43): the pack built by release.yml's own Pack lines, served
 // as a file:// release with SHA256SUMS, installed by install.sh piped into bash as the README's
 // one-liner runs it, on three scratch homes: a fresh one, a v0.4.0 sidebar-only install, and one
-// with a personal layout and an unrelated mod (sheepdog). Fake `uname`, `brew` and `herdr-app`;
-// never the real home, ~/.config/herdr-app or Homebrew.
+// with a personal layout and an unrelated mod (sheepdog). The folder list is PACK_MODS from
+// mods/spaces-agents/release.js, as release.yml reads it from the tag; this test does not take it
+// from release.yml. Fake `uname`, `brew` and `herdr-app`; never the real home,
+// ~/.config/herdr-app or Homebrew.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -28,6 +30,25 @@ const haveGit = (() => { try { return git(["rev-parse", "--is-inside-work-tree"]
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
+/** v0.3.5-v0.4.0's bin/automagik-herdr, byte for byte: the command their install.sh links. */
+const WRAPPER = `#!/bin/sh
+# The automagik-herdr command (install.sh links ~/.local/bin/automagik-herdr here): runs
+# automagik-herdr.mjs beside it with the runtime run.sh finds (node 22.7 or later, else bun), so
+# it works where PATH has no node. Apache-2.0.
+
+# $0 is the link's path: follow the links to this file's own folder.
+p=$0
+while [ -L "$p" ]; do
+  to=$(readlink "$p") || break
+  case $to in /*) p=$to ;; *) p=$(dirname "$p")/$to ;; esac
+done
+dir=$(cd "$(dirname "$p")" && pwd -P) || exit 127
+exec sh "$dir/run.sh" "$dir/automagik-herdr.mjs" "$@"
+`;
+/** A stand-in for their bin/run.sh (it looks for node 22.7+ or bun); node is on PATH here. */
+const RUN_SH = "#!/bin/sh\nexec node \"$@\"\n";
+const LAUNCHER = ["mods/spaces-agents/bin/automagik-herdr", "mods/spaces-agents/bin/run.sh"];
+
 /** Every file and link under `dir`, as `rel → {bytes or link target, exec bit}`. */
 function files(dir, { skip = () => false } = {}) {
   const out = new Map();
@@ -49,8 +70,11 @@ function files(dir, { skip = () => false } = {}) {
  * run by sh with the tag replaced by a tree of this working copy (the tag's tree in a release),
  * and that tree's VERSION set to RELEASE as the release commit does. Then release.yml's two
  * checks: mods/ (but pocket-link) is PACK_MODS, and the archive's top level is PACK_MODS + layouts.
+ * `launcher`: undefined packs the tree as it is; false drops dev's launcher (bin/automagik-herdr
+ * and bin/run.sh), as wish/am-pack had none before dev merged in; true adds it where missing;
+ * "none" drops it and bin/automagik-herdr.mjs too (a pack with no command, which must not link).
  */
-function buildPack(dir) {
+function buildPack(dir, { launcher } = {}) {
   const step = readFileSync(RELEASE_YML, "utf8");
   const pack = step.slice(step.indexOf("- name: Pack\n"), step.indexOf("- name: Publish the release\n"));
   assert.ok(pack.length > 0, "release.yml has a Pack step before Publish the release");
@@ -76,6 +100,16 @@ function buildPack(dir) {
   git(["add", "-A", "--", "mods", "layouts"], idx);
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${RELEASE}\n`, encoding: "utf8" }).trim();
   git(["update-index", "--cacheinfo", `100644,${blob},mods/spaces-agents/VERSION`], idx);
+  const staged = new Set(git(["ls-files", "--", ...LAUNCHER], idx).split("\n").filter(Boolean));
+  for (const path of LAUNCHER) {
+    if ((launcher === false || launcher === "none") && staged.has(path)) git(["update-index", "--force-remove", "--", path], idx);
+    if (launcher === true && !staged.has(path)) {
+      const text = path.endsWith("run.sh") ? RUN_SH : WRAPPER;
+      const b = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: text, encoding: "utf8" }).trim();
+      git(["update-index", "--add", "--cacheinfo", `100755,${b},${path}`], idx);
+    }
+  }
+  if (launcher === "none") git(["update-index", "--force-remove", "--", "mods/spaces-agents/bin/automagik-herdr.mjs"], idx);
   const tree = git(["write-tree"], idx);
 
   const tagged = git(["ls-tree", "--name-only", `${tree}:mods`]).split("\n").filter((m) => m !== POCKET_LINK).sort();
@@ -94,19 +128,19 @@ function buildPack(dir) {
   return { tgz, x };
 }
 
-/** One pack for every test (it is the same release). */
-let built;
-const pack = () => {
-  if (!built) {
+/** One pack per launcher variant (each is the same release). */
+const built = new Map();
+const pack = (launcher) => {
+  if (!built.has(launcher)) {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "ah-e2e-pack-")));
     process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
-    built = buildPack(dir);
+    built.set(launcher, buildPack(dir, { launcher }));
   }
-  return built;
+  return built.get(launcher);
 };
 
 /** A scratch machine: a home, the release folder (file://), and fake uname, brew and herdr-app. */
-function machine(t) {
+function machine(t, { launcher } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-e2e-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
@@ -125,7 +159,7 @@ if [ "$1" = status ]; then
 fi
 `);
   // The release: latest/download/{SHA256SUMS, the pack}, as GitHub serves it.
-  const { tgz } = pack();
+  const { tgz } = pack(launcher);
   const dl = join(rel, "latest", "download");
   mkdirSync(dl, { recursive: true });
   const body = readFileSync(tgz);
@@ -138,12 +172,17 @@ fi
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
   };
   return {
-    root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),
+    launcher, root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),
     link: join(home, ".local", "bin", "automagik-herdr"),
     show: (name) => writeFileSync(shown, name),
     // The README's one-liner: `curl -fsSL …/install.sh | bash -s -- --yes`, the script on stdin.
     oneLiner: (...args) => {
       const r = spawnSync("bash", ["-s", "--", ...args], { cwd: root, env, encoding: "utf8", input: readFileSync(INSTALL) });
+      return { code: r.status, out: r.stdout, err: r.stderr };
+    },
+    // The linked command, run as a person runs it.
+    cli: (...args) => {
+      const r = spawnSync(join(home, ".local", "bin", "automagik-herdr"), args, { cwd: root, env, encoding: "utf8" });
       return { code: r.status, out: r.stdout, err: r.stderr };
     },
     herdrLog: () => readFileSync(log, "utf8").split("\n").filter(Boolean),
@@ -153,7 +192,7 @@ fi
 
 /** What every install must leave: the whole pack, as archived, activated and set up. */
 function assertFullPack(m, r) {
-  const { x } = pack();
+  const { x } = pack(m.launcher);
   assert.equal(r.code, 0, `${r.out}\n${r.err}`);
   assert.deepEqual(m.brewCalls(), [], "Homebrew is never run");
   // Every PACK_MODS folder installed, byte-identical to the archive (exec bits too); only the
@@ -195,8 +234,13 @@ function assertFullPack(m, r) {
   const keys = JSON.parse(readFileSync(join(m.appHome, "keys.json"), "utf8"));
   for (const [section, entries] of Object.entries(PACK_KEYS)) for (const [key, action] of Object.entries(entries)) assert.equal(keys[section]?.[key], action, `key ${key}`);
   for (const mod of PACK_MODS) assert.ok(existsSync(join(m.mods, mod)), mod);
-  // The command, linked to the installed sidebar's CLI.
-  assert.equal(readlinkSync(m.link), join(m.mods, "spaces-agents", "bin", "automagik-herdr.mjs"));
+  // The command, linked to the entry the installed sidebar ships (the launcher's wrapper, else
+  // the .mjs), and it runs.
+  const entry = existsSync(join(x, "spaces-agents", "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs";
+  assert.equal(readlinkSync(m.link), join(m.mods, "spaces-agents", "bin", entry));
+  const v = m.cli("--version");
+  assert.equal(v.code, 0, `automagik-herdr --version: ${v.out}${v.err}`);
+  assert.equal(v.out, `automagik-herdr ${RELEASE}\n`);
   return keys;
 }
 
@@ -221,11 +265,14 @@ test("e2e (a): a fresh home gets the whole pack, activated, from the public one-
   assert.match(readFileSync(join(m.state, "installed-by-install.sh"), "utf8"), /^layout=added$/m);
 });
 
-test("e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack; a personal layout learns what it lacks", { skip: !haveGit && "no git work tree" }, (t) => {
-  const m = machine(t);
-  // What v0.3.x-v0.4.0's install.sh left (git show v0.4.0:install.sh, lines 296-307): a v1 marker, the
-  // sidebar-only spaces-agents with its layout and state, the layout v0.2.0-v0.4.0 shipped (the
-  // same bytes), and the link to the sidebar's CLI.
+// (b) twice: the pack as wish/am-pack had it, without dev's launcher (the link moves to the .mjs),
+// and after dev merged in, with it (the link moves to the new wrapper).
+for (const launcher of [false, true]) {
+test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${launcher ? "with" : "without"} the launcher); a personal layout learns what it lacks`, { skip: !haveGit && "no git work tree" }, (t) => {
+  const m = machine(t, { launcher });
+  // What v0.3.5-v0.4.0's install.sh left (git show v0.4.0:install.sh, lines 193-197 and 296-307):
+  // a v1 marker, the sidebar-only spaces-agents with its layout and state, the layout v0.2.0-v0.4.0
+  // shipped (the same bytes), and the link to the sidebar's bin/automagik-herdr wrapper.
   const old = join(m.mods, "spaces-agents");
   mkdirSync(join(old, "bin"), { recursive: true });
   mkdirSync(join(old, "layouts"));
@@ -236,6 +283,8 @@ test("e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack; a pe
   writeFileSync(join(old, "mod.json"), "{\"place\":\"none\",\"title\":\"Spaces & Agents\"}\n");
   writeFileSync(join(old, "main.js"), `// spaces-agents ${OLD}, sidebar only\n`);
   exe(join(old, "bin", "automagik-herdr.mjs"), "#!/usr/bin/env node\n");
+  exe(join(old, "bin", "automagik-herdr"), WRAPPER);
+  exe(join(old, "bin", "run.sh"), RUN_SH);
   writeFileSync(join(old, "layouts", "automagik.json"), v03layout);
   writeFileSync(join(old, ".state", "projects.json"), "[\"/work/acme\"]\n");
   mkdirSync(join(m.appHome, "layouts"), { recursive: true });
@@ -243,7 +292,7 @@ test("e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack; a pe
   mkdirSync(m.state, { recursive: true });
   writeFileSync(join(m.state, "installed-by-install.sh"), `version=${OLD}\nbefore=none\nlayout=added\n`);
   mkdirSync(dirname(m.link), { recursive: true });
-  symlinkSync(join(old, "bin", "automagik-herdr.mjs"), m.link);
+  symlinkSync(join(old, "bin", "automagik-herdr"), m.link);
   assert.notEqual(OLD, RELEASE, "an upgrade, never the same-version path (#44)");
   // As in the issue: the installing agent adapted a personal layout to show the sidebar beside
   // Sheepdog, and Herdr shows it.
@@ -255,6 +304,10 @@ test("e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack; a pe
   const mine = `${JSON.stringify({ id: "root", type: "row", children: [
     { id: "spaces", type: "block", content: { mod: "spaces-agents" }, children: [] },
     { id: "dog", type: "block", content: { mod: "sheepdog" }, children: [] },
+    // Pack names as ids, not as blocks: they don't count as the pack's pieces.
+    { id: "am-quota-panel", type: "block", content: { mod: "sheepdog" }, children: [] },
+    { id: "am-quota", type: "block", content: { mod: "sheepdog" }, children: [] },
+    { id: "automations", type: "column", children: [] },
   ] }, null, 2)}\n`;
   writeFileSync(personal, mine);
   m.show("main-agents");
@@ -280,6 +333,7 @@ test("e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack; a pe
   }
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);
 });
+}
 
 test("e2e (c): a personal layout and an unrelated mod (sheepdog) stay as they were; keys and catalog merge", { skip: !haveGit && "no git work tree" }, (t) => {
   const m = machine(t);
@@ -306,4 +360,22 @@ test("e2e (c): a personal layout and an unrelated mod (sheepdog) stay as they we
   // A layout that doesn't show the sidebar gets no note: --yes switches to the pack's layout.
   assert.ok(!r.out.includes(personal), r.out);
   assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("do ")), ['do layout.switch {"name":"automagik"}']);
+});
+
+test("e2e: a pack whose sidebar ships no command fails loudly and leaves no dangling link", { skip: !haveGit && "no git work tree" }, (t) => {
+  const m = machine(t, { launcher: "none" });
+  // v0.4.0's link, into the sidebar folder the install replaces.
+  const old = join(m.mods, "spaces-agents");
+  mkdirSync(join(old, "bin"), { recursive: true });
+  writeFileSync(join(old, "VERSION"), `${OLD}\n`);
+  writeFileSync(join(old, "mod.json"), "{\"place\":\"none\"}\n");
+  exe(join(old, "bin", "automagik-herdr"), WRAPPER);
+  mkdirSync(m.state, { recursive: true });
+  writeFileSync(join(m.state, "installed-by-install.sh"), `version=${OLD}\nbefore=none\n`);
+  mkdirSync(dirname(m.link), { recursive: true });
+  symlinkSync(join(old, "bin", "automagik-herdr"), m.link);
+  const r = m.oneLiner("--yes");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.err, /has neither automagik-herdr nor automagik-herdr\.mjs, so automagik-herdr is not linked\. Removed /);
+  assert.equal(readdirSync(dirname(m.link)).includes("automagik-herdr"), false, "no link left behind");
 });
