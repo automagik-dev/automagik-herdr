@@ -9,6 +9,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ledgerPath } from "../mods/spaces-agents/workers.js";
 import { OURS, commandFor, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/spaces-agents/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, foldersOf, knownProjects, migrateHooks, relink, retargetHooks, revertHooks, syncHooks, toStable,
@@ -231,13 +232,15 @@ function botHome(t) {
   const bin = join(s.root, "bin");
   write(join(bin, "hc"), FAKE_HC);
   chmodSync(join(bin, "hc"), 0o755);
+  // Run once before any timing: macOS checks a new executable on its first run, which can take
+  // longer than briefing.mjs's 1.5 s per call. The 2 s criterion is about the hook, not that check.
+  execFileSync(join(bin, "hc"), ["ls"]);
   /** The hook as Claude Code runs it: `sh -c <command>` in the project, stdin the event, then closed. */
-  const hook = (command) => {
+  const hook = (command, { input = "{}", appHome = true } = {}) => {
     const started = Date.now();
-    const r = spawnSync("sh", ["-c", command], {
-      cwd: proj, input: "{}", encoding: "utf8",
-      env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, HOME: s.root, HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: proj, HERDR_APP_HOME: s.app },
-    });
+    const env = { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, HOME: s.root, HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: proj };
+    if (appHome) env.HERDR_APP_HOME = s.app;
+    const r = spawnSync("sh", ["-c", command], { cwd: proj, input, encoding: "utf8", env });
     return { ...r, ms: Date.now() - started };
   };
   return { ...s, proj, worker: join(proj, ".claude", "worktrees", "w1"), hook };
@@ -255,10 +258,15 @@ test("acceptance: a v0.2.0 hook is moved and backed up; through the new command 
   assert.equal(command, hookCommand(s.app));
   const run = s.hook(command);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^<herdr-bot>\n/);
+  assert.match(run.stdout, /^<herdr-bot>\n/, `${run.ms} ms, stderr: ${run.stderr}`);
   assert.match(run.stdout, /You are Genie, this project's main bot/);
   assert.equal(run.stderr, "");
   assert.ok(run.ms < 2000, `the block took ${run.ms} ms`);
+  // As Claude Code runs it, with no HERDR_APP_HOME: the script finds its app home from its own
+  // place, so the session it records lands in this scratch app home's ledger.
+  const bare = s.hook(command, { appHome: false, input: JSON.stringify({ session_id: "s-1" }) });
+  assert.match(bare.stdout, /You are Genie/);
+  assert.match(read(ledgerPath(s.app)), /"session":"s-1"/);
 });
 
 test("acceptance: after a later folder rename (simulated), the same hook still runs; a rollback to v0.3 puts v0.3's path back", (t) => {
@@ -350,7 +358,8 @@ test("update.mjs: install across the rename moves the hooks; rollback to v0.3 pu
   assert.deepEqual(commands(settings(s.proj)), ["brain recall", hookCommand(s.app)]);
   assert.deepEqual(commands(settings(s.worker)), [hookCommand(s.app)], "the worker's worktree too");
   assert.match(installed.stderr, /\/hooks there once/);
-  assert.match(s.hook(hookCommand(s.app)).stdout, /You are Genie/, "the hook runs am-sidebar's briefing");
+  const viaEntry = s.hook(hookCommand(s.app));
+  assert.match(viaEntry.stdout, /You are Genie/, `the hook runs am-sidebar's briefing (${viaEntry.ms} ms, stderr: ${viaEntry.stderr})`);
 
   // install.sh would link the CLI to am-sidebar; the rollback points it back.
   symlinkSync(join(s.mods, "am-sidebar", "bin", "automagik-herdr.mjs"), link);
