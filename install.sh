@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.3.0 or later) instead of the latest
+#   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
 #   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
@@ -111,7 +111,7 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.3.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
 --no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone: install skips it, and
@@ -140,22 +140,29 @@ ask() {
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
 
 # Whether $LINK is a link to the pack's own command in this app home (the sidebar folder's
-# bin/automagik-herdr.mjs, under its old or its am-* name), the only kind this script replaces
-# or removes: a link the person pointed anywhere else stays theirs.
+# bin/automagik-herdr wrapper, which v0.3.5-v0.4.x link, or bin/automagik-herdr.mjs, under its old
+# or its am-* name), the only kind this script replaces or removes: a link the person pointed
+# anywhere else stays theirs.
 link_ours() {
   [ -L "$LINK" ] || return 1
   to=$(readlink "$LINK" 2>/dev/null) || return 1
-  case $to in "$MODS/spaces-agents/bin/automagik-herdr.mjs"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;; esac
+  case $to in
+    "$MODS/spaces-agents/bin/automagik-herdr"|"$MODS/spaces-agents/bin/automagik-herdr.mjs") return 0 ;;
+    "$MODS/am-sidebar/bin/automagik-herdr"|"$MODS/am-sidebar/bin/automagik-herdr.mjs") return 0 ;;
+  esac
   return 1
 }
 
-# The CLI of the sidebar folder the ownership record lists (am-sidebar, else spaces-agents), which
-# the link points at; empty when the record lists neither.
+# The command the link points at, in the sidebar folder the ownership record lists (am-sidebar,
+# else spaces-agents): its bin/automagik-herdr wrapper when the pack ships one (it finds a node
+# where PATH has none), else bin/automagik-herdr.mjs; empty when the record lists neither folder.
 cli_target() {
   case ",$(mark_get mods)," in
-    *,am-sidebar,*) echo "$MODS/am-sidebar/bin/automagik-herdr.mjs" ;;
-    *,spaces-agents,*) echo "$PACK/bin/automagik-herdr.mjs" ;;
+    *,am-sidebar,*) dir=$MODS/am-sidebar/bin ;;
+    *,spaces-agents,*) dir=$PACK/bin ;;
+    *) return 0 ;;
   esac
+  if [ -f "$dir/automagik-herdr" ]; then echo "$dir/automagik-herdr"; else echo "$dir/automagik-herdr.mjs"; fi
 }
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
@@ -190,6 +197,28 @@ offer_switch() {
     say "Herdr didn't switch."
   fi
   HINT=yes
+}
+
+# A layout of the person's own that shows the sidebar (one adapted for a sidebar-only release)
+# doesn't gain the rest of the pack by itself, and this script never edits it: for each such
+# layout, say which pack surfaces it lacks and where to copy them from.
+layout_notes() {
+  [ -f "$REF" ] || return 0
+  for f in "$APP_HOME"/layouts/*.json; do
+    [ -f "$f" ] && [ "$f" != "$LAYOUT" ] || continue
+    grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$f" || continue
+    lacks=
+    for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
+      'md-menu:the Markdown menu (md-menu)' 'automations:the automations panel (automations)' 'am-quota:the quota panel (am-quota)'; do
+      # A block naming the mod ("mod": …), or for md-menu the root's "terminal_menu": an id like
+      # "am-quota-panel" or a mention elsewhere doesn't count.
+      grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
+    done
+    [ -n "$lacks" ] || continue
+    name=${f##*/}
+    say "Your layout ${name%.json} ($f) shows the Automagik sidebar, but not the rest of the pack: $lacks."
+    say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"md-menu\") from the pack's layout, $REF, into it; or use the automagik layout instead."
+  done
 }
 
 switch_hint() {
@@ -432,7 +461,7 @@ install() {
   curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
   # The release names its tarball automagik-herdr-pack-<version>.tgz; SHA256SUMS lists it.
   TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-pack-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
-  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a release before v0.3.0?)."
+  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a sidebar-only release before v0.5.0?)."
   VERSION=${TGZ#automagik-herdr-pack-}
   VERSION=${VERSION%.tgz}
   [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-pack-$WANT.tgz."
@@ -483,10 +512,18 @@ install() {
   fi
   meter_step
   offer_switch
+  layout_notes
 
   # ---- e. the command ----
   mkdir -p "$BIN_DIR"
   target=$(cli_target)
+  # Never a link to nothing: a pack whose sidebar ships no command stops here, and our link, if
+  # it now points at nothing (into the replaced folder), goes rather than dangle.
+  if [ -n "$target" ] && { [ ! -f "$target" ] || [ -L "$target" ]; }; then
+    gone=
+    if link_ours && [ ! -e "$LINK" ]; then rm -f "$LINK" && gone=" Removed $LINK, which pointed at nothing now."; fi
+    fail "the pack is installed, but ${target%/*} has neither automagik-herdr nor automagik-herdr.mjs, so automagik-herdr is not linked.$gone"
+  fi
   if [ -n "$target" ]; then chmod +x "$target"; fi
   if [ -z "$target" ]; then
     say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."
