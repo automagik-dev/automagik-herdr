@@ -1227,9 +1227,10 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   // (bin/automagik-herdr, or only the .mjs before it): the ~/.local/bin link follows, so a
   // rollback never leaves it dangling. Idempotent, never fatal; `--check` changes nothing.
   // `from`: where the link pointed before a rollback, whose own relink (update.mjs moveHooks) may
-  // already have moved it: either way the move is reported.
+  // already have moved it: either way the move is reported. The link is host.binDir's: with an
+  // injected io.modsDir only io.binDir, never this computer's ~/.local/bin.
   const relink = (from = null) => {
-    const binDir = io.binDir ?? binDirOf(io.env ?? process.env);
+    const { binDir } = host;
     try {
       let r = relinkCli({ modsDir: io.modsDir ?? defaultModsDir(io.env ?? process.env), binDir });
       if (!r && from && binDir) {
@@ -1243,8 +1244,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     }
   };
   if (opts.rollback) {
-    const binDir = io.binDir ?? binDirOf(io.env ?? process.env);
-    const before = binDir ? readLink(join(binDir, "automagik-herdr")) : null;
+    const before = host.binDir ? readLink(join(host.binDir, "automagik-herdr")) : null;
     let r;
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
     const { relinked, note } = relink(before);
