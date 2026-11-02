@@ -444,7 +444,7 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - Installed live with `automagik-herdr update` (0.2.0 → 0.2.1; `--rollback` available). `herdr-app check` passed.
   - A screenshot after the install shows the main bot above `omp` in "Automagik Herdr".
 - **Open:**
-  - The hash list stays in dev history. Rewriting it is the owner's call (recommendation: leave it).
+  - The hash list stays in dev history: the owner ruled "leave the hash history" (2026-11-02). v0.2.2 (PR #28) removed it from the tree.
   - The CLI run from inside a non-git child without `--project` still walks up to the parent. This goes to the creation-UX pass.
 
 ## Files to Create/Modify
