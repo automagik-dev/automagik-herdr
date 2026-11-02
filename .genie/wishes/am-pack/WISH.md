@@ -498,6 +498,16 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 3. Open a PR `wish/am-pack` → `dev`, merge it, and verify the release has the pack tarball and `SHA256SUMS`.
 4. Give the owner a click-through checklist.
 
+**Carried from the Group 6a review (LOW; resolve or document before release):**
+- Two rollbacks in a row: the second refuses, because the person's restored folders are in the way. It changes nothing, but you can no longer toggle between the two sets.
+- A v0.2/v0.3-shaped CLI can't roll forward: it looks for `spaces-agents.prev`, so the only path is rerunning install.sh.
+- When spaces-agents is someone else's folder, no updater is installed for the other mods.
+- A rollback leaves the pack keys the installer merged in (`cmd-shift-m → mod.open:mod-manager`). A rollback across a change in the mod list leaves a `--setup`-replaced `automagik.json` naming mods that are gone.
+- An unadopted old `sidebar-chrome` or `space-icon` keeps writing old shared keys that am-sidebar stops reading after its one-time copy.
+- A direct second `update.mjs install` evicts the earlier `.prev` set. install.sh short-circuits this.
+- `--uninstall` doesn't revert rewritten references.
+- Group 7 must switch `PROJECTS_FILE` to `am-sidebar-projects.json` in the same release, update install.sh's hard-coded `spaces-agents` updater path, fix the RECIPE mentions of `mod-manager.installed`, and add `migrate.js` to the AGENTS.md pure list.
+
 **Interfaces:**
 - Consumes: every group.
 - Produces: GitHub release v0.4.0.
@@ -608,6 +618,33 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - the mod manager refuses any link;
   - layout names must match `^[A-Za-z0-9][A-Za-z0-9._-]*\.json$`.
 - **LOW findings left open:** carried to Group 6a.
+
+### Group 6a — rename migration — 2026-11-02 (merged into wish/am-pack, #31, 8b7c044)
+
+- **Security review:** FIX-FIRST, then SHIP.
+  - Round 1 found:
+    - inherited names (`toString`, `__proto__`) corrupted layouts and keys;
+    - a partial failure left a journal out of the record;
+    - revert wrote any journalled path;
+    - the temp-file write followed links;
+    - a symlinked layout lost its link;
+    - one pathological layout stopped the run;
+    - the catalog override was shadowed;
+    - `link_ours` was too broad.
+  - All were fixed in 5fc179e and probed again.
+- **Criteria review:** FIX-FIRST twice, then SHIP.
+  - Round 1: a rollback didn't revert the release's own key edit, because the revert only ran across an am-* twin. Now it reverts per edit, when the mod's pack copy leaves `mods/`.
+  - Round 2: absorbed mods (`space-icon`, `markdown-browser`) weren't restored on a rollback to v0.3.0, because a version cutoff assumed v0.3.0 had absorbed them. Fixed in e7e5269: they are restored by the pack set (no `am-sidebar` or `am-markdown` in the restored set).
+  - Both rounds were verified on real v0.2.2 and v0.3.0-shaped scratch homes. Pocket Link and `shared.json` stayed byte-identical throughout.
+- **Gate:** 482 tests (481 pass, 1 skipped); CI green.
+- **Rulings accepted:**
+  - `migrateHome.mjs` is the impure half;
+  - shared keys are `am.sidebar.*`, `am.space.colors` and `am.markdown.*`;
+  - shims copy once at load;
+  - `--adopt` covers absorbed mods;
+  - `migrated=` is recorded before the first rewrite;
+  - the newest personal catalog URL wins.
+- **LOW items left open:** carried to Group 8.
 
 ### Group 5a — am-markdown — 2026-11-02 (merged, #19)
 
