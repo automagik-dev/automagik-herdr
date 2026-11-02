@@ -241,7 +241,12 @@ node --test 'test/am-quota-*.test.mjs' && for f in mods/am-quota/*.js; do node -
    - an ownership record: the marker lists every folder the installer put in `mods/`. Only listed folders are replaced, updated or rolled back. An old-named folder it didn't install (the owner's hand-installed sidebar-chrome, auto-tabs, …) is reported and left alone, or adopted only on an explicit yes (`--adopt`), which moves it to `<app home>/automagik-herdr/backup/<mod>-<date>/` first. That folder is never replaced, and `--uninstall` and a rollback across the rename restore from it. `.prev/` holds only pack releases. v0.2.0's `spaces-agents.before-install` also moves to `backup/`;
    - a v0.2.0 marker (`layout=added`, `before=…`) is read and carried over, and `--uninstall` handles both marker versions and the layout's new path.
    `scripts/install.mjs` is then deleted.
-4. Tests flipped and added. G11's "layouts holds only automagik.json naming only spaces-agents and stock mods" becomes "the shipped layout names only pack mods and stock mods". Add tests for:
+4. From Group 1's review (2026-11-02), owned here because this group replaces all three install paths (`scripts/install.mjs`, `update.mjs`, the mod manager's `core.js`):
+   - build each new mod folder in a staging dir next to `mods/`, carry the private paths in, then rename into place; on any failure rename the old folder back. Today a failed copy leaves a half-written mod (review probes P2, C4);
+   - a symlinked `.state` stays a link (today the carry-over turns it into a copy, probe C2);
+   - the mod manager installs at the catalog's `headCommit`, not whatever HEAD is;
+   - tests for `install.mjs`, `catalog.mjs` and `core.js`; CI runs `catalog.mjs --check` and `node --check` over every pack mod.
+5. Tests flipped and added. G11's "layouts holds only automagik.json naming only spaces-agents and stock mods" becomes "the shipped layout names only pack mods and stock mods". Add tests for:
    - a v0.2.0-shaped home upgraded by rerunning install.sh (before Group 6, the pack lands beside spaces-agents);
    - old-named folders the installer didn't write are left alone without `--adopt`;
    - adopt, then update twice: the adopted original is still in `backup/`;
@@ -520,6 +525,31 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **f7bfd23: APPROVED.** One builder note, folded in: `apply` writes a change journal that `revert` reads.
 
 ---
+
+### Group 1 — the vendored pack — 2026-11-02 (merged into wish/am-pack, a78a34d)
+
+- PRs #15, #16, #17, #21, #22 and #18, stacked, each within +2,000. Criteria review plus a separate quality review, 2 fix rounds (B 2/2).
+- Round 1, FIX-FIRST:
+  - NOTICE lacked the verbatim MIT notices;
+  - `catalog --check` failed on 3 of 4 slices;
+  - `install.mjs` accepted unknown flags (a probe installed into the live home);
+  - the mod manager `rm -rf`'d `.state` on update and remove, and could remove Pocket Link;
+  - #17 was over the size band; the catalog URL pointed at `main` (404).
+- Round 2:
+  - Pocket Link's on/off switch still moved its folder;
+  - the preflight parsed the pack's keys.json instead of the person's;
+  - the carry-over nested `.state/.state`.
+- Coordinator verification at fe3df28: the reviewers' probes (C3 no nesting; C6 `setEnabled(pocket-link)` refused with the folder in place; single-dash and typo args exit 2; a bad HOME keys.json exits 1 with 0 mods written); gate 296/296; `catalog --check` 0. The merged tree equals the reviewed top.
+- **Rulings:**
+  - `catalog/index.json` lives in the top slice only. Why: each lower slice must pass its own checks. Cost if wrong: none.
+  - The mod manager moves folders aside and refuses `pocket-link` (rulings 10–11 apply to the vendored manager too). Why: it would otherwise repeat the 18:40 incident. Cost if wrong: a small change to a vendored mod.
+  - Staging plus rename, symlinked `.state`, headCommit pinning, the missing tests and CI checks are routed to Group 3 (deliverable 4).
+
+### Group 5a — am-markdown — 2026-11-02 (merged, #19)
+
+- Round 1, FIX-FIRST: the catalog still listed markdown-browser; NOTICE lacked ohneda's copyright; no committed check for criterion 1; docs named `markdown-browser.open`.
+- Round 2: SHIP. `catalog --check` 0 (9 mods); NOTICE matches LICENSE-upstream (`diff` 0); `test/md-menu-faces.test.mjs` 3/3; 299/299. The coordinator verified the doc-only items at 634ecdb.
+- **Ruling:** the stub-runtime test is criterion 1's evidence, and the in-app click-through on a scratch home moves to Group 8. The installed `markdown-browser.open` key binding is Group 6a's.
 
 ## Files to Create/Modify
 
