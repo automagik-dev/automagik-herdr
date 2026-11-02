@@ -102,7 +102,7 @@ automagik-herdr attach <bot> <terminal>
 automagik-herdr detach <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
-       [[--agent A] [--model M] [--effort E] | --template T] [--name N]
+       [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
 automagik-herdr update [--check | --rollback]
 ```
 
@@ -138,8 +138,18 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   checkout is never a worker's folder, and its HEAD is never moved. `/.claude/worktrees/` goes
   into the clone's own git exclude, so `git add -A` in the main checkout never picks a
   worktree up.
-- **One per task:** a bot gets one live worker per task. A second `worker` for the same bot
-  and branch is refused and names the live one; other bots' workers may share the task.
+- **Role:** `--role dev|test|review|fix` says what the worker does. Without it the role comes
+  from the bot's rank: `tester` runs `test`, `reviewer` runs `review`, `fixer` runs `fix`,
+  any other rank (or none) runs `dev`. A captain passes `--role`. Another value exits 2.
+- **One writer per worktree:** `dev`, `test` and `fix` write to the worktree; `review`
+  never does. A writer is refused while any live worker of any bot on this computer is in the
+  same worktree (its cwd, as a real path) with a writer role; a worker with no `worker.role`
+  label (started before roles) counts as a writer. Reviewers start alongside a writer, and
+  several may run at once; one bot's second reviewer on the same branch is refused, while its
+  reviewers on other branches run in parallel. A refusal names the live worker, to check with
+  `hc read` or end with `hc kill`. The check and the start run under one lock per worktree
+  (`<app home>/automagik-herdr/worktree-<hash of its real path>.lock`); the lock and the check
+  are local, so workers on other machines are not counted.
 - **What runs:** `--agent`, `--model` and `--effort` for this task, else the bot's `worker`
   defaults in `.herdr/bots.json`, else the bot's own agent with that agent's defaults. A
   default model belongs to the default worker agent, so a task that picks another agent
@@ -157,8 +167,8 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   would start an unlisted name as a program). An empty `--template=` is refused. A template
   whose command runs `claude` gets the session hook; when
   the command names no agent Herdr knows, the hook is skipped with a warning.
-- **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled
-  `worker.of=<bot id>`, `task=<branch>`, `worker.model` and `worker.effort`, then
+- **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled `worker.of=<bot id>`,
+  `task=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`, then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
   on) start. A template runs in hc's template form, `<template> <task text>` after the
@@ -168,16 +178,17 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   or its model and effort. Clicking that row focuses the worker's pane; without one, the
   worker opens as a tab right after its bot's tab, named after its task branch. A bot with no
   pane, or a worker on another machine, is peeked instead.
-- **Output:** the worker's terminal, then its worktree, branch, and agent, model and effort,
-  or its template (`--json`: the same as data, with `template`).
+- **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
+  effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
   once the task merges. The bot's briefing says so every turn. As an hc child, a worker
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
-  terminal, pid, botId, task, worktree, agent, model, effort, template, at }` (`at` is ISO
-  8601; a seat's `task` is null). `template` is new in this release: the hc template a
-  worker runs, else null (seats and agent workers; rows written before it have no such key).
+  terminal, pid, botId, task, worktree, agent, model, effort, template, role, at }` (`at` is
+  ISO 8601; a seat's `task` is null). `template` is the hc template a worker runs, else null
+  (seats and agent workers). `role` is new in this release: the worker's role, null for a
+  seat. Rows written before a field have no such key.
   When a template runs, `agent`, `model` and `effort` are null: the template sets them. The
   briefing hook appends `{ event: "session", terminal, session, transcript, at }` and sets the terminal's `agent.session` label when a Claude session
   changes. A session row can repeat when the label write fails, so consumers dedupe session
@@ -277,8 +288,8 @@ newest when there are several.
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
-- `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `integrator`, `pm`,
-  `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
+- `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `fixer`, `integrator`,
+  `pm`, `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
   rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
   to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
   for team members; `automagik-herdr create|edit --rank R` sets one (`--rank=` clears it).

@@ -11,15 +11,38 @@ import { TEMPLATE_SHAPE } from "./model.js";
 export { TEMPLATE_SHAPE };
 
 // The usage-tagging contract (usagemeter reads these): a worker terminal carries
-// `worker.of=<botId>` and `task=<branch>`, and its cwd is the task worktree.
+// `worker.of=<botId>`, `task=<branch>` and `worker.role=<role>`, and its cwd is the task worktree.
 export const WORKER_OF_LABEL = "worker.of";
 export const TASK_LABEL = "task";
+/** What a worker does in its worktree: one of ROLES. */
+export const WORKER_ROLE_LABEL = "worker.role";
 export const WORKER_MODEL_LABEL = "worker.model";
 export const WORKER_EFFORT_LABEL = "worker.effort";
 /** The hc template a worker runs (`--template`, or the bot's `worker.template`). */
 export const WORKER_TEMPLATE_LABEL = "worker.template";
 /** The Claude session a terminal runs, set by the briefing hook when it changes. */
 export const SESSION_LABEL = "agent.session";
+
+/** A worker's roles. Dev, test and fix write to the worktree; review never does. */
+export const ROLES = ["dev", "test", "review", "fix"];
+export const WRITER_ROLES = ["dev", "test", "fix"];
+const ROLE_OF_RANK = { tester: "test", reviewer: "review", fixer: "fix" };
+
+/**
+ * A worker's role: `given` (--role) when it is one of ROLES, else from the bot's rank
+ * (tester: test, reviewer: review, fixer: fix, any other rank or none: dev). { role } or { error }.
+ */
+export function workerRole(bot, given) {
+  if (given === undefined || given === null) return { role: ROLE_OF_RANK[bot?.rank] ?? "dev" };
+  if (ROLES.includes(given)) return { role: given };
+  return { error: `--role is one of ${ROLES.join(", ")}, not "${given}".` };
+}
+
+/**
+ * Whether a live worker's labels make it a writer: a writer role, or no role label at all
+ * (a worker started before roles holds its worktree until it ends).
+ */
+export const writesWorktree = (labels) => labels?.[WORKER_ROLE_LABEL] !== "review";
 
 /** A value the agent would read as an option (a model, a task text starting with a dash). */
 export const optionLike = (value) => typeof value === "string" && value.trimStart().startsWith("-");
@@ -96,10 +119,11 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * `template` runs in hc's documented template form, `<template> <task>` after the options,
  * with no `--` (neither starts with a dash: both are refused before): it sets its own command.
  */
-export function workerArgs({ botId, branch, name, cwd, parent, agent, model, effort, argv, task, template, path }) {
+export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`);
+  if (role) args.push("--label", `${WORKER_ROLE_LABEL}=${role}`);
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
@@ -178,12 +202,13 @@ const orNull = (x) => (x === undefined || x === "" ? null : x);
  * A start row: a worker (`kind: "worker"`, `task` its branch, `worktree` its cwd) or a bot
  * seat (`kind: "seat"`, from start and attach; `task` null, `worktree` its folder). `pid` is
  * the terminal's foreground pid when hc gave one. `template`: the hc template a worker runs
- * (its agent, model and effort are then null: the template sets them), else null.
+ * (its agent, model and effort are then null: the template sets them), else null. `role`: a
+ * worker's role (ROLES); null for a seat.
  */
-export function startRow({ kind, terminal, pid, botId, task, worktree, agent, model, effort, template, at }) {
+export function startRow({ kind, terminal, pid, botId, task, worktree, agent, model, effort, template, role, at }) {
   return { event: "start", kind, terminal, pid: Number.isInteger(pid) ? pid : null, botId, task: orNull(task),
     worktree: orNull(worktree), agent: orNull(agent), model: orNull(model), effort: orNull(effort), template: orNull(template),
-    at: stamp(at) };
+    role: orNull(role), at: stamp(at) };
 }
 
 /** A session row: the Claude session (and its transcript) a terminal now runs. */
