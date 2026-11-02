@@ -50,6 +50,19 @@
               "min": 140,
               "hidden": true,
               "children": []
+            },
+            {
+              "id": "am-quota-panel",
+              "type": "block",
+              "content": {
+                "mod": "am-quota"
+              },
+              "size": {
+                "weight": 1
+              },
+              "min": 140,
+              "hidden": true,
+              "children": []
             }
           ]
         },

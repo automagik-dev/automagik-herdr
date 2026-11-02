@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-02T13:48:55.383Z",
-  "modCount": 9,
+  "generatedAt": "2026-11-02T14:15:25.194Z",
+  "modCount": 10,
   "repositoryCount": 3,
   "source": "automagik-herdr",
   "mods": [
@@ -12,12 +12,13 @@
       "url": "https://github.com/automagik-dev/automagik-herdr",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-02T10:47:57-03:00",
+      "pushedAt": "2026-11-02T11:02:37-03:00",
       "headCommit": "",
       "path": "",
       "name": "Automagik Herdr",
       "blurb": "Autonomous teams of coding agents across harnesses (Claude Code, Codex, Gemini, Kimi, Oh My Pi…)",
       "modNames": [
+        "am-quota",
         "auto-tabs",
         "automations",
         "md-menu",
@@ -33,6 +34,11 @@
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
+        {
+          "name": "am-quota",
+          "title": "Automagik Quota",
+          "blurb": "The quota each Claude Code and Codex account has left, side by side. The left sidebar panel lists every account the CLIProxyAPI knows, with its usage windows, and names the handoff the rule would make before a window runs dry — no proxy in the traffic path, no rewiring. This pane"
+        },
         {
           "name": "auto-tabs",
           "title": "Auto tabs",
