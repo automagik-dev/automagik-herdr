@@ -455,6 +455,7 @@ test("install, update, rollback, uninstall: a planted pocket-link stays byte-ide
   const sum = treeSum(pocket);
   s.addHerdrApp();
   s.publish("9.9.0");
+  s.publishMeter();
   assert.equal(s.run("--yes").code, 0);
   assert.equal(s.checks().length, PACK_MODS.length, "herdr-app check on every pack mod");
   assert.equal(s.checks().some((c) => c.includes("pocket-link")), false);
@@ -467,6 +468,8 @@ test("install, update, rollback, uninstall: a planted pocket-link stays byte-ide
   assert.equal(back.status, 0, back.stderr);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.match(s.mark(), /^version=9\.9\.0$/m);
+  // The record's usagemeter line survives update.mjs's update and rollback (Group 6c).
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
   assert.equal(treeSum(pocket), sum, "after rollback");
   assert.equal(s.run("--uninstall").code, 0);
   assert.deepEqual(readdirSync(s.mods), ["pocket-link"]);
