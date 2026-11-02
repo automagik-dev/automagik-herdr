@@ -5,15 +5,20 @@
 // modules. Fail-open: it prints nothing and exits 0 unless HC_TERMINAL_ID's terminal carries
 // a `bot` label defined in the project $CLAUDE_PROJECT_DIR keys to; on an error it prints one
 // stderr line and still exits 0.
+// It also ties a Claude session to its terminal for usagemeter, bot or worker alike: when the
+// hook's stdin names a session_id the terminal's agent.session label doesn't hold yet, it
+// appends a session row to the workers ledger and sets the label (once per change). That part
+// never fails the hook and never changes the briefing.
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { closeSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf } from "./launchArgs.js";
 import { briefingText, directMembers, latestReport } from "./briefingText.mjs";
+import { SESSION_LABEL, ledgerLine, ledgerPath, sessionChange, sessionRow } from "./workers.js";
 
 // About two seconds in all (the hook's limit is five): no hc call waits more than 1.5 s,
 // none starts after the 2 s budget, a call that runs out counts as unreachable, and a last
@@ -89,11 +94,12 @@ export async function gatherBriefing({ file, bot, address, ask }) {
   return briefingText({ self: bot, file, members, lead, helpers });
 }
 
-async function main() {
+// `me`: the pending `hc get` of HC_TERMINAL_ID, shared with joinSession.
+async function main(mePending) {
   const self = process.env.HC_TERMINAL_ID;
   const dir = process.env.CLAUDE_PROJECT_DIR;
   if (!self || !dir) return null;
-  const [me, key] = await Promise.all([hcJson(["get", self]), projectKeyOf(dir, git, exists)]);
+  const [me, key] = await Promise.all([mePending, projectKeyOf(dir, git, exists)]);
   if (hcMissing) throw new Error("hc is not on PATH");
   const botId = me && me !== UNANSWERED ? me.labels?.[BOT_LABEL] : null;
   if (!botId) return null;
@@ -117,6 +123,48 @@ async function helpersOf(all, address, known, ask) {
     .map((r) => ({ status: typeof r.status === "string" ? r.status : r.status?.state }));
 }
 
+// The hook's stdin (Claude Code's JSON, with session_id and transcript_path), or "" when
+// none comes within `ms` (a caller that never closes stdin can't hold the hook). Claude Code
+// closes it at once, so INPUT_MS is never scaled: it only bounds such a caller.
+const INPUT_MS = 300;
+function readInput(ms) {
+  if (process.stdin.isTTY) return Promise.resolve("");
+  return new Promise((resolve) => {
+    let text = "";
+    let timer = null;
+    const done = () => { clearTimeout(timer); process.stdin.removeAllListeners("data"); process.stdin.destroy(); resolve(text); };
+    timer = setTimeout(done, ms);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (d) => { text += d; if (text.length > 1_000_000) done(); });
+    process.stdin.on("end", done);
+    process.stdin.on("error", done);
+  });
+}
+
+/**
+ * Ties the Claude session in the hook's `input` to terminal `me` (its `hc get`) once per
+ * change: a session row appended to the ledger under `appHome`, then the agent.session label
+ * set (a failed label means the row comes again next turn, never a lost one). Never rejects;
+ * resolves with whether the session was new.
+ */
+export async function joinSession(self, me, input, appHome) {
+  try {
+    if (!me || me === UNANSWERED) return false;
+    const change = sessionChange(me, input);
+    if (!change) return false;
+    const terminal = me.address ?? self;
+    const path = ledgerPath(appHome);
+    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    const fd = openSync(path, "a");
+    try { writeSync(fd, ledgerLine(sessionRow({ terminal, ...change }))); } finally { closeSync(fd); }
+    await run("hc", ["label", terminal, `${SESSION_LABEL}=${change.session}`]);
+    return true;
+  } catch { return false; }
+}
+
+// The app home this script is installed in (<app home>/mods/spaces-agents/briefing.mjs).
+const appHomeOf = () => process.env.HERDR_APP_HOME || fileURLToPath(new URL("../..", import.meta.url)).replace(/\/+$/, "");
+
 // Run as the hook (node briefing.mjs), not when the CLI imports gatherBriefing.
 const invoked = (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href; } catch { return null; } })();
 if (import.meta.url === invoked) {
@@ -125,8 +173,12 @@ if (import.meta.url === invoked) {
   callMs = CALL_MS * scale;
   const guard = setTimeout(() => process.exit(0), GUARD_MS * scale);
   guard.unref();
+  const self = process.env.HC_TERMINAL_ID;
+  const me = self ? hcJson(["get", self]) : Promise.resolve(null);
+  const joined = self ? Promise.all([me, readInput(INPUT_MS)]).then(([get, input]) => joinSession(self, get, input, appHomeOf()), () => false)
+    : Promise.resolve(false);
   try {
-    const text = await main();
+    const text = await main(me);
     // Past this point the block is on its way: the guard must not cut the write short.
     clearTimeout(guard);
     if (text) process.stdout.write(`${text}\n`);
@@ -135,5 +187,6 @@ if (import.meta.url === invoked) {
     clearTimeout(guard);
     process.stderr.write(`automagik-herdr briefing: ${String(e?.message ?? e).split("\n")[0]}\n`);
   }
+  await joined;
   process.exitCode = 0;
 }

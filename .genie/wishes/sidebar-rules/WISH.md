@@ -52,7 +52,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| D1 | **Release split.** Before am-pack's v0.3.0 lands, `dev` takes only `fix` commits. R3 (row order) ships first as ONE `fix` PR to `dev` (Group 1). Everything else is `feat` and lands in `wish/am-pack` AFTER am-pack Group 7 (the am-* rename). Those groups are written against the final names: `am-sidebar`, `am-sidebar-projects.json`, `am.*` keys. Their depends-on includes "am-pack Group 7". | A `feat` on `dev` cuts v0.3.0 (`scripts/version.mjs:108`), which am-pack reserves. Writing tidy against the final names means am-pack Group 6a never has to migrate tidy's data. The owner may override this to "ship as v0.4.0 after am-pack" (see Risks). |
+| D1 | **Release split.** Before am-pack's v0.4.0 lands, `dev` takes only `fix` commits. R3 (row order) ships first as ONE `fix` PR to `dev` (Group 1). Everything else is `feat` and lands in `wish/am-pack` AFTER am-pack Group 7 (the am-* rename). Those groups are written against the final names: `am-sidebar`, `am-sidebar-projects.json`, `am.*` keys. Their depends-on includes "am-pack Group 7". | A `feat` on `dev` cuts v0.4.0 (`scripts/version.mjs:108`), which am-pack reserves. Writing tidy against the final names means am-pack Group 6a never has to migrate tidy's data. The owner may override this to "ship as v0.4.0 after am-pack" (see Risks). |
 | D2 | **R3 adopted in full.** Row order inside a space: the main bot; categories in bots.json order, each with captains, then members by rank; each bot's helpers dashed beneath it; then plain agents not tied to a bot; then shells. A bot is never drawn below a plain agent. It is a pure ordering function in `rows.js`, tested over a recorded fixture. | Drift 6 comes from `main.js` `grouped()`: `draw` puts `agentRows` before `treeAfter`. One pure function makes the order testable and stops it drifting again. |
 | D3 | **R6 is mostly hc's default already.** `hc run --help` says `--parent` defaults to the terminal it is started from. The deliverable shrinks to one briefing line telling a bot to spawn helpers from its own pane, plus tidy reporting orphan helpers. | Drift 7 comes from spawns made outside the bot's pane, `--no-parent`, or attach not re-parenting. Re-parenting a running terminal is issue #9 (hc upstream), out of scope. |
 | D4 | **R4 adapted.** `where` is Herdr's own label; the pack cannot make it display-only. The pack ignores `where` for placement. The project key (git main checkout) decides the project. Start and Attach write `herdr.space` to the project's space. | One placement truth the pack controls. `where` is free text and goes stale when a space is renamed (t1m: "brain-v3" vs "review-243"). |
@@ -65,6 +65,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 | D11 | **A pending owner decision is a pane label.** A main bot that waits on the owner sets `automagik-herdr.needs-owner=<short text>` on its own pane with `hc label`, and removes it once answered. One briefing line tells main bots this (Group 3b). | There is no other primitive for "a decision waiting". A label is visible to the sidebar's single hc read, needs no new process, and the main bot controls it. |
 | D12 | **Owner gestures move Herdr's order too.** A drag writes the manual order to `am.sidebar.order` and switches the mode to manual. It then moves only the dragged space with `space.move`. The index comes from the dropped-on neighbour's position in `spaces()` (just after the space now above it in the base order), never from a row index. Pin, unpin and a mode switch are owner gestures as well: each runs the `space.move` calls that bring Herdr's order to the new base order (pins + mode, no float). ⌘N is not row N for spaces the float or Start reorder, until the next `tidy --apply`. | The owner's own gesture in the sidebar is the owner acting, so these `space.move` calls are allowed and keep ⌘1-9 in step. Today's handler (`main.js:973`) indexes `spaces()` by row index, which is wrong once the sidebar sorts. |
 | D13 | **Line 2 is 24-hour output, and first-pass needs a verdict log** (owner, 2026-11-02; this replaces the provider bar). It shows merges per hour with failure ticks, the merged count without chores, the median time from first commit to merge, and the first-pass SHIP rate. Main bots record each independent review verdict with `automagik-herdr verdict`, as append-only JSON lines under `<app home>/automagik-herdr/verdicts/`. | The owner judges a project by what it ships, not by which provider ran. PR-open → merge is ~15 minutes everywhere, because agents open PRs late, so the first commit is the honest start. No forge stores "first review said SHIP", so it has to be recorded where reviews happen. The log lives in the app home, not in the repo, so it never blocks a `git pull` (issue #6). |
+| D14 | **A space is always its project's top level** (owner, 2026-11-02). A space's folder is the main checkout of the project its bots belong to (a git main checkout, or the folder that holds `.herdr/bots.json`), or that project's worktree for a worktree space. A missing folder, a subfolder, or another project's folder is drift. Herdr can't change a space's folder, so the fix is to recreate the space on the right folder and move its panes over. The folder-icon row for a remembered project with no space becomes an "Open space for <name>" action. Squads are display-only: categories in bots.json are the one way to group a team, and `where` is never read. | On 2026-11-02 three spaces pointed at the wrong folder (Automagik Pocket and cadu at brain-v3; General Orchestrator at a deleted folder) and were recreated by hand. A space on the wrong folder starts new terminals in the wrong repo. |
 | D14 | **Estimates.** Group 1 ~3 h; Group 2 ~6 h; Group 3a ~6 h; Group 3b ~5 h; Group 4 ~8 h; Group 5 ~13 h (it was ~10 h before line 2 changed). The total is ~41 focused agent-hours. | The estimates are in focused agent-hours, not calendar time. Groups 2 and 3a run in parallel, and so do Groups 4 and 5. |
 
 ## Simplicity Case
@@ -91,7 +92,7 @@ Every rule is a pure function, tested over fixtures recorded from today's messy 
 **depends-on:** none
 **blocks:** am-pack
 
-Groups 2–5 land in `wish/am-pack` and ship with v0.3.0, so this wish blocks am-pack Group 8 (the release). They also need am-pack Group 7 (the rename); that is a group-level dependency, stated on each group, and not listed above because the wish graph allows no cycle. Group 1 ships now, alone, as v0.2.1 (owner, 2026-11-02).
+Groups 2–5 land in `wish/am-pack` and ship with v0.4.0, so this wish blocks am-pack Group 8 (the release). They also need am-pack Group 7 (the rename); that is a group-level dependency, stated on each group, and not listed above because the wish graph allows no cycle. Group 1 ships now, alone, as v0.2.1 (owner, 2026-11-02).
 
 ## Success Criteria
 
@@ -183,7 +184,7 @@ node --test test/row-order.test.mjs && node --test 'test/*.test.mjs' && for f in
 **Goal:** `automagik-herdr tidy` reports every drift as a plan and changes nothing; start, attach and create fix only what the owner can't see.
 
 **Deliverables:**
-1. `mods/am-sidebar/tidy.js`, pure: `plan(state) → Action[]`. It imports only other pure modules (it may import `order.js`, which is pure too). Rules in this group: stale registry entries (a key whose folder is gone, issue #11); bot pane labels (`role=`, `category=`, `herdr.space`) that disagree with bots.json and the project's space; strays (a pane whose project key differs from its space's project); duplicate spaces for one project (their panes move into the canonical space, the project's oldest); spaces that are already empty; worktree spaces no seat needs (reported); orphan helpers (a helper whose hc parent is not its bot's pane, D3, reported); a `automagik-herdr.needs-owner` label older than a day (reported); a project with live bots and no space.
+1. `mods/am-sidebar/tidy.js`, pure: `plan(state) → Action[]`. It imports only other pure modules (it may import `order.js`, which is pure too). Rules in this group: stale registry entries (a key whose folder is gone, issue #11); bot pane labels (`role=`, `category=`, `herdr.space`) that disagree with bots.json and the project's space; strays (a pane whose project key differs from its space's project); duplicate spaces for one project (their panes move into the canonical space, the project's oldest); spaces that are already empty; worktree spaces no seat needs (reported); orphan helpers (a helper whose hc parent is not its bot's pane, D3, reported); a `automagik-herdr.needs-owner` label older than a day (reported); a project with live bots and no space; a space whose folder is missing, is not a project top level, or belongs to another project than its bots (D14).
 2. `mods/am-sidebar/bin/state.mjs`: `readState()` builds `State` with one `hc ls --json`, one `hc get` per bot-labelled pane, one `herdr-app ls`, the bots.json files and `am-sidebar-projects.json`.
 3. `automagik-herdr tidy` prints the plan in plain lines, grouped visual / non-visual; `--json` prints `Action[]`. It writes nothing.
 4. Start, attach and create run `plan(readState())` and apply only `visual: false` actions: registry prune (rewrite `am-sidebar-projects.json`) and relabel (`hc label`). Failures become warnings, never a failed command.
@@ -191,10 +192,11 @@ node --test test/row-order.test.mjs && node --test 'test/*.test.mjs' && for f in
 
 **Interfaces:**
 - Consumes: Group 1's `State` and fixtures; `projectKeyOf` (model.js); `PROJECTS_FILE` as `am-sidebar-projects.json` after am-pack Group 7.
-- Produces: `Action = { kind, visual: boolean, why: string, ... }` with kinds `prune-registry {key}`, `relabel {terminal, set: Record<string,string>}` (non-visual); `move-pane {terminal, from: {machine, space, tab}, to: {machine, space, tab}, reason: "stray"|"duplicate"}`, `close-space {space}` (only a space already empty), `rename-space {space, from, to}`, `create-space {key, machine, folder, name}`, `order-spaces {ids: string[]}` (visual); `report {kind: "orphan-helper"|"foreign"|"stale-worktree-space"|"stale-needs-owner"|"cross-machine", terminal?, space?, note}` (never acted on). `plan(state: State, opts: {now: number, home: string, appHome: string}) → Action[]`; `readState() → Promise<State>`.
+- Produces: `Action = { kind, visual: boolean, why: string, ... }` with kinds `prune-registry {key}`, `relabel {terminal, set: Record<string,string>}` (non-visual); `move-pane {terminal, from: {machine, space, tab}, to: {machine, space, tab}, reason: "stray"|"duplicate"}`, `close-space {space}` (only a space already empty), `rename-space {space, from, to}`, `create-space {key, machine, folder, name}`, `recreate-space {space, from: string, to: string, name}` (D14: a new space on the right folder, the old one's panes moved into it), `order-spaces {ids: string[]}` (visual); `report {kind: "orphan-helper"|"foreign"|"stale-worktree-space"|"stale-needs-owner"|"cross-machine", terminal?, space?, note}` (never acted on). `plan(state: State, opts: {now: number, home: string, appHome: string}) → Action[]`; `readState() → Promise<State>`.
 
 **Acceptance Criteria:**
 - [ ] On the fixtures, the plan names drifts 2–7 of the request (each that applies to the recorded state) and the stale `~/workspace/repos/orchestrator` registry entry.
+- [ ] A fixture with today's three wrong spaces (a folder that is gone; a project's space on another repo's folder; a plain folder's space on a git repo) plans one `recreate-space` each, with the right folder.
 - [ ] `tidy` and `tidy --json` change no file, label or window (checked against fake hc and a fake `herdr-app`).
 - [ ] Running the non-visual fixes twice: the second run does nothing.
 - [ ] The recorded fixtures still give the golden order.
@@ -215,7 +217,7 @@ node --test test/tidy.test.mjs && node --test 'test/*.test.mjs' && for f in mods
 **Deliverables:**
 1. `model.js`: `parseBots` keeps an optional top-level `name` (a non-empty string; anything else is left out with a warning). `displayNameOf(file, key)` returns it, else the main checkout's folder name.
 2. A new pure `order.js`: `needsOwner(space, state)` per D9 (hc status `blocked` or `error`, which covers failed automation runs, `state.screen`, the needs-owner label), and `spaceOrder(rows, prefs, state)` per D6 and D9: floats first (oldest need first), then pins in their order, then the rest by mode (alpha: projects with bots by display name, then spaces without bots by name; manual: `prefs.manual`, unknown slots last by name). Remote machines group per machine; worktree spaces stay under their main checkout.
-3. `main.js`: `ordered()` uses `spaceOrder`; `row()` is not changed (D10). With no `am.sidebar.order`, the prefs are seeded in manual mode from Herdr's current order (D6). The space menu gets "Pin to top" / "Unpin" and "Sort spaces: Alphabetical / Manual". Drag, pin, unpin and mode switches follow D12.
+3. `main.js`: `ordered()` uses `spaceOrder`; `row()` is not changed (D10). With no `am.sidebar.order`, the prefs are seeded in manual mode from Herdr's current order (D6). The space menu gets "Pin to top" / "Unpin" and "Sort spaces: Alphabetical / Manual". A remembered project with no space draws as "Open space for <display name>", which runs `space.new` on its top-level folder (D14). Drag, pin, unpin and mode switches follow D12.
 4. `test/order.test.mjs`: golden space order per fixture and per mode; a blocked fixture floats, and the same fixture with the status cleared returns to its slot.
 
 **Interfaces:**
@@ -250,7 +252,7 @@ node --test test/order.test.mjs && node --test 'test/*.test.mjs' && for f in mod
 4. `briefingText.mjs`, three lines, all inside the 9,900-character cap:
    - a bot starts helpers from its own pane (hc's default `--parent`, D3);
    - a main bot sets and clears `automagik-herdr.needs-owner` (D11);
-   - a main bot records each independent review verdict with `automagik-herdr verdict` (D13; the command itself is Group 5's, and both ship in v0.3.0).
+   - a main bot records each independent review verdict with `automagik-herdr verdict` (D13; the command itself is Group 5's, and both ship in v0.4.0).
 5. `test/placement.test.mjs`, with fake hc and fake `herdr-app`: placement by key; space creation on Start and on Attach; the three briefing lines; the new plan rules on the fixtures.
 
 **Interfaces:**
@@ -277,7 +279,7 @@ node --test test/placement.test.mjs && node --test 'test/*.test.mjs' && for f in
 **Goal:** `automagik-herdr tidy --apply` makes the window match the rules, safely, and reports every change.
 
 **Deliverables:**
-1. `mods/am-sidebar/tidy-apply.js` holds `apply`; the CLI gets a one-line dispatch for `--apply`. It prints the plan first, then runs the visual actions in this order: create spaces, move panes, rename, close spaces, order spaces.
+1. `mods/am-sidebar/tidy-apply.js` holds `apply`; the CLI gets a one-line dispatch for `--apply`. It prints the plan first, then runs the visual actions in this order: create spaces, recreate spaces (D14: new space on the right folder, then each pane park → keep into it, the same steps as a move; the old space disappears once its last pane is parked), move panes, rename, close spaces, order spaces.
 2. Moving a pane (`move-pane`, a stray or a duplicate space's pane):
    - refuse a move across machines (a `report` line);
    - select the pane's space and tab (`space.select`, `tab.select`), then confirm with one `herdr-app ls` read that the selection took effect; if not, report and skip;
@@ -290,12 +292,18 @@ node --test test/placement.test.mjs && node --test 'test/*.test.mjs' && for f in
 5. A report of every change, printed at the end (and as data with `--json`).
 6. `test/tidy-apply.test.mjs` with a fake `io`; then a scratch-window end-to-end check (a Herdr window on a scratch `HERDR_APP_HOME`, no live owner window), set up from a fixture; then one owner-approved run on the real window.
 
+**Carried from the Group 2 review (before `--apply` runs a recreate):**
+- A space on `$HOME` that holds a bot: move only the bot pane, as a stray, and keep the home space with its plain shells. Recreating would move the owner's shells too.
+- Skip a `recreate-space` whose `from` equals its `to`, so a project keyed at `$HOME` can't be recreated on every run.
+- An ambiguous pane with a gone parent is also reported as `orphan-helper`; drop that second report.
+
 **Interfaces:**
 - Consumes: Group 2's `plan`, `Action`, `readState`; Group 3b's rename and order rules and `ensureSpace`.
 - Produces: `apply(actions: Action[], io: { exec(cmd: "herdr-app"|"hc", args: string[]) → Promise<{code, stdout}>, read() → Promise<State> }) → { done: Action[], skipped: {action, reason, recovery?}[] }` in `tidy-apply.js`.
 
 **Acceptance Criteria:**
 - [ ] On the scratch window, `--apply` ends with one space per project, named by display name, in the sidebar's order; a second `--apply` plans nothing.
+- [ ] A space on the wrong folder ends recreated on its project's top level with all its panes; a second `--apply` plans nothing.
 - [ ] A park that returns `{pending:true}` is reported and skipped, never retried in a loop.
 - [ ] A keep that fails after a park is reported with the terminal id and the recovery command (tested with a fake `herdr-app`).
 - [ ] A duplicate space's panes end in the canonical space; no `space.close` runs on a space that still has panes; a cross-machine move is refused.
@@ -396,7 +404,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| The owner overrides D1 to "ship as v0.4.0 after am-pack" | Medium | Groups 2–5 are written against the am-* names either way; only their PR base changes, to `dev` after v0.3.0 |
+| The owner overrides D1 to "ship as v0.4.0 after am-pack" | Medium | Groups 2–5 are written against the am-* names either way; only their PR base changes, to `dev` after v0.4.0 |
 | A `feat` lands on `dev` before Group 1 merges and v0.2.1 becomes 0.3.0 | High | Group 1's validation checks `version.mjs next` = 0.2.1 on its branch; merge it first |
 | Group 1 edits `mods/spaces-agents/main.js` and `rows.js`, which am-pack Group 7 renames | Medium | Merge `dev` (with Group 1) into `wish/am-pack` BEFORE am-pack Group 7(a)'s `git mv`, so the edits move with the folder; git's rename detection on the 57 KB `main.js` is not relied on |
 | `scripts/themes.mjs` exists only on `wish/am-pack`, not on `dev` | Low | Group 1's gate guards that check; Groups 2–5 run it as is |
@@ -424,7 +432,7 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 ### Plan review — 2026-11-02
 
-- Owner approved (in this pane): Group 1 ships now as v0.2.1 on dev; Groups 2–5 ship with am-pack v0.3.0.
+- Owner approved (in this pane): Group 1 ships now as v0.2.1 on dev; Groups 2–5 ship with am-pack v0.4.0.
 - Independent plan review, round 1: FIX-FIRST, 18 findings (4 high: duplicate spaces and park/keep recovery in tidy --apply, files shared between Groups 4 and 5, am-pack Group 8 not waiting for this wish). All applied at b15ce30.
 - Round 2: FIX-FIRST, 8 text findings. Applied, and verified by the coordinator against the text (budget 2/2).
 - **Ruling:** a failed automation run is not a separate needs-owner source. Its run terminal carries `automation=<name>` and shows hc `error`, which the error source already covers. Cost if wrong: one field and a reader in Group 3a.
@@ -444,8 +452,32 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - Installed live with `automagik-herdr update` (0.2.0 → 0.2.1; `--rollback` available). `herdr-app check` passed.
   - A screenshot after the install shows the main bot above `omp` in "Automagik Herdr".
 - **Open:**
-  - The hash list stays in dev history. Rewriting it is the owner's call (recommendation: leave it).
+  - The hash list stays in dev history: the owner ruled "leave the hash history" (2026-11-02). v0.2.2 (PR #28) removed it from the tree.
   - The CLI run from inside a non-git child without `--project` still walks up to the parent. This goes to the creation-UX pass.
+
+### Group 2 — tidy planner, dry run, non-visual fixes — 2026-11-02 (merged into wish/am-pack, #32, 22a78a8)
+
+- **Review (criteria + quality):** FIX-FIRST, then SHIP.
+  - Round 1, both on the automatic fixes:
+    - the registry prune treated any stat error as "gone" (EACCES or an unmounted volume would drop a live project);
+    - a bot id defined by two projects could relabel a pane with the other project's role.
+  - Fixed in 8108bb2:
+    - a folder is gone only on ENOENT/ENOTDIR under a parent that exists;
+    - a shared id goes to the pane's folder, otherwise it is reported;
+    - remote spaces are reported, never recreated;
+    - real paths are used for symlinks;
+    - the `$HOME` reason is right;
+    - no false `cross-machine` report;
+    - one hc warning.
+  - `plan()` is split into `RULES`.
+- **Built before am-pack Group 7** (owner, 2026-11-02): in `mods/spaces-agents/` with `PROJECTS_FILE`; Group 7's `git mv` carries it.
+- **Gate:** 459 tests (458 pass, 1 skipped); CI green. Fixtures are anonymised.
+- **Rulings accepted:**
+  - `herdr.space` relabels are visual;
+  - one `hc get` per live terminal (0.16 s for 61);
+  - `order-spaces` is deferred to Group 3a;
+  - reports carry `report` as the sub-kind;
+  - the canonical space is the one on the top-level folder, then the one with the main bot, then Herdr's order.
 
 ## Files to Create/Modify
 

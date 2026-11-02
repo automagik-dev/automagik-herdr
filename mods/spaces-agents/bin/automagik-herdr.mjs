@@ -9,8 +9,8 @@
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync,
-  unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync,
+  statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,9 +21,11 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
   paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
-import { installHook } from "../briefingText.mjs";
+import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, defaultModel, knownModels, modelArgs, shownModel, withOverrides } from "../models.js";
+import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
+import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
+  ledgerPath, optionLike, parseWorktrees, startRow, workerArgs, workerPlan, worktreeFolder } from "../workers.js";
 import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { plan as tidyPlan, planText } from "../tidy.js";
@@ -192,20 +194,28 @@ function takeOverStale(lock) {
   try { unlinkSync(aside); } catch { /* gone already */ }
 }
 
-function withLock(lock, fn) {
+function takeLock(lock) {
   const token = `${process.pid} ${randomUUID()}`;
   const until = Date.now() + LOCK_WAIT;
   for (;;) {
-    try { writeFileSync(lock, token, { flag: "wx" }); break; } catch (e) {
+    try { writeFileSync(lock, token, { flag: "wx" }); return token; } catch (e) {
       if (e?.code !== "EEXIST") throw e;
       takeOverStale(lock);
       if (Date.now() > until) throw new Error(`${lock} is held by another automagik-herdr`);
       pause(5 + Math.floor(Math.random() * 20));
     }
   }
-  try { return fn(); } finally {
-    try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
-  }
+}
+function dropLock(lock, token) {
+  try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
+}
+function withLock(lock, fn) {
+  const token = takeLock(lock);
+  try { return fn(); } finally { dropLock(lock, token); }
+}
+async function withLockAsync(lock, fn) {
+  const token = takeLock(lock);
+  try { return await fn(); } finally { dropLock(lock, token); }
 }
 
 /**
@@ -321,8 +331,8 @@ const hookIo = {
 };
 
 /** Merges the per-turn briefing hook for a Claude bot; never throws: { written, warnings }. */
-export function writeBriefingHook(bot, folder, appHomeDir = appHome()) {
-  return installHook(bot.name, folder, appHomeDir, hookIo);
+export function writeBriefingHook(bot, folder, appHomeDir = appHome(), options = {}) {
+  return installHook(bot.name, folder, appHomeDir, hookIo, options);
 }
 
 // ---- arguments ----
@@ -338,6 +348,8 @@ const OPTIONS = {
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
   check: { type: "boolean" }, rollback: { type: "boolean" },
+  "worker-agent": { type: "string" }, "worker-model": { type: "string" }, "worker-effort": { type: "string" },
+  branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
 };
 
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
@@ -351,7 +363,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
+         [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
+             [--worker-agent=] [--worker-model=] [--worker-effort=]  (empty: cleared)
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -361,6 +375,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's per-turn briefing as it would be now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
+  worker "<task>" (--branch B [--base REF] | --worktree DIR) [--agent A] [--model M]
+         [--effort E] [--name N]  from a bot's pane: start one worker for the task, an hc
+                                child of the bot in the task's worktree (prints its terminal)
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back
 
@@ -429,8 +446,9 @@ export function entryFrom(opts, base, project, { creating }) {
   entry.instructions ??= "";
   if (opts.agent !== undefined) {
     const agents = agentTable();
-    if (!agents[opts.agent]) throw new CliError(`"${opts.agent}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.`);
-    entry.agent = opts.agent;
+    const key = resolveAgent(opts.agent, agents);
+    if (!key) throw new CliError(`"${opts.agent}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.`);
+    entry.agent = key;
   }
   // Planned (A3): a wave and an optional note; --unplanned clears it.
   if (opts.unplanned && opts["planned-wave"] !== undefined) throw new CliError("Give --planned-wave or --unplanned, not both.", 2);
@@ -451,6 +469,7 @@ export function entryFrom(opts, base, project, { creating }) {
   else if (entry.model && opts.agent !== undefined && !knownModels(entry.agent, modelIo()).includes(entry.model)) {
     throw new CliError(`${entry.name} is pinned to ${entry.model}, which ${entry.agent} doesn't list; pass --model or --no-model.`);
   }
+  workerDefaults(opts, entry);
   // Lead (A1): the main bot or another non-planned member, never itself or one of its own.
   if (opts.lead !== undefined) {
     if (entry.kind === "main") throw new CliError("A main bot has no lead.", 2);
@@ -478,6 +497,42 @@ export function entryFrom(opts, base, project, { creating }) {
   if (opts.omni) entry.look = { ...OMNI_LOOK };
   else entry.look = { character: opts.character ?? look.character, colour: colour ?? look.colour };
   return entry;
+}
+
+/**
+ * The bot's worker defaults (`worker: { agent?, model?, effort? }`) from --worker-agent,
+ * --worker-model and --worker-effort; an empty value clears that one. The agent is canonical
+ * (`claude-code` is stored as `claude`); a model must be on the worker agent's list when it
+ * has one (an agent with no list takes any model: workers' models are swap-test data).
+ */
+function workerDefaults(opts, entry) {
+  const given = ["agent", "model", "effort"].filter((k) => opts[`worker-${k}`] !== undefined);
+  if (!given.length) return;
+  const w = entry.worker && typeof entry.worker === "object" && !Array.isArray(entry.worker) ? { ...entry.worker } : {};
+  const agentText = opts["worker-agent"];
+  if (agentText === "") delete w.agent;
+  else if (agentText !== undefined) {
+    const agents = agentTable();
+    const key = resolveAgent(agentText, agents);
+    if (!key) throw new CliError(`--worker-agent: "${agentText}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.`, 2);
+    w.agent = key;
+  }
+  const effort = opts["worker-effort"];
+  if (effort === "") delete w.effort;
+  else if (effort !== undefined) {
+    if (!EFFORT_SHAPE.test(effort)) throw new CliError(`--worker-effort: "${effort}" isn't an effort level (low, medium, high, …).`, 2);
+    w.effort = effort;
+  }
+  const model = opts["worker-model"];
+  if (model === "") delete w.model;
+  else if (model !== undefined) {
+    if (optionLike(model)) throw new CliError(`--worker-model: "${model}" starts with a dash, so an agent would read it as an option.`, 2);
+    const agent = w.agent ?? entry.agent;
+    const list = agent ? knownModels(agent, modelIo()) : [];
+    if (list.length && !list.includes(model)) throw new CliError(`--worker-model: ${model} isn't a known ${agent} model. Pick one of: ${list.join(", ")}.`);
+    w.model = model;
+  }
+  entry.worker = w; // empty: applyBotEdit removes it
 }
 
 // ---- commands ----
@@ -678,6 +733,26 @@ async function cmdCategory(opts, [verb, ...rest]) {
 const report = (warnings) => { for (const w of warnings) process.stderr.write(`automagik-herdr: ${w}\n`); };
 
 /**
+ * Appends one row to the workers ledger (workers.js) with a single O_APPEND write. The
+ * terminal runs already, so a failure only comes back as a warning; null when written.
+ */
+export function appendLedger(row, appHomeDir = appHome()) {
+  const path = ledgerPath(appHomeDir);
+  try {
+    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    const fd = openSync(path, "a");
+    try { writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
+    return null;
+  } catch (e) {
+    return `${row.terminal} runs, but it isn't in ${LEDGER_FILE}, so its usage won't be tied to it: ${e?.message ?? e}`;
+  }
+}
+/** A terminal's foreground pid from `hc get`, or null (hc failing, or no pid yet). */
+async function pidOf(terminal) {
+  try { const get = await hcGet(terminal); return get?.foreground?.pid ?? get?.pid ?? null; } catch { return null; }
+}
+
+/**
  * Where Herdr shows a bot started here (DESIGN: the space whose folder keys to the project):
  * the `herdr.space` / `herdr.tab` labels of a live terminal on this computer whose folder
  * keys to the project. Null when none does; the pane then has no place in Herdr's window.
@@ -738,6 +813,9 @@ async function cmdStart(opts, [ref]) {
   let terminal = null;
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
+  const unlogged = appendLedger(startRow({ kind: "seat", terminal, pid: await pidOf(terminal), botId: bot.id, worktree: key,
+    agent: bot.agent, model: bot.model }));
+  if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
   listProject(key);
   // An edit that landed while this Start ran: the file read again, its role and category
   // put on the new pane (relabelWords against the labels it started with).
@@ -811,6 +889,11 @@ async function cmdAttach(opts, [ref, terminal]) {
   }
   const hook = claude ? await writeBriefingHook(bot, sessionFolder) : { written: false, warnings: [] };
   hook.warnings.unshift(...labelWarnings);
+  const argv = get.foreground?.argv;
+  const seatAgent = agentKeyOfArgv(argv, agentTable()) ?? (claude ? "claude" : bot.agent ?? null);
+  const unlogged = appendLedger(startRow({ kind: "seat", terminal: address, pid: get.foreground?.pid ?? get.pid ?? null, botId: bot.id,
+    worktree: sessionFolder, agent: seatAgent, model: detectModel(argv, seatAgent) }));
+  if (unlogged) hook.warnings.push(unlogged);
   if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, open /hooks once in that session to load it.`);
   report(hook.warnings);
   listProject(key);
@@ -851,6 +934,178 @@ async function cmdBrief(opts, [ref]) {
   const self = await paneOf(bot.id, ask);
   const text = await gatherBriefing({ file: project.file, bot, address: self.get?.address ?? null, ask });
   return opts.json ? { id: bot.id, briefing: text } : text;
+}
+
+// ---- workers: a bot's one worker per task ----
+
+/** The bot whose pane runs this command: { me (hc get), bot, project }. Anyone else is refused. */
+async function callingBot(opts) {
+  const self = process.env.HC_TERMINAL_ID;
+  if (!self) throw new CliError("Only a bot starts workers, from its own pane: HC_TERMINAL_ID isn't set here, so this isn't a bot's pane.");
+  const me = await hcGet(self);
+  if (!me) throw new CliError(`${self} isn't a terminal hc knows; start workers from a bot's pane.`);
+  const address = me.address ?? self;
+  const botId = me.labels?.[BOT_LABEL];
+  if (!botId) throw new CliError(`${address} isn't a bot's pane (it has no ${BOT_LABEL} label). Only a bot starts workers.`);
+  const key = await keyOf(me.cwd ?? me.foreground?.cwd ?? process.cwd());
+  if (opts.project !== undefined) {
+    const named = await namedKeyOf(opts.project);
+    if (named !== key) throw new CliError(`--project ${named} isn't the project of ${address}, ${key}. A bot starts workers only in its own project.`);
+  }
+  const project = loadProject(key);
+  const bot = project.file.bots.find((b) => b.id === botId);
+  if (!bot) throw new CliError(`${address} plays bot ${botId}, which ${under(key, BOTS_PATH)} doesn't define. A bot starts workers only in its own project.`);
+  if (bot.planned) throw new CliError(`${bot.name} is planned; a planned bot starts no workers.`);
+  return { me: { ...me, address }, bot, project };
+}
+
+const realDir = (p) => { try { return realpathSync(p); } catch { return null; } };
+
+/** --worktree: an existing worktree of the bot's project, not its main checkout, on a branch. */
+async function givenWorktree(path, key, bot) {
+  const dir = realDir(resolvePath(path));
+  let isDir = false;
+  try { isDir = Boolean(dir) && statSync(dir).isDirectory(); } catch { /* not there */ }
+  if (!isDir) throw new CliError(`--worktree: ${resolvePath(path)} is not a folder.`, 2);
+  const top = (await git(["rev-parse", "--show-toplevel"], dir))?.trim();
+  if (!top) throw new CliError(`--worktree: ${dir} isn't in a git worktree.`);
+  const owner = (await projectOf(top, git, exists)).key;
+  if (owner !== key) throw new CliError(`${top} is a worktree of ${owner}, not of ${bot.name}'s project ${key}. A bot starts workers only in its own project.`);
+  if (top === key) throw new CliError(`${top} is the project's main checkout; a worker works in a task worktree (--branch makes one).`);
+  const branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], top))?.trim();
+  if (!branch) throw new CliError(`${top} has no branch checked out (a detached HEAD); a worker's task is its branch.`);
+  return { worktree: top, branch, created: false, base: null };
+}
+
+/**
+ * --branch: the worktree already on that branch, or a new one in
+ * `<main checkout>/.claude/worktrees/<slug>`. A new branch starts from --base, else
+ * origin's own branch of that name, else origin/HEAD's branch, else dev, else main, after a
+ * fetch. Only `git worktree add` runs: the main checkout's HEAD is never touched.
+ */
+async function branchWorktree(branch, base, key, warnings) {
+  const ok = !branch.startsWith("-") && (await runProgram("git", ["check-ref-format", "--branch", branch], { cwd: key })).code === 0;
+  if (!ok) throw new CliError(`--branch: "${branch}" isn't a valid branch name.`, 2);
+  const listed = await git(["worktree", "list", "--porcelain"], key);
+  if (listed === null) throw new CliError(`${key} isn't a git project, so there is no worktree for --branch; pass --worktree.`);
+  const hit = parseWorktrees(listed).find((w) => w.branch === branch);
+  if (hit) {
+    if (realDir(hit.path) === key) throw new CliError(`${branch} is checked out in the main checkout ${key}; a worker never works there. Pass --worktree, or use another branch.`);
+    if (base) warnings.push(`${branch} has a worktree already, so --base ${base} was not used.`);
+    return { worktree: realDir(hit.path) ?? hit.path, branch, created: false, base: null };
+  }
+  const path = worktreeFolder(key, branch);
+  const same = parseWorktrees(listed).find((w) => (realDir(w.path) ?? w.path) === (realDir(path) ?? path));
+  if (same) {
+    throw new CliError(`Branch ${branch} uses the same folder as branch ${same.branch ?? "(a detached HEAD)"}: ${path}. `
+      + "Pick another branch name, or pass --worktree to work in that one.");
+  }
+  if (existsSync(path)) throw new CliError(`${path} is there already, but not as a worktree on ${branch}. Move it, or pass --worktree.`);
+  const unexcluded = await excludeWorktrees(key);
+  if (unexcluded) warnings.push(unexcluded);
+  const has = async (ref) => (await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], key)) !== null;
+  let args;
+  let from = null;
+  if (await has(`refs/heads/${branch}`)) {
+    if (base) warnings.push(`${branch} exists already, so --base ${base} was not used.`);
+    args = ["worktree", "add", path, branch];
+  } else {
+    if ((await git(["remote"], key))?.split("\n").includes("origin")) {
+      const f = await runProgram("git", ["fetch", "--quiet", "origin"], { cwd: key, timeout: 60_000 });
+      if (f.code !== 0) warnings.push(`git fetch origin failed, so the base may be behind: ${(f.stderr || f.stdout).trim().split("\n")[0]}`);
+    }
+    const originHead = (await git(["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"], key))?.trim() || null;
+    const candidates = base ? [base] : [`origin/${branch}`, ...baseCandidates(null, originHead)];
+    for (const ref of candidates) if (await has(ref)) { from = ref; break; }
+    if (!from) throw new CliError(base ? `--base: ${base} isn't a commit in ${key}.` : `${key} has no origin/HEAD, dev or main to start ${branch} from; pass --base.`);
+    args = ["worktree", "add", "-b", branch, path, from];
+  }
+  const r = await runProgram("git", args, { cwd: key, timeout: 60_000 });
+  if (r.code !== 0) throw new CliError(`git ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);
+  return { worktree: realDir(path) ?? path, branch, created: true, base: from };
+}
+
+/**
+ * Keeps the task worktrees out of the main checkout's `git add -A`: WORKTREES_EXCLUDE in the
+ * clone's own exclude file, as the briefing hook's settings file is. A warning, or null.
+ */
+async function excludeWorktrees(key) {
+  let path = null;
+  try {
+    path = (await git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], key))?.trim() || null;
+    if (!path) throw new Error("git gave no exclude path");
+    const before = readText(path);
+    const after = withExclude(before, WORKTREES_EXCLUDE);
+    if (after === null) return null;
+    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    await hookIo.write(path, after, before);
+    return null;
+  } catch (e) {
+    return `Couldn't add ${WORKTREES_EXCLUDE} to ${path ?? "the git exclude file"} (${e?.message ?? e}); keep .claude/worktrees out of the main checkout's commits.`;
+  }
+}
+
+/** The live terminals carrying this bot's worker label for `branch` (any machine hc reaches). */
+async function liveWorkers(botId, branch) {
+  const rows = rowsOf(await hcJson(["ls", "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`]));
+  return rows.filter((r) => r?.address && (r.state === undefined || r.state === "live")).map((r) => r.address);
+}
+
+async function cmdWorker(opts, rest) {
+  const task = rest.join(" ").trim();
+  if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
+  if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
+  if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
+  if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
+  const { me, bot, project } = await callingBot(opts);
+  const agents = agentTable();
+  const plan = workerPlan(bot, { agent: opts.agent, model: opts.model, effort: opts.effort }, agents);
+  if (plan.error) throw new CliError(plan.error, 2);
+  if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
+  const warnings = [...plan.warnings];
+  const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
+  if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
+  const place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
+    : await branchWorktree(opts.branch, opts.base, project.key, warnings);
+  // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
+  // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
+  if (plan.agent === "claude") {
+    const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
+    warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
+  }
+  // One live worker per task per bot (other bots' workers may share the task), checked and
+  // started under a lock per bot, so two calls at once can't both pass the check.
+  const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
+  try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
+  const terminal = await withLockAsync(`${lockDir}/worker-${bot.id}.lock`, async () => {
+    const live = await liveWorkers(bot.id, place.branch);
+    if (live.length) {
+      throw new CliError(`${bot.name} already has a live worker on ${place.branch}: ${live.join(", ")}. `
+        + `Check it (hc read ${live[0]}) or end it (hc kill ${live[0]}) before starting another.`);
+    }
+    const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
+    const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
+    const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
+      model: plan.model, effort: plan.effort, argv: plan.argv, task });
+    const r = await hc(args);
+    if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
+    let address = null;
+    try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
+    if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
+    return address;
+  }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  const pid = await pidOf(terminal);
+  const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: place.branch, worktree: place.worktree,
+    agent: plan.agent, model: plan.model, effort: plan.effort }));
+  if (unlogged) warnings.push(unlogged);
+  report(warnings);
+  const out = { terminal, bot: bot.id, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
+    base: place.base, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
+  if (opts.json) return out;
+  const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
+  return [terminal, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, `  agent     ${plan.agent}`,
+    `  model     ${plan.model ?? "(the agent's default)"}`, `  effort    ${plan.effort ?? "(the agent's default)"}`,
+    `End it once the task merges: hc kill ${terminal}`].join("\n");
 }
 
 // ---- updates (A14) ----
@@ -906,7 +1161,7 @@ async function tidyQuietly() {
 const TIDIES = new Set(["start", "attach", "create"]);
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, attach: cmdAttach, detach: cmdDetach, brief: cmdBrief, update: cmdUpdate, tidy: cmdTidy };
+  start: cmdStart, attach: cmdAttach, detach: cmdDetach, brief: cmdBrief, update: cmdUpdate, tidy: cmdTidy, worker: cmdWorker };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "attach", "detach", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

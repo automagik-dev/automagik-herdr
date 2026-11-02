@@ -241,3 +241,31 @@ export function shownModel({ argv, agentKey, pinned, fallback }) {
   if (fallback) return { model: fallback, source: "default" };
   return { model: null, source: null };
 }
+
+/**
+ * The agent key a name stands for in `agents` (a key, an executable or a `match` name, so
+ * `claude-code` is `claude`), or null. What a person types for --agent goes through this.
+ */
+export function resolveAgent(name, agents = AGENTS) {
+  if (typeof name !== "string" || !name.trim()) return null;
+  return agents[name] ? name : agentKeyOfArgv([name], agents);
+}
+
+// Each agent's reasoning-effort flag, read from `<agent> --help` on this host (2026-11-02):
+// Claude Code 2.1.316 `--effort <level>`; codex's config key `model_reasoning_effort`
+// through `-c`; pi `--thinking <level>`; omp `--thinking=<value>`. gemini has none.
+const EFFORT = {
+  claude: (level) => ["--effort", level],
+  codex: (level) => ["-c", `model_reasoning_effort=${level}`],
+  pi: (level) => ["--thinking", level],
+  omp: (level) => [`--thinking=${level}`],
+};
+
+/** True when `agentKey` has an effort flag effortArgs knows. */
+export const hasEffortFlag = (agentKey) => Boolean(EFFORT[agentKey]);
+
+/** The arguments that start `agentKey` at reasoning `effort`, [] when none is given or known. */
+export function effortArgs(agentKey, effort) {
+  if (!effort || !EFFORT[agentKey]) return [];
+  return EFFORT[agentKey](effort);
+}
