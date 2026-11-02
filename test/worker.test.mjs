@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/spaces-agents/model.js";
 import { effortArgs, promptArgs } from "../mods/spaces-agents/models.js";
-import { baseCandidates, branchSlug, parseWorktrees, readLedger, runsTemplate, sessionChange, startRow, swapArm, swapByte, templateAgent,
+import { baseCandidates, branchNamesTask, branchSlug, parseWorktrees, readLedger, runsTemplate, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/spaces-agents/workers.js";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
@@ -276,9 +276,11 @@ test("start and attach append a seat row to the ledger", (t) => {
   assert.equal(s.cli(["start", "Genie"], { from: null }).code, 0);
   const seat = s.ledger().find((r) => r.kind === "seat");
   assert.deepEqual([seat.terminal, seat.botId, seat.task, seat.worktree, seat.agent, seat.pid], ["t100", ID.main, null, s.project, "claude", 5100]);
+  assert.equal(seat.project, s.project, "a seat row names its project (usagemeter: task null, project the key)");
   assert.equal(s.cli(["attach", "Captain", "t2"], { from: null }).code, 0);
   const attached = s.ledger().filter((r) => r.kind === "seat")[1];
   assert.deepEqual([attached.terminal, attached.botId, attached.agent, attached.pid], ["t2", ID.cap, "claude", 4000]);
+  assert.deepEqual([attached.task, attached.project], [null, s.project]);
   assert.equal(seat.template, null, "a seat runs no template");
 });
 
@@ -753,6 +755,16 @@ test("worker --task --branch: the branch must contain the id; --worktree is Geni
   assert.equal(off.code, 2);
   assert.match(off.err, /--branch feat\/login doesn't contain the task id gl-231/);
   assert.equal(existsSync(join(s.project, ".claude/worktrees/feat-login")), false);
+  // The id as a whole token: gl-23 is not in fix/gl-231-login, nor gl-231 in xgl-231.
+  for (const [branch, id] of [["fix/gl-231-login", "gl-23"], ["fix/xgl-231", "gl-231"], ["fix/gl-231a", "gl-231"]]) {
+    const r = s.cli(["worker", "go", "--branch", branch, "--task", id]);
+    assert.equal(r.code, 2, `${branch} ${id}: ${r.err}`);
+    assert.match(r.err, /doesn't contain the task id/);
+  }
+  assert.deepEqual(["gl-231", "fix/gl-231", "gl-231/x", "a_gl-231_b", "fix/gl-231-login", "x-gl-231"].map((b) => branchNamesTask(b, "gl-231")),
+    [true, true, true, true, true, true]);
+  assert.deepEqual(["fix/gl-2310", "fix/agl-231", "fix/gl-231.x", "fix/gl-23"].map((b) => branchNamesTask(b, "gl-231")),
+    [false, false, false, false]);
   const on = s.cli(["worker", "go", "--branch", "fix/gl-231-login", "--task", "gl-231", "--json"]);
   assert.equal(on.code, 0, on.err);
   assert.equal(on.json().branch, "fix/gl-231-login");
@@ -807,9 +819,15 @@ test("worker --task: named exactly <id>-<role>; a live holder of the name is ref
   assert.equal(s.runs().length, 2);
   assert.equal(s.runs().some((r) => /^gl-231-dev-/.test(r[r.indexOf("--name") + 1])), false);
   s.finish("t100");
+  // Another machine's gl-231-dev is its own core's name: it doesn't block one here.
+  addTerminals(s, worker("box/t7", "/srv/proj", { "worker.of": ID.cap, task: "gl-231", "worker.role": "dev" }));
+  const st = s.hcState();
+  st.terminals.find((x) => x.address === "box/t7").name = "gl-231-dev";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
   const again = s.cli(["worker", "go", "--branch", "fix/gl-231-again", "--task", "gl-231"], { from: "t4" });
   assert.equal(again.code, 0, again.err);
   assert.equal(s.runs().at(-1)[s.runs().at(-1).indexOf("--name") + 1], "gl-231-dev", "a finished holder frees the name");
+  assert.doesNotMatch(again.err, /box\/t7/, "a remote terminal is never named as the holder");
   const named = s.cli(["worker", "go", "--branch", "fix/gl-5-a", "--task", "gl-5", "--name", "mine"]);
   assert.equal(named.code, 2);
   assert.match(named.err, /--name goes without --task: a task's worker is named gl-5-<role>/);
@@ -875,10 +893,10 @@ test("worker --task: the ledger row's task, project, lead, worktree, base, creat
   const mrow = s.ledger().at(-1);
   assert.deepEqual([mrow.task, mrow.created, mrow.base, mrow.override, mrow.swap, mrow.model],
     ["gl-232", true, git(s.project, "rev-parse", "main").trim(), true, false, "gpt-5.4"]);
-  // A seat row has the new fields too, empty.
-  const seat = startRow({ kind: "seat", terminal: "t1", botId: ID.main, worktree: "/p" });
+  // A seat row: task null, its project key kept, the worker fields empty.
+  const seat = startRow({ kind: "seat", terminal: "t1", botId: ID.main, worktree: "/p", project: "/p" });
   assert.deepEqual([seat.task, seat.branch, seat.project, seat.lead, seat.base, seat.created, seat.swap, seat.override,
-    seat.override_requested], [null, null, null, null, null, false, false, false, null]);
+    seat.override_requested], [null, null, "/p", null, null, false, false, false, null]);
 });
 
 test("planned swaps: the rule is sha256(bot:project:task)[0] % 3, deterministic, about one task in three", async () => {
@@ -935,6 +953,23 @@ test("planned swaps: a swap task runs worker.swap; the bot's own --model/--effor
   assert.deepEqual([none.json().effort, none.json().swap, none.json().override], ["medium", false, false]);
   assert.match(s.cli(["show", "Dev"]).out, /worker {7}agent codex · model gpt-5\.5 · effort medium\n {2}swap {9}model gpt-5\.4 · effort xhigh/);
   assert.deepEqual(s.cli(["show", "Dev", "--json"]).json().worker.swap, { effort: "xhigh", model: "gpt-5.4" });
+});
+
+test("planned swaps: an unknown swap agent is named only on a swap task, and the rest of the arm runs", async (t) => {
+  const { swapTask } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const file = team();
+  file.bots[2].worker.swap = { agent: "nosuch", effort: "xhigh" };
+  const s = scene(t, { file });
+  const ids = Array.from({ length: 60 }, (_, i) => `gl-${i + 1}`);
+  const on = ids.find((id) => swapTask(ID.dev, s.project, id));
+  const off = ids.find((id) => !swapTask(ID.dev, s.project, id));
+  const plain = s.cli(["worker", "go", "--branch", `fix/${off}-a`, "--task", off, "--json"]);
+  assert.equal(plain.code, 0, plain.err);
+  assert.doesNotMatch(plain.err, /swap agent/, "off a swap task: no word about the swap");
+  const swapped = s.cli(["worker", "go", "--branch", `fix/${on}-a`, "--task", on, "--json"]);
+  assert.equal(swapped.code, 0, swapped.err);
+  assert.match(swapped.err, /Dev's worker swap agent "nosuch" isn't one Herdr knows; this swap task runs without it\./);
+  assert.deepEqual([swapped.json().agent, swapped.json().effort, swapped.json().swap], ["codex", "xhigh", true]);
 });
 
 test("planned swaps: a template worker never swaps, from a bots.json template or a per-task --template", async (t) => {

@@ -103,6 +103,7 @@ automagik-herdr detach <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
+       [--task ID [--lead BOT]]
 automagik-herdr update [--check | --rollback]
 ```
 
@@ -125,6 +126,7 @@ pane:
 
 ```bash
 automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --effort high
+automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ../proj-gl-231
 ```
 
 - **Who:** the calling bot is read from `HC_TERMINAL_ID` and that terminal's `bot` label.
@@ -138,6 +140,25 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   checkout is never a worker's folder, and its HEAD is never moved. `/.claude/worktrees/` goes
   into the clone's own git exclude, so `git add -A` in the main checkout never picks a
   worktree up.
+- **Task (Genie's task contract):** `--task ID` is Genie's short task id, `^[a-z0-9][a-z0-9-]{0,40}$`
+  (`gn-42`, `gh-1415`, `gl-231`). An internal `t_…` id is refused with `internal Genie id; pass
+  the short id gn-N, gh-N or gl-N`; any other bad shape exits 2. With `--branch`, the branch
+  must contain the id as a whole token (`fix/gl-231-login` names `gl-231`, not `gl-23`); with
+  `--worktree`, Genie's flow, it isn't checked. The worker is named exactly `<id>-<role>`
+  (`gl-231-dev`, `gl-231-review`): a live terminal on this computer already named that is
+  refused and named, never suffixed; `--name` doesn't go with `--task`, and a name over hc's
+  32 characters is refused. Without `--task`, the worker is named after its branch.
+- **Lead:** `--lead BOT` is the task's lead bot, a bot id (`b-` plus 10 base32 characters) or a
+  Genie session (`session-<uuid>`), checked by shape only; it defaults to the calling bot. A
+  `reviewer` or `fixer` bot passing `--task` must pass `--lead`.
+- **Planned swaps:** a bot's `worker.swap` in `.herdr/bots.json` (`{ agent?, model?, effort? }`)
+  is the other arm its workers run on about one task in three, picked by rule: the first byte
+  of sha256(`<bot id>:<project>:<task id>`) mod 3 is 0. Only with `--task`, never for a template
+  worker, and the same for every worker of that bot on that task. On a swap task the arm
+  replaces the bot's worker defaults; a per-task `--agent`, `--model` or `--effort` is recorded
+  in the ledger (`override_requested`), not used, with one warning. Off a swap task they work
+  as below and the row says `override: true`. `show <bot>` prints the worker defaults and the
+  swap.
 - **Role:** `--role dev|test|review|fix` says what the worker does. Without it the role comes
   from the bot's rank: `tester` runs `test`, `reviewer` runs `review`, `fixer` runs `fix`,
   any other rank (or none) runs `dev`. A captain passes `--role`. Another value exits 2.
@@ -168,7 +189,10 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   whose command runs `claude` gets the session hook; when
   the command names no agent Herdr knows, the hook is skipped with a warning.
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled `worker.of=<bot id>`,
-  `task=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`, then
+  `branch=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`;
+  with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
+  (without it, no `task` label at all). A worker started before this release has no `branch`
+  label: its `task` label holds the branch, and Herdr's readers fall back to it. Then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
   on) start. A template runs in hc's template form, `<template> <task text>` after the
@@ -176,7 +200,7 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   command. The task text is always one argument, never part of a shell string. The worker has
   no `bot` label, so the sidebar folds it under its bot as a helper row showing its template,
   or its model and effort. Clicking that row focuses the worker's pane; without one, the
-  worker opens as a tab right after its bot's tab, named after its task branch. A bot with no
+  worker opens as a tab right after its bot's tab, named after its branch. A bot with no
   pane, or a worker on another machine, is peeked instead.
 - **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
   effort, or its template (`--json`: the same as data, with `role` and `template`).
@@ -185,10 +209,21 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
-  terminal, pid, botId, task, worktree, agent, model, effort, template, role, at }` (`at` is
-  ISO 8601; a seat's `task` is null). `template` is the hc template a worker runs, else null
-  (seats and agent workers). `role` is new in this release: the worker's role, null for a
-  seat. Rows written before a field have no such key.
+  terminal, pid, botId, task, worktree, agent, model, effort, template, role, branch, project,
+  lead, base, created, swap, override, override_requested, at }` (`at` is ISO 8601).
+  - `task`: Genie's task id (`--task`), else null; a seat's is null. `project`: the main
+    checkout's absolute path, the project key, on seats too. Usage joins to tasks on
+    **(project, task)**: task ids are unique per project only.
+  - `branch`: the worker's branch. `lead`: the task's lead bot. `worktree`: the worker's
+    folder as a real path. `base`: the commit the worktree started from (the base ref's SHA
+    when this command made it, else the branch's oldest reflog entry), or null. `created`:
+    this command made the worktree. `role`: the worker's role, null for a seat.
+  - `swap`: the task ran the bot's swap arm. `override`: the bot picked the agent, model,
+    effort or template itself. `override_requested`: on a swap task, what it asked for and
+    didn't get, else null.
+  - `template` is the hc template a worker runs, else null (seats and agent workers).
+  - Rows written before a field have no such key. A worker row with no `branch` key predates
+    the task contract: its `task` is the branch, not a Genie id.
   When a template runs, `agent`, `model` and `effort` are null: the template sets them. The
   briefing hook appends `{ event: "session", terminal, session, transcript, at }` and sets the terminal's `agent.session` label when a Claude session
   changes. A session row can repeat when the label write fails, so consumers dedupe session

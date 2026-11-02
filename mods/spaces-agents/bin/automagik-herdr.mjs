@@ -26,7 +26,7 @@ import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
-  baseCandidates, branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
+  baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, relinkCli, rollback as rollbackPack } from "../update.mjs";
@@ -827,7 +827,7 @@ async function cmdStart(opts, [ref]) {
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
   const unlogged = appendLedger(startRow({ kind: "seat", terminal, pid: await pidOf(terminal), botId: bot.id, worktree: key,
-    agent: bot.agent, model: bot.model }));
+    project: key, agent: bot.agent, model: bot.model }));
   if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
   listProject(key);
   // An edit that landed while this Start ran: the file read again, its role and category
@@ -905,7 +905,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const argv = get.foreground?.argv;
   const seatAgent = agentKeyOfArgv(argv, agentTable()) ?? (claude ? "claude" : bot.agent ?? null);
   const unlogged = appendLedger(startRow({ kind: "seat", terminal: address, pid: get.foreground?.pid ?? get.pid ?? null, botId: bot.id,
-    worktree: sessionFolder, agent: seatAgent, model: detectModel(argv, seatAgent) }));
+    worktree: sessionFolder, project: key, agent: seatAgent, model: detectModel(argv, seatAgent) }));
   if (unlogged) hook.warnings.push(unlogged);
   if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, open /hooks once in that session to load it.`);
   report(hook.warnings);
@@ -1154,7 +1154,7 @@ async function cmdWorker(opts, rest) {
     const why = taskIdProblem(taskId);
     if (why) throw new CliError(why, 2);
     if (opts.name !== undefined) throw new CliError(`--name goes without --task: a task's worker is named ${taskId}-<role>.`, 2);
-    if (opts.branch !== undefined && !opts.branch.includes(taskId)) {
+    if (opts.branch !== undefined && !branchNamesTask(opts.branch, taskId)) {
       throw new CliError(`--branch ${opts.branch} doesn't contain the task id ${taskId}; a task's branch names it (fix/${taskId}-login).`, 2);
     }
   }
@@ -1178,12 +1178,12 @@ async function cmdWorker(opts, rest) {
   let pick = given;
   let swap = false;
   let overrideRequested = null;
-  const arm = taskId !== undefined && !runsTemplate(bot, given) ? swapArm(bot) : null;
+  const arm = taskId !== undefined && !runsTemplate(bot, given) && swapTask(bot.id, project.key, taskId) ? swapArm(bot) : null;
   if (arm?.agent && !resolveAgent(arm.agent, agents)) {
-    warnings.push(`${bot.name}'s worker swap agent "${arm.agent}" isn't one Herdr knows; its swap runs without it.`);
+    warnings.push(`${bot.name}'s worker swap agent "${arm.agent}" isn't one Herdr knows; this swap task runs without it.`);
     delete arm.agent;
   }
-  if (arm && Object.keys(arm).length && swapTask(bot.id, project.key, taskId)) {
+  if (arm && Object.keys(arm).length) {
     swap = true;
     pick = { ...arm };
     if (alongside.length) {
@@ -1225,7 +1225,9 @@ async function cmdWorker(opts, rest) {
   const terminal = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
     const ls = await hcJson(["ls"]);
     // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
-    const holder = taskName && rowsOf(ls).find((r) => r?.name === taskName && (r.state === undefined || r.state === "live"));
+    // This computer's terminals only (hc names are unique per core), as workersIn sees them.
+    const holder = taskName && rowsOf(ls).find((r) => r?.name === taskName && local(r.address)
+      && (r.state === undefined || r.state === "live"));
     if (holder) {
       throw new CliError(`${taskName} is taken by a live terminal: ${holder.address}. A task's worker is named exactly <id>-<role>, `
         + `never suffixed. Check it (hc read ${holder.address}) or end it (hc kill ${holder.address}) before starting another.`);

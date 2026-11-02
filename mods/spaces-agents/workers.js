@@ -70,6 +70,20 @@ export function taskIdProblem(taskId) {
   return null;
 }
 
+/**
+ * Whether `branch` names task `taskId` as a whole token: preceded by its start, "/", "-" or
+ * "_", and followed by its end, "/", "-" or "_" (fix/gl-231-login names gl-231, not gl-23).
+ */
+export function branchNamesTask(branch, taskId) {
+  if (typeof branch !== "string" || typeof taskId !== "string" || !taskId) return false;
+  for (let at = branch.indexOf(taskId); at >= 0; at = branch.indexOf(taskId, at + 1)) {
+    const before = at === 0 ? "" : branch[at - 1];
+    const after = branch[at + taskId.length] ?? "";
+    if ((before === "" || "/-_".includes(before)) && (after === "" || "/-_".includes(after))) return true;
+  }
+  return false;
+}
+
 /** A task worker's terminal name: exactly `<id>-<role>`, never suffixed. */
 export const taskWorkerName = (taskId, role) => `${taskId}-${role}`;
 
