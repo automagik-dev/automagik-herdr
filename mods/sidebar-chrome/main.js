@@ -108,11 +108,13 @@ export default class WorkspaceChrome extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(action).child(svg(`mods/sidebar-chrome/${icon}.svg`).size(15).flex_none());
       const automations = !find(layout(), "automations-panel")?.hidden;
+      const quota = !find(layout(), "am-quota-panel")?.hidden;
       // Ours on the left, the app's on the right: a spacer carries the hovered name, then a rule.
       return v_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(6).pt(6).pb(7)
         .child(h_flex().gap(3).items_center()
           .child(tab("mods", "puzzle", "Mods", false, false, openMods))
           .child(tab("automations", "clock", "Automations", automations, false, () => run("layout.toggle", { id: "automations-panel" })))
+          .child(tab("quota", "layers", "Quota", quota, false, () => run("layout.toggle", { id: "am-quota-panel" })))
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
             .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
           .child(div().flex_1().min_w(0).pl(6).pr(2).truncate().text_size(10.5).text_color(t.dim).child(this.hovered ?? ""))

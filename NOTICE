@@ -99,8 +99,11 @@ repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is t
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
-Not vendored, deliberately: 0xRowdy/herdr-cliproxy publishes no licence, so it is all rights
-reserved and this public pack does not redistribute it. Ask upstream for a licence before adding it.
+mods/am-quota is this pack's own code, written against CLIProxyAPI's management API. The idea — a
+panel that reads each account's quota and switches the local credential — comes from
+0xRowdy/herdr-cliproxy, which publishes no licence: nothing of it is vendored, copied or
+redistributed here, and no non-trivial line of it is reused (measured by line-diff). Credit for the
+idea, not the code. Ask upstream for a licence before any reuse.
 
 Emoji data in mods/space-icon/emoji-data.js is generated from Unicode's character database
 (Python's `unicodedata`), not copied from any font or table.
