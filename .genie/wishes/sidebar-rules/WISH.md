@@ -430,6 +430,23 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Ruling:** a failed automation run is not a separate needs-owner source. Its run terminal carries `automation=<name>` and shows hc `error`, which the error source already covers. Cost if wrong: one field and a reader in Group 3a.
 - Verdict: APPROVED. `genie wish lint` OK.
 
+### Group 1 — R3 row order, released as v0.2.1 — 2026-11-02
+
+- **PR #27** was merged by the owner at df19e0e (merge 5a59e1b). It shipped three fixes:
+  - own-project folders (the owner-reported cadu bug);
+  - R3 row order, with recorded and anonymised fixtures;
+  - a peek when clicking a bot that has no pane (owner-reported).
+- **Reviews:**
+  - Criteria review: FIX-FIRST. Privacy: a folder name in the tests and a reversible hash list. Also, a test file name didn't match the plan.
+  - Quality review: FIX. The hash list, plus 3 LOWs.
+  - The owner merged before the follow-up landed, so the fixes go to dev as a separate `fix` PR (v0.2.2).
+- **Release v0.2.1:** the run is green, and the assets are `automagik-herdr-0.2.1.tgz` and `SHA256SUMS`.
+  - Installed live with `automagik-herdr update` (0.2.0 → 0.2.1; `--rollback` available). `herdr-app check` passed.
+  - A screenshot after the install shows the main bot above `omp` in "Automagik Herdr".
+- **Open:**
+  - The hash list stays in dev history. Rewriting it is the owner's call (recommendation: leave it).
+  - The CLI run from inside a non-git child without `--project` still walks up to the parent. This goes to the creation-UX pass.
+
 ## Files to Create/Modify
 
 ```
