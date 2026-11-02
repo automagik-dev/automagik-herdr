@@ -417,7 +417,7 @@ test("the CLI's project list: absolute keys once each, the newest last, at most 
 import { RANKS } from "../mods/spaces-agents/model.js";
 
 test("rank: an unknown one is warned about and dropped when shown, and refused when written; role stays free text", () => {
-  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"]);
+  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "fixer", "integrator", "pm", "owner"]);
   const raw = { version: 1, categories: [], bots: [bot(ID.main, "main", { rank: "owner", role: "Runs it all" }), bot(ID.cap, "member", { rank: "boss" })] };
   const { file, warnings } = parseBots(JSON.stringify(raw));
   assert.equal(file.bots[0].rank, "owner");

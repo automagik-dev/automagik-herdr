@@ -17,7 +17,7 @@ export const KINDS = ["main", "member"];
  * free-text `role` stays for the briefing. Optional. `main` is not a rank: role=main is the
  * main bot's alone, derived from its kind.
  */
-export const RANKS = ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"];
+export const RANKS = ["captain", "dev", "tester", "reviewer", "fixer", "integrator", "pm", "owner"];
 /** A category id: a lowercase slug, as it goes into a pane's `category=` label (A16). */
 export const CATEGORY_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 

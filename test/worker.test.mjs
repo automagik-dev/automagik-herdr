@@ -4,14 +4,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
 import { effortArgs, promptArgs } from "../mods/spaces-agents/models.js";
-import { baseCandidates, branchSlug, parseWorktrees, readLedger, sessionChange, startRow, templateAgent, workerArgs, workerPlan }
-  from "../mods/spaces-agents/workers.js";
+import { baseCandidates, branchSlug, parseWorktrees, readLedger, sessionChange, startRow, templateAgent, workerArgs, workerPlan,
+  workerRole, writesWorktree } from "../mods/spaces-agents/workers.js";
 
 const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -153,8 +153,8 @@ test("worker --branch creates the task worktree from the base; a second call reu
   assert.equal(first.json().base, "dev", "dev before main when there is no origin");
   assert.equal(git(wt, "symbolic-ref", "--short", "HEAD").trim(), "feat/login");
   assert.equal(git(s.project, "symbolic-ref", "--short", "HEAD").trim(), "main");
-  // Another bot's worker on the same task (dev, tester and reviewer share a worktree).
-  const second = s.cli(["worker", "two", "--branch", "feat/login", "--json"], { from: "t4" });
+  // Another bot's reviewer on the same task shares the writer's worktree.
+  const second = s.cli(["worker", "two", "--branch", "feat/login", "--role", "review", "--json"], { from: "t4" });
   assert.equal(second.code, 0, second.err);
   assert.equal(second.json().worktree, wt);
   assert.equal(second.json().created, false);
@@ -243,7 +243,8 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   assert.equal(run[run.indexOf("--parent") + 1], "t1");
   assert.equal(run[run.indexOf("--cwd") + 1], wt);
   assert.equal(run[run.indexOf("--name") + 1], "feat-login");
-  assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.model=gpt-5.5", "worker.effort=medium"]);
+  assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.role=dev", "worker.model=gpt-5.5",
+    "worker.effort=medium"]);
   // The agent gets the calling pane's PATH (herdr-core's lacks ~/.bun/bin, where omp lives),
   // as argv words, never a shell string.
   assert.deepEqual(runArgv(run).slice(0, 3), ["/usr/bin/env", `PATH=${s.path}`, "codex"]);
@@ -260,7 +261,7 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   // The ledger row usagemeter joins on, with the worker's foreground pid.
   const [row] = s.ledger();
   assert.deepEqual({ ...row, at: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: 5100, botId: ID.dev,
-    task: "feat/login", worktree: wt, agent: "codex", model: "gpt-5.5", effort: "medium", template: null, at: undefined });
+    task: "feat/login", worktree: wt, agent: "codex", model: "gpt-5.5", effort: "medium", template: null, role: "dev", at: undefined });
   assert.ok(!Number.isNaN(Date.parse(row.at)));
 });
 
@@ -287,14 +288,14 @@ test("worker --template: hc's template form, a child of the bot's pane in the wo
   assert.equal(run[run.indexOf("--parent") + 1], "t1");
   assert.equal(run[run.indexOf("--cwd") + 1], wt);
   assert.equal(run[run.indexOf("--name") + 1], "feat-login");
-  assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.template=dev-sol"]);
+  assert.deepEqual(labelsOf(run), [`worker.of=${ID.dev}`, "task=feat/login", "worker.role=dev", "worker.template=dev-sol"]);
   assert.deepEqual(templateArgv(run), ["dev-sol", "fix the login form"], "the template sets its own command: no env, no agent argv");
   const out = r.json();
   assert.deepEqual([out.template, out.agent, out.model, out.effort, out.argv], ["dev-sol", null, null, null, null]);
   assert.doesNotMatch(r.err, /ignored/, "a per-task template sets the bot's defaults aside without a word");
   const [row] = s.ledger();
   assert.deepEqual({ ...row, at: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: 5100, botId: ID.dev,
-    task: "feat/login", worktree: wt, agent: null, model: null, effort: null, template: "dev-sol", at: undefined });
+    task: "feat/login", worktree: wt, agent: null, model: null, effort: null, template: "dev-sol", role: "dev", at: undefined });
   // A codex template: no Claude hook in the worktree, and no warning about one.
   assert.equal(existsSync(join(wt, ".claude/settings.local.json")), false);
   assert.doesNotMatch(r.err, /session hook/);
@@ -535,22 +536,134 @@ test("the bot briefing says a bot doesn't code: one worker per task, checked, en
 
 // ---- review fixes ----
 
-test("worker: one live worker per task per bot, named in the refusal; other bots may share the task", async (t) => {
-  const s = scene(t);
-  assert.equal(s.cli(["worker", "one", "--branch", "feat/login"]).code, 0);
-  const again = s.cli(["worker", "again", "--branch", "feat/login"]);
-  assert.equal(again.code, 1);
-  assert.match(again.err, /Dev already has a live worker on feat\/login: t100\. Check it \(hc read t100\) or end it \(hc kill t100\)/);
-  assert.equal(s.runs().length, 1);
-  assert.equal(s.cli(["worker", "test it", "--branch", "feat/login"], { from: "t4" }).code, 0, "the captain's worker on the same task");
-  s.finish("t100");
-  assert.equal(s.cli(["worker", "again", "--branch", "feat/login"]).code, 0, "the first one ended: a new one may start");
-  // Two calls at once for the same task: one starts, the other is refused.
-  const both = await Promise.all([s.cliAsync(["worker", "c", "--branch", "feat/conc"]), s.cliAsync(["worker", "c", "--branch", "feat/conc"])]);
-  assert.deepEqual(both.map((r) => r.code).sort(), [0, 1]);
-  assert.equal(s.runs().filter((r) => r.includes("task=feat/conc")).length, 1);
+// ---- roles and one writer per worktree ----
+
+/** Puts terminals into the fake hc's state (panes of ranked bots, workers started elsewhere). */
+const addTerminals = (s, ...terms) => {
+  const st = s.hcState();
+  st.terminals.push(...terms);
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+};
+const worker = (address, cwd, labels) => ({ ...term(address, { cwd }), labels });
+
+test("worker --role: defaults from each rank; a bad --role exits 2; the worker.role label and the ledger role", (t) => {
+  const R = { tester: "b-dddddddddd", reviewer: "b-eeeeeeeeee", fixer: "b-ffffffffff", captain: "b-gggggggggg", dev: "b-hhhhhhhhhh" };
+  const file = team();
+  for (const [rank, id] of Object.entries(R)) file.bots.push(bot(id, "member", { name: `R ${rank}`, rank }));
+  const s = scene(t, { file });
+  addTerminals(s, ...Object.entries(R).map(([rank, id]) => term(`p-${rank}`, { bot: id, cwd: s.project })));
+  const want = { tester: "test", reviewer: "review", fixer: "fix", captain: "dev", dev: "dev" };
+  for (const [rank, role] of Object.entries(want)) {
+    const r = s.cli(["worker", "go", "--branch", `feat/${rank}`, "--json"], { from: `p-${rank}` });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.json().role, role, `a ${rank} bot's worker defaults to ${role}`);
+    assert.ok(labelsOf(s.runs().at(-1)).includes(`worker.role=${role}`));
+    assert.equal(s.ledger().at(-1).role, role);
+  }
+  const plain = s.cli(["worker", "go", "--branch", "feat/plain"]);
+  assert.equal(plain.code, 0, plain.err);
+  assert.match(plain.out, /^t\d+\n {2}role {6}dev\n/, "no rank: dev, shown in the text output");
+  // A captain passes --role explicitly.
+  const asked = s.cli(["worker", "go", "--branch", "feat/asked", "--role", "test", "--json"], { from: "p-captain" });
+  assert.equal(asked.json().role, "test");
+  assert.equal(s.hcState().terminals.find((x) => x.address === asked.json().terminal).labels["worker.role"], "test");
+  const runs = s.runs().length;
+  for (const bad of [["--role", "boss"], ["--role="], ["--role", "reviewer"]]) {
+    const r = s.cli(["worker", "go", "--branch", "feat/bad", ...bad]);
+    assert.equal(r.code, 2, `${bad.join(" ")}: ${r.err}`);
+    assert.match(r.err, /--role is one of dev, test, review, fix/);
+  }
+  assert.equal(s.runs().length, runs, "nothing started");
+  assert.equal(existsSync(join(s.project, ".claude/worktrees/feat-bad")), false, "refused before any worktree is made");
+  // The task label stays the branch, and a seat row's role is null.
+  assert.ok(labelsOf(s.runs().at(-1)).includes("task=feat/asked"));
+  assert.equal(startRow({ kind: "seat", terminal: "t1", botId: ID.main }).role, null);
 });
 
+test("worker: one writer per worktree across bots; reviewers alongside; one bot's reviewers one per branch", async (t) => {
+  const s = scene(t);
+  assert.equal(s.cli(["worker", "one", "--branch", "feat/login"]).code, 0);
+  for (const [from, role] of [["t1", "dev"], ["t4", "dev"], ["t4", "test"], ["t4", "fix"]]) {
+    const r = s.cli(["worker", "again", "--branch", "feat/login", "--role", role], { from });
+    assert.equal(r.code, 1, `${from} ${role}`);
+    assert.match(r.err, /feat-login already has a live writer: t100 \(Dev's dev\)\. One writer per worktree\. /);
+    assert.match(r.err, /Check it \(hc read t100\) or end it \(hc kill t100\) before starting another\./);
+  }
+  assert.equal(s.runs().length, 1);
+  // Reviewers start alongside the writer, one per bot per branch.
+  const review = s.cli(["worker", "review", "--branch", "feat/login", "--role", "review"], { from: "t4" });
+  assert.equal(review.code, 0, review.err);
+  const twice = s.cli(["worker", "review", "--branch", "feat/login", "--role", "review"], { from: "t4" });
+  assert.equal(twice.code, 1);
+  assert.match(twice.err, /Captain already has a live review worker on feat\/login: t101\. Check it \(hc read t101\) or end it \(hc kill t101\)/);
+  assert.equal(s.cli(["worker", "review", "--branch", "feat/login", "--role", "review"]).code, 0, "another bot's reviewer");
+  assert.equal(s.cli(["worker", "review", "--branch", "feat/other", "--role", "review"], { from: "t4" }).code, 0,
+    "the same bot reviews another branch in parallel");
+  // The writer ends: reviewers hold nothing, so another bot's writer may start.
+  s.finish("t100");
+  assert.equal(s.cli(["worker", "fix it", "--branch", "feat/login", "--role", "fix"], { from: "t4" }).code, 0);
+  // Two bots' writers at once on one worktree: one starts, the other is refused.
+  const wt = join(s.project, ".claude/worktrees/feat-conc");
+  git(s.project, "worktree", "add", "-q", "-b", "feat/conc", wt);
+  const both = await Promise.all([s.cliAsync(["worker", "c", "--worktree", wt]), s.cliAsync(["worker", "c", "--worktree", wt], { from: "t4" })]);
+  assert.deepEqual(both.map((r) => r.code).sort(), [0, 1]);
+  assert.equal(s.runs().filter((r) => r[r.indexOf("--cwd") + 1] === wt).length, 1);
+});
+
+test("worker: a live worker with no worker.role label holds its worktree as a writer; cwd compared as a real path", (t) => {
+  const s = scene(t);
+  const wt = join(s.project, ".claude/worktrees/feat-old");
+  git(s.project, "worktree", "add", "-q", "-b", "feat/old", wt);
+  const link = join(s.root, "old-link");
+  symlinkSync(wt, link);
+  addTerminals(s,
+    worker("t50", link, { "worker.of": ID.cap, task: "feat/old" }), // started before roles, its cwd through a symlink
+    worker("t51", wt, {}), // a plain terminal in the worktree: no worker
+    worker("far/t9", wt, { "worker.of": ID.cap, task: "feat/old", "worker.role": "dev" })); // another machine: not seen
+  const r = s.cli(["worker", "go", "--worktree", wt]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /already has a live writer: t50 \(Captain's worker, no role label\)\. One writer per worktree\. Check it \(hc read t50\)/);
+  assert.equal(s.cli(["worker", "look", "--worktree", wt, "--role", "review"]).code, 0, "a reviewer may start beside it");
+  s.finish("t50");
+  const now = s.cli(["worker", "go", "--worktree", wt, "--json"]);
+  assert.equal(now.code, 0, now.err);
+  assert.equal(now.json().role, "dev");
+});
+
+test("worker: the check and the start run under one lock per worktree, named by its real path's hash", async (t) => {
+  const { worktreeLock } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const s = scene(t);
+  const [a, b] = [join(s.root, "wa"), join(s.root, "wb")];
+  mkdirSync(a);
+  mkdirSync(b);
+  symlinkSync(a, join(s.root, "wa-link"));
+  assert.match(worktreeLock("/L", a), /^\/L\/worktree-[0-9a-f]{16}\.lock$/);
+  assert.notEqual(worktreeLock("/L", a), worktreeLock("/L", b), "two worktrees, two locks");
+  assert.equal(worktreeLock("/L", join(s.root, "wa-link")), worktreeLock("/L", a), "one folder, one lock, by its real path");
+  // Held while hc runs: the fake hc wrapper lists the lock folder on every call.
+  const lockDir = join(s.app, "automagik-herdr");
+  const seen = join(s.root, "locks.txt");
+  exe(join(s.root, "bin/hc"), `#!/bin/sh\nls "${lockDir}" >> "${seen}" 2>/dev/null\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  assert.equal(s.cli(["worker", "go", "--branch", "feat/lock"]).code, 0);
+  const wt = join(s.project, ".claude/worktrees/feat-lock");
+  const listed = readFileSync(seen, "utf8");
+  assert.ok(listed.includes(worktreeLock(lockDir, wt).slice(lockDir.length + 1)), listed);
+  assert.doesNotMatch(listed, /worker-b-/, "no per-bot lock any more");
+});
+
+test("workers.js: workerRole from the rank or --role, writesWorktree, the role label in both hc run forms", () => {
+  assert.deepEqual(["tester", "reviewer", "fixer", "captain", "dev", undefined].map((rank) => workerRole({ rank }).role),
+    ["test", "review", "fix", "dev", "dev", "dev"]);
+  assert.deepEqual(workerRole({ rank: "reviewer" }, "dev"), { role: "dev" });
+  assert.match(workerRole({}, "boss").error, /--role is one of dev, test, review, fix, not "boss"/);
+  assert.deepEqual([{ "worker.role": "dev" }, { "worker.role": "test" }, { "worker.role": "fix" }, {}, { "worker.role": "review" }]
+    .map(writesWorktree), [true, true, true, true, false]);
+  assert.deepEqual(labelsOf(workerArgs({ botId: ID.dev, branch: "b", role: "review", cwd: "/w", parent: "t1", argv: ["claude"], task: "t" })),
+    [`worker.of=${ID.dev}`, "task=b", "worker.role=review"]);
+  assert.deepEqual(labelsOf(workerArgs({ botId: ID.dev, branch: "b", role: "fix", cwd: "/w", parent: "t1", task: "t", template: "dev-sol" })),
+    [`worker.of=${ID.dev}`, "task=b", "worker.role=fix", "worker.template=dev-sol"]);
+  assert.equal(startRow({ kind: "worker", terminal: "t9", botId: ID.dev, role: "test" }).role, "test");
+});
 test("worker: a model starting with a dash is refused, from --model, --worker-model or bots.json", (t) => {
   const file = team();
   file.bots[2].worker = { agent: "claude", model: "--dangerously-skip-permissions" };

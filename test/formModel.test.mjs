@@ -245,8 +245,10 @@ test("rank: members pick one or none; an edit keeps the stored one; the main bot
 
 test("rank: a stored rank outside the set is a problem until changed; the line names --rank, --rank= clears", () => {
   const ctx = { key: KEY, file: FILE, info: modelInfo("codex", CODEX) };
-  assert.match(problemOf(create({ rank: "main" }), ctx), /"main" isn't a rank; pick one of captain, dev, tester, reviewer, integrator, pm, owner, or none/);
+  assert.match(problemOf(create({ rank: "main" }), ctx), /"main" isn't a rank; pick one of captain, dev, tester, reviewer, fixer, integrator, pm, owner, or none/);
   assert.equal(problemOf(create({ rank: "pm" }), ctx), null);
+  assert.equal(problemOf(create({ rank: "fixer" }), ctx), null);
+  assert.match(commandOf(create({ rank: "fixer" }), { key: KEY, file: FILE }), / --rank=fixer /);
   assert.equal(problemOf(create({ kind: "main", rank: "main" }), { ...ctx, file: { ...FILE, bots: FILE.bots.filter((b) => b.kind !== "main") } }), null);
   assert.match(commandOf(create({ rank: "tester" }), { key: KEY, file: FILE }), / --rank=tester /);
   assert.doesNotMatch(commandOf(create(), { key: KEY, file: FILE }), /--rank/);

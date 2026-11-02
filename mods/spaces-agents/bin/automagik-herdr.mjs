@@ -9,7 +9,7 @@
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { accessSync, closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync,
   statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
@@ -25,9 +25,9 @@ import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, 
 import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
-  ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan, worktreeFolder }
-  from "../workers.js";
+import { EFFORT_SHAPE, LEDGER_FILE, ROLES, TASK_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE, baseCandidates,
+  branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan,
+  workerRole, worktreeFolder, writesWorktree } from "../workers.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 
@@ -367,9 +367,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's per-turn briefing as it would be now
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
          [[--agent A] [--model M] [--effort E] | --template T] [--name N]
+         [--role dev|test|review|fix]
                                 from a bot's pane: start one worker for the task, an hc
                                 child of the bot in the task's worktree (prints its terminal);
-                                --template runs an hc template, alone
+                                --template runs an hc template, alone; --role defaults from
+                                the bot's rank (tester: test, reviewer: review, fixer: fix,
+                                else dev). One writer (dev, test, fix) per worktree, any bot;
+                                reviewers run alongside
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back
 
@@ -1046,10 +1050,31 @@ async function excludeWorktrees(key) {
   }
 }
 
-/** The live terminals carrying this bot's worker label for `branch` (any machine hc reaches). */
-async function liveWorkers(botId, branch) {
-  const rows = rowsOf(await hcJson(["ls", "--label", `${WORKER_OF_LABEL}=${botId}`, "--label", `${TASK_LABEL}=${branch}`]));
-  return rows.filter((r) => r?.address && (r.state === undefined || r.state === "live")).map((r) => r.address);
+/**
+ * The lock a worker's check and start run under: one per worktree, named by a hash of the
+ * worktree's real path, in `lockDir`. Local: it orders the CLIs on this computer only.
+ */
+export function worktreeLock(lockDir, worktree) {
+  const real = realDir(worktree) ?? resolvePath(worktree);
+  return `${lockDir}/worktree-${createHash("sha256").update(real).digest("hex").slice(0, 16)}.lock`;
+}
+
+/**
+ * The live workers in `worktree` (a real path), of any bot: from `ls` (`hc ls`), the live
+ * terminals on this computer whose cwd is that folder as a real path and that carry a
+ * worker.of label, as { address, labels }. Labels come from the row, else from `hc get`.
+ * Workers on other machines aren't seen (their cwd isn't a folder here).
+ */
+async function workersIn(worktree, ls) {
+  const out = [];
+  for (const r of rowsOf(ls)) {
+    if (!local(r?.address) || (r.state !== undefined && r.state !== "live") || typeof r.cwd !== "string") continue;
+    const cwd = r.cwd.startsWith("~/") ? `${home()}${r.cwd.slice(1)}` : r.cwd;
+    if ((realDir(cwd) ?? cwd) !== worktree) continue;
+    const labels = r.labels && typeof r.labels === "object" ? r.labels : (await hcGet(r.address))?.labels;
+    if (labels?.[WORKER_OF_LABEL]) out.push({ address: r.address, labels });
+  }
+  return out;
 }
 
 /**
@@ -1081,12 +1106,15 @@ async function cmdWorker(opts, rest) {
   if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
   if (opts.template === "") throw new CliError("--template needs a name: --template <name> (hc templates lists them).", 2);
+  if (opts.role !== undefined && !ROLES.includes(opts.role)) throw new CliError(`--role is one of ${ROLES.join(", ")}, not "${opts.role}".`, 2);
   const pick = { template: opts.template, agent: opts.agent, model: opts.model, effort: opts.effort };
   const alongside = ["agent", "model", "effort"].filter((k) => pick[k] !== undefined);
   if (pick.template !== undefined && alongside.length) {
     throw new CliError(`A template owns its command: --template goes alone, without --${alongside.join(", --")}.`, 2);
   }
   const { me, bot, project } = await callingBot(opts);
+  const { role, error: roleError } = workerRole(bot, opts.role);
+  if (roleError) throw new CliError(roleError, 2);
   const agents = agentTable();
   const plan = workerPlan(bot, pick, agents);
   if (plan.error) throw new CliError(plan.error, 2);
@@ -1110,19 +1138,29 @@ async function cmdWorker(opts, rest) {
     const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
     warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
   }
-  // One live worker per task per bot (other bots' workers may share the task), checked and
-  // started under a lock per bot, so two calls at once can't both pass the check.
+  // One writer (dev, test, fix) per worktree, whatever its bot; reviewers run alongside, but
+  // one bot runs one reviewer per branch. A worker with no role label counts as a writer.
+  // Checked and started under one lock per worktree, so two calls at once can't both pass.
   const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
   try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
-  const terminal = await withLockAsync(`${lockDir}/worker-${bot.id}.lock`, async () => {
-    const live = await liveWorkers(bot.id, place.branch);
-    if (live.length) {
-      throw new CliError(`${bot.name} already has a live worker on ${place.branch}: ${live.join(", ")}. `
-        + `Check it (hc read ${live[0]}) or end it (hc kill ${live[0]}) before starting another.`);
+  const worktree = realDir(place.worktree) ?? place.worktree;
+  const terminal = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
+    const ls = await hcJson(["ls"]);
+    const live = await workersIn(worktree, ls);
+    const nameOf = (id) => project.file.bots.find((b) => b.id === id)?.name ?? id;
+    const writing = role !== "review" && live.find((w) => writesWorktree(w.labels));
+    const reviewing = role === "review" && live.find((w) => w.labels[WORKER_OF_LABEL] === bot.id
+      && w.labels[TASK_LABEL] === place.branch && w.labels[WORKER_ROLE_LABEL] === "review");
+    const hit = writing || reviewing;
+    if (hit) {
+      const what = writing ? `${place.worktree} already has a live writer: ${hit.address} (${nameOf(hit.labels[WORKER_OF_LABEL])}'s `
+        + `${hit.labels[WORKER_ROLE_LABEL] ?? "worker, no role label"}). One writer per worktree.`
+        : `${bot.name} already has a live review worker on ${place.branch}: ${hit.address}.`;
+      throw new CliError(`${what} Check it (hc read ${hit.address}) or end it (hc kill ${hit.address}) before starting another.`);
     }
-    const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
+    const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-    const args = workerArgs({ botId: bot.id, branch: place.branch, name, cwd: place.worktree, parent: me.address,
+    const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, path: process.env.PATH });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
@@ -1133,17 +1171,17 @@ async function cmdWorker(opts, rest) {
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: place.branch, worktree: place.worktree,
-    agent: plan.agent, model: plan.model, effort: plan.effort, template: plan.template }));
+    agent: plan.agent, model: plan.model, effort: plan.effort, template: plan.template, role }));
   if (unlogged) warnings.push(unlogged);
   report(warnings);
-  const out = { terminal, bot: bot.id, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
+  const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
   if (opts.json) return out;
   const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
   const what = plan.template ? [`  template  ${plan.template}${runs ? ` (runs ${runs})` : ""}`]
     : [`  agent     ${plan.agent}`, `  model     ${plan.model ?? "(the agent's default)"}`,
       `  effort    ${plan.effort ?? "(the agent's default)"}`];
-  return [terminal, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
+  return [terminal, `  role      ${role}`, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
     `End it once the task merges: hc kill ${terminal}`].join("\n");
 }
 

@@ -214,7 +214,7 @@ test("Rank chips (A16): shown for a member, picked into the save and the copied 
   const { form, cx, draw, click } = await open({ form: "create" });
   form.inputs.name.type("qa", cx);
   draw();
-  assert.ok(nodes.has("bot-rank-none") && nodes.has("bot-rank-tester") && !nodes.has("bot-rank-main"));
+  assert.ok(nodes.has("bot-rank-none") && nodes.has("bot-rank-tester") && nodes.has("bot-rank-fixer") && !nodes.has("bot-rank-main"));
   await click("bot-rank-tester");
   draw();
   await click("bot-copy");
@@ -223,6 +223,10 @@ test("Rank chips (A16): shown for a member, picked into the save and the copied 
   draw();
   await click("bot-copy");
   assert.doesNotMatch(cx.clip, /--rank/);
+  await click("bot-rank-fixer");
+  draw();
+  await click("bot-copy");
+  assert.match(cx.clip, / --rank=fixer /);
   await click("bot-rank-pm");
   draw();
   await click("bot-save");

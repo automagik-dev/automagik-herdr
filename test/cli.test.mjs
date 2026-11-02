@@ -704,7 +704,7 @@ test("--rank on create and edit: checked against the set, '' clears it; show and
   s.seed(team());
   const bad = s.cli(["edit", "Dev", "--rank", "boss"]);
   assert.equal(bad.code, 2);
-  assert.match(bad.err, /--rank is one of captain, dev, tester, reviewer, integrator, pm, owner/);
+  assert.match(bad.err, /--rank is one of captain, dev, tester, reviewer, fixer, integrator, pm, owner/);
   assert.equal(s.cli(["create", "--name", "Ana", "--agent", "claude", "--rank", "tester"]).code, 0);
   assert.equal(s.bots().bots.find((b) => b.name === "Ana").rank, "tester");
   assert.equal(s.cli(["edit", "Dev", "--rank", "reviewer"]).code, 0);
