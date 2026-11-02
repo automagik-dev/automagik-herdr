@@ -138,6 +138,33 @@ test("worker --branch creates the task worktree from the base; a second call reu
   assert.match(onMain.err, /checked out in the main checkout/);
 });
 
+test("worker --branch with an origin: fetched, and the new branch starts from origin/HEAD's branch", (t) => {
+  const s = scene(t);
+  git(s.project, "branch", "dev");
+  const origin = join(s.root, "origin.git");
+  git(s.root, "clone", "-q", "--bare", s.project, origin);
+  git(s.project, "remote", "add", "origin", origin);
+  git(s.project, "fetch", "-q", "origin");
+  git(s.project, "remote", "set-head", "origin", "dev");
+  // A commit only origin has: the fetch must bring it before the branch is cut.
+  const other = join(s.root, "other-clone");
+  git(s.root, "clone", "-q", "-b", "dev", origin, other);
+  git(other, "commit", "-q", "--allow-empty", "-m", "upstream work");
+  git(other, "push", "-q", "origin", "dev");
+  const upstream = git(other, "rev-parse", "HEAD").trim();
+  const r = s.cli(["worker", "x", "--branch", "feat/up", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().base, "origin/dev");
+  assert.equal(git(r.json().worktree, "rev-parse", "HEAD").trim(), upstream);
+  // A branch origin has already is continued, not started over from the base.
+  git(other, "checkout", "-q", "-b", "feat/remote");
+  git(other, "commit", "-q", "--allow-empty", "-m", "remote branch work");
+  git(other, "push", "-q", "origin", "feat/remote");
+  const remote = s.cli(["worker", "y", "--branch", "feat/remote", "--json"]);
+  assert.equal(remote.json().base, "origin/feat/remote");
+  assert.equal(git(remote.json().worktree, "log", "-1", "--format=%s").trim(), "remote branch work");
+});
+
 test("worker --worktree uses an existing worktree of the project, on its branch; the main checkout is refused", (t) => {
   const s = scene(t);
   const wt = join(s.root, "side");
@@ -243,7 +270,7 @@ test("bots.json worker: kept through parse, a form save and checkBots; an invali
   const parsed = parseBots(JSON.stringify(bad));
   assert.equal(parsed.file.bots[1].worker, undefined);
   assert.ok(parsed.warnings.some((w) => /b-bbbbbbbbbb: worker model not text; ignored/.test(w)));
-  assert.ok(checkBots(bad).some((e) => /worker model not text/.test(e)));
+  assert.deepEqual(checkBots(bad), [], "like a bad model: ignored on reading, never a block on writing");
   bad.bots[1].worker = "codex";
   assert.ok(parseBots(JSON.stringify(bad)).warnings.some((w) => /worker is not an object/.test(w)));
 });

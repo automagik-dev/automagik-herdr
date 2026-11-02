@@ -228,8 +228,6 @@ export function checkBots(file, before = null) {
     if (b.kind === "main" && b.lead !== undefined) errors.push(`${at}: a main bot has no lead`);
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
     if (b.rank !== undefined && !RANKS.includes(b.rank)) errors.push(`${at}: unknown rank ${JSON.stringify(b.rank)}`);
-    const workerWhy = workerProblem(b.worker);
-    if (workerWhy) errors.push(`${at}: ${workerWhy}`);
   }
   const mains = file.bots.filter((b) => b?.kind === "main").length;
   if (mains !== 1) errors.push(`${mains} main bots; a project has exactly one`);

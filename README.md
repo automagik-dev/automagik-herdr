@@ -145,7 +145,8 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
 - **Output:** the worker's terminal, then its worktree, branch, agent, model and effort
   (`--json`: the same as data).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
-  once the task merges. The bot's briefing says so every turn.
+  once the task merges. The bot's briefing says so every turn. As an hc child, a worker
+  also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl` (`kind` `worker` or `seat`, terminal, pid,
   bot, task, worktree, agent, model, effort, time). The briefing hook appends a `session` row
