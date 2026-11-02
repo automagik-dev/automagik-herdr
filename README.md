@@ -171,7 +171,10 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   `task=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`, then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
-  on) start. A template runs in hc's template form, `<template> <task text>` after the
+  on) start. An npm agent such as codex is a `#!/usr/bin/env node` script: when that PATH has
+  the agent but no `node`, the folder of one is put first (the one beside the agent's link,
+  else what `bin/run.sh` picks: nvm's newest 22.7+, then Homebrew's), with one line saying so.
+  A template runs in hc's template form, `<template> <task text>` after the
   options, labelled `worker.template=<name>` and without the PATH: the template sets its own
   command. The task text is always one argument, never part of a shell string. The worker has
   no `bot` label, so the sidebar folds it under its bot as a helper row showing its template,
