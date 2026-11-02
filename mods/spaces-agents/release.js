@@ -33,8 +33,9 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
 /**
  * The installer's ownership record (`<app home>/automagik-herdr/installed-by-install.sh`) as data.
  * v2: `version=`, `mods=<comma list>`, `layout=added|kept`, `before=kept|none`, and
- * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt. A v1
- * marker (v0.2.x: no `mods=`) installed only spaces-agents.
+ * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
+ * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
+ * the rename reverts. A v1 marker (v0.2.x: no `mods=`) installed only spaces-agents.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -52,12 +53,14 @@ export function parseMarker(text) {
     before: get("before") || "none",
     adopted: list(get("adopted")).map((e) => ({ mod: e.slice(0, e.indexOf(":")), path: e.slice(e.indexOf(":") + 1) }))
       .filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a.mod) && a.mod !== POCKET_LINK && ADOPTED_PATH.test(a.path)),
+    migrated: list(get("migrated")).filter((p) => ADOPTED_PATH.test(p)),
   };
 }
 
-export const formatMarker = ({ version, mods, layout, before = "none", adopted = [] }) =>
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [] }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
-    ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : [])].join("\n") + "\n";
+    ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
+    ...(migrated.length ? [`migrated=${migrated.join(",")}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */
 export const NO_UPDATE_ENV = "AUTOMAGIK_HERDR_NO_UPDATE";
 export const FIRST_CHECK_MS = 20_000;
