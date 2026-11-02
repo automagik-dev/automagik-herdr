@@ -376,6 +376,13 @@ node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js; do node --che
 3. `revert(backupDir)`: applies the inverse rename to layouts and keys.json (am-* → old id, only for entries the forward run changed), so edits the person made in between are kept. The dated backups stay for manual recovery. The release notes say shared-state changes made under v0.3.0 are lost on rollback. `update.mjs rollback` calls it when the `.prev/` set holds old-named folders.
 4. Tests on scratch homes: a v0.2.0 home plus an owner-shaped home (hand-installed old-named mods, `main-agents.json`, a keys.json with the paste bindings). Running the plan twice is a no-op the second time. An unadopted mod-manager keeps `mod.open:mod-manager`. Migrate → rollback restores v0.2.0 behaviour: the Cmd+V binding, main-agents, the CLI and the hook.
 
+**Carried from the Group 3 review (LOW, not blocking):**
+- After a rollback across a change in the mod list, the layout may still name mods that are gone, and an adopted `sidebar-chrome` stays in `.prev` instead of being restored from `backup/`.
+- From v0.2.2 the only way forward is rerunning install.sh, because the old CLI looks for `spaces-agents.prev`.
+- When `spaces-agents` is someone else's folder, no updater is installed for the other seven mods, and every rerun reinstalls.
+- install.sh repoints the person's own `~/.local/bin/automagik-herdr` symlink, and `--uninstall` removes any link there. Only a regular file is protected (`install.sh:245`).
+- `update.mjs:452` overwrites the mod manager's catalog URL override on every install.
+
 **Interfaces:**
 - Consumes: Group 3's ownership record and `update.mjs`; Group 5b's sidebar (space-icon inside it).
 - Produces: `RENAMES: Record<string,string>`, `KEY_RENAMES: Record<string,string>`, `plan(home: string) → { folders: [from,to][], layouts: {file, edits}[], keys: [from,to][], shared: [from,to][], paths: [from,to][] }`, `apply(plan, { backupDir }) → { done, skipped: {item, reason}[] }`, `revert(backupDir) → { restored: string[] }`. `apply` writes a change journal (`journal.json`: every edit it made, file and before/after) into `backupDir`, and `revert` reads only that journal, so references the person added after the upgrade are never touched.
@@ -579,6 +586,28 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - `catalog/index.json` lives in the top slice only. Why: each lower slice must pass its own checks. Cost if wrong: none.
   - The mod manager moves folders aside and refuses `pocket-link` (rulings 10–11 apply to the vendored manager too). Why: it would otherwise repeat the 18:40 incident. Cost if wrong: a small change to a vendored mod.
   - Staging plus rename, symlinked `.state`, headCommit pinning, the missing tests and CI checks are routed to Group 3 (deliverable 4).
+
+### Group 3 — one download, one installer, ownership record — 2026-11-02 (merged into wish/am-pack, #30, e04b4c3)
+
+- **Criteria review:** FIX-FIRST, then SHIP. HIGH: rolling back, then reinstalling, lost each mod's `.state`. Fixed in e3451b1: private paths are now carried from `.prev/<m>`. Re-run on scratch homes from a real v0.2.2: rollback, uninstall and `--adopt` keep the state, and Pocket Link, a hand-installed sidebar-chrome and the person's own mod stay byte-identical.
+- **Security review:** FIX-FIRST twice, then SHIP.
+  - Round 1:
+    - the mod manager followed links a package ships;
+    - a failure after the swap deleted the replaced set (now exit 4, "installed, but…");
+    - an empty `adopted=` path moved the whole state folder;
+    - `mods=`/`adopted=` values were glob-expanded.
+  - Round 2 HIGH: on macOS's case-insensitive disk, a package mod named `Pocket-Link` landed inside `pocket-link`, and the new undo then deleted that folder. Fixed in 00286aa (lowercase-only names, case-insensitive clash checks, a destination must be free) and 029bc26 (fresh temp names).
+  - 14 crafted tarballs and every bypass probe were refused, with nothing written outside the run's own folders.
+- **Gate:** 425 tests (424 pass, 1 skipped), `shellcheck -s sh install.sh`, `actionlint`, `catalog.mjs --check`, `version.mjs check`; CI green.
+- **Rulings accepted:**
+  - `--adopt` goes to `backup/`;
+  - marker v2 has an `adopted=` line;
+  - PACK_MODS comes from the tarball's own release.js;
+  - exit 4 means "installed, but a later step failed";
+  - `--uninstall` keeps folders already in `.prev`;
+  - the mod manager refuses any link;
+  - layout names must match `^[A-Za-z0-9][A-Za-z0-9._-]*\.json$`.
+- **LOW findings left open:** carried to Group 6a.
 
 ### Group 5a — am-markdown — 2026-11-02 (merged, #19)
 
