@@ -120,7 +120,7 @@ fi
   const meterCalls = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => l.includes("/usagemeter/"));
   const brewCalls = () => readFileSync(brewLog, "utf8").split("\n").filter(Boolean);
   /** herdr-app's calls other than `status` and `check`. */
-  const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l && l !== "status" && !l.startsWith("check "));
+  const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l && l !== "status" && l !== "ls" && !l.startsWith("check "));
   const checks = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l.startsWith("check "));
   const mark = () => readFileSync(join(appHome, "automagik-herdr", "installed-by-install.sh"), "utf8");
   const mods = join(appHome, "mods"), state = join(appHome, "automagik-herdr");

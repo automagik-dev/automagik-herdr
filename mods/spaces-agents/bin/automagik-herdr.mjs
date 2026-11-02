@@ -26,7 +26,7 @@ import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, LEDGER_FILE, TASK_LABEL, WORKER_OF_LABEL, WORKTREES_EXCLUDE, baseCandidates, branchSlug, ledgerLine,
   ledgerPath, optionLike, parseWorktrees, startRow, workerArgs, workerPlan, worktreeFolder } from "../workers.js";
-import { checkForUpdate, installUpdate, rollback as rollbackPack } from "../update.mjs";
+import { binDirOf, checkForUpdate, installUpdate, liveHome, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState } from "./state.mjs";
@@ -1112,16 +1112,19 @@ async function cmdWorker(opts, rest) {
 
 /**
  * `update`: install the latest release, `--check` only reports, `--rollback` swaps the kept
- * pack back. `io` is injected by the tests (fetch, env, modsDir); the pack is the installed
- * one under $HERDR_APP_HOME/mods, never this checkout (update.mjs).
+ * pack back. `io` is injected by the tests (fetch, env, modsDir, binDir); the pack is the installed
+ * one under $HERDR_APP_HOME/mods, never this checkout (update.mjs). The CLI link (~/.local/bin) and
+ * the open spaces are looked at only for this computer's own pack: with `io.modsDir`, only `io.binDir`.
  */
 export async function cmdUpdate(opts, _rest = [], io = {}) {
   if (opts.check && opts.rollback) throw new CliError("Give --check or --rollback, not both.", 2);
-  const where = { ...(io.env ? { env: io.env } : {}), ...(io.fetch ? { fetch: io.fetch } : {}), ...(io.modsDir ? { modsDir: io.modsDir } : {}) };
+  const host = io.modsDir ? { binDir: io.binDir ?? null, window: false }
+    : { binDir: io.binDir ?? binDirOf(io.env ?? process.env), window: liveHome(`${appHome(io.env ?? process.env)}/mods`) };
+  const where = { ...(io.env ? { env: io.env } : {}), ...(io.fetch ? { fetch: io.fetch } : {}), ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host };
   const failed = (what, e) => new CliError(`${what}: ${String(e?.message ?? e).split("\n")[0]}`);
   if (opts.rollback) {
     let r;
-    try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}) }); } catch (e) { throw failed("Nothing rolled back", e); }
+    try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
     return opts.json ? { rolledBack: r } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : ""}`;
   }
   let r;

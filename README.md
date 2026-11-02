@@ -305,8 +305,11 @@ newest when there are several.
 
 Start and Attach add one `UserPromptSubmit` hook to `.claude/settings.local.json` in the
 bot's session folder, never to the shared `settings.json`, and keep that file out of git
-through the clone's own exclude file. The hook runs `node <app home>/mods/spaces-agents/briefing.mjs`.
-It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
+through the clone's own exclude file. The hook runs `node <app home>/automagik-herdr/briefing.mjs`,
+a fixed entry point that runs the installed sidebar folder's `briefing.mjs`, so a renamed folder
+or a rollback doesn't break it. The installer and `automagik-herdr update` move older hooks onto
+it (each file backed up beside itself as `settings.local.json.am-backup`), and a rollback to
+v0.3 or older moves them back. It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
 already running may need `/hooks` once to load the hook.

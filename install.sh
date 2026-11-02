@@ -148,6 +148,15 @@ link_ours() {
   return 1
 }
 
+# The CLI of the sidebar folder the ownership record lists (am-sidebar, else spaces-agents), which
+# the link points at; empty when the record lists neither.
+cli_target() {
+  case ",$(mark_get mods)," in
+    *,am-sidebar,*) echo "$MODS/am-sidebar/bin/automagik-herdr.mjs" ;;
+    *,spaces-agents,*) echo "$PACK/bin/automagik-herdr.mjs" ;;
+  esac
+}
+
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
 # is unavailable.
 shown_layout() {
@@ -414,9 +423,9 @@ install() {
 
   installed=$(mark_get version)
   [ -n "$installed" ] || installed=none
-  target=$PACK/bin/automagik-herdr.mjs
+  target=$(cli_target)
   # Up to date: this release, and the link ours to it (or the person's own, which stays).
-  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null && [ -x "$target" ] \
+  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null && [ -n "$target" ] && [ -x "$target" ] \
     && { [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] || { [ -L "$LINK" ] && ! link_ours; }; }; then
     say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK)."
     meter_step
@@ -434,11 +443,13 @@ install() {
   say "Checksum: ok."
   # Only the installer's files come out here, to run them; update.mjs then lists every entry,
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
-  # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders.
+  # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders, and
+  # migrateHooks.mjs (with briefingText.mjs and model.js) the briefing hooks onto a fixed path.
   mkdir "$TMP/x"
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js spaces-agents/migrate.js \
-    spaces-agents/migrateHome.mjs </dev/null 2>/dev/null || fail "$TGZ lacks spaces-agents' updater files: nothing was installed."
-  for f in update.mjs release.js migrate.js migrateHome.mjs; do
+    spaces-agents/migrateHome.mjs spaces-agents/migrateHooks.mjs spaces-agents/briefingText.mjs spaces-agents/model.js \
+    </dev/null 2>/dev/null || fail "$TGZ lacks spaces-agents' updater files: nothing was installed."
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js; do
     { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
   done
   set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
@@ -459,7 +470,8 @@ install() {
 
   # ---- e. the command ----
   mkdir -p "$BIN_DIR"
-  case ",$(mark_get mods)," in *,spaces-agents,*) chmod +x "$target" ;; *) target= ;; esac
+  target=$(cli_target)
+  if [ -n "$target" ]; then chmod +x "$target"; fi
   if [ -z "$target" ]; then
     say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."
   elif [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
