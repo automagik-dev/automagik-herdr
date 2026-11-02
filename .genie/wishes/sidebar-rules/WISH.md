@@ -292,6 +292,11 @@ node --test test/placement.test.mjs && node --test 'test/*.test.mjs' && for f in
 5. A report of every change, printed at the end (and as data with `--json`).
 6. `test/tidy-apply.test.mjs` with a fake `io`; then a scratch-window end-to-end check (a Herdr window on a scratch `HERDR_APP_HOME`, no live owner window), set up from a fixture; then one owner-approved run on the real window.
 
+**Carried from the Group 2 review (before `--apply` runs a recreate):**
+- A space on `$HOME` that holds a bot: move only the bot pane, as a stray, and keep the home space with its plain shells. Recreating would move the owner's shells too.
+- Skip a `recreate-space` whose `from` equals its `to`, so a project keyed at `$HOME` can't be recreated on every run.
+- An ambiguous pane with a gone parent is also reported as `orphan-helper`; drop that second report.
+
 **Interfaces:**
 - Consumes: Group 2's `plan`, `Action`, `readState`; Group 3b's rename and order rules and `ensureSpace`.
 - Produces: `apply(actions: Action[], io: { exec(cmd: "herdr-app"|"hc", args: string[]) → Promise<{code, stdout}>, read() → Promise<State> }) → { done: Action[], skipped: {action, reason, recovery?}[] }` in `tidy-apply.js`.
@@ -449,6 +454,30 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Open:**
   - The hash list stays in dev history: the owner ruled "leave the hash history" (2026-11-02). v0.2.2 (PR #28) removed it from the tree.
   - The CLI run from inside a non-git child without `--project` still walks up to the parent. This goes to the creation-UX pass.
+
+### Group 2 — tidy planner, dry run, non-visual fixes — 2026-11-02 (merged into wish/am-pack, #32, 22a78a8)
+
+- **Review (criteria + quality):** FIX-FIRST, then SHIP.
+  - Round 1, both on the automatic fixes:
+    - the registry prune treated any stat error as "gone" (EACCES or an unmounted volume would drop a live project);
+    - a bot id defined by two projects could relabel a pane with the other project's role.
+  - Fixed in 8108bb2:
+    - a folder is gone only on ENOENT/ENOTDIR under a parent that exists;
+    - a shared id goes to the pane's folder, otherwise it is reported;
+    - remote spaces are reported, never recreated;
+    - real paths are used for symlinks;
+    - the `$HOME` reason is right;
+    - no false `cross-machine` report;
+    - one hc warning.
+  - `plan()` is split into `RULES`.
+- **Built before am-pack Group 7** (owner, 2026-11-02): in `mods/spaces-agents/` with `PROJECTS_FILE`; Group 7's `git mv` carries it.
+- **Gate:** 459 tests (458 pass, 1 skipped); CI green. Fixtures are anonymised.
+- **Rulings accepted:**
+  - `herdr.space` relabels are visual;
+  - one `hc get` per live terminal (0.16 s for 61);
+  - `order-spaces` is deferred to Group 3a;
+  - reports carry `report` as the sub-kind;
+  - the canonical space is the one on the top-level folder, then the one with the main bot, then Herdr's order.
 
 ## Files to Create/Modify
 
