@@ -124,3 +124,28 @@ test("catalog.mjs: --check passes on this checkout and writes nothing; an unknow
   const pack = JSON.parse(before).mods.find((e) => e.fullName === "automagik-dev/automagik-herdr");
   assert.equal(pack.modNames.includes("pocket-link"), false);
 });
+
+test("applyInstall refuses a package that ships a link (a .state pointing outside, a dangling dotfile), changing nothing", async (t) => {
+  for (const [name, target] of [[".state", "/tmp"], [".dangling", "/nowhere"]]) {
+    const s = installed(scratch(t));
+    rmSync(join(s.base, "mods", "demo", name), { recursive: true, force: true });
+    symlinkSync(target, join(s.base, "mods", "demo", name));
+    await assert.rejects(core.applyInstall(ioOf(), { appHome: s.appHome, plan: s.plan, source: "x", prefix: "", sha: "0", record: s.record }), /link ou arquivo especial/, name);
+    assert.equal(readFileSync(join(s.live, "main.js"), "utf8"), "// old\n");
+    assert.equal(readlinkSync(join(s.live, ".state")), s.elsewhere);
+    assert.equal(readFileSync(join(s.elsewhere, "key"), "utf8"), "secret\n", "nothing written through the link");
+    assert.deepEqual(readdirSync(join(s.appHome, "automagik-herdr", "staging")), []);
+  }
+});
+
+test("applyInstall whose key write fails puts the mods and layouts back, writing no layout", async (t) => {
+  const s = installed(scratch(t));
+  mkdirSync(join(s.base, "layouts"));
+  writeFileSync(join(s.base, "layouts", "demo.json"), "{}\n");
+  const plan = { ...s.plan, layouts: ["demo.json"], keyAdds: [{ section: "global", key: "cmd-k", action: "demo.open" }] };
+  const io = { ...ioOf(), readText: async () => "{}", writeText: async () => { throw new Error("disk full"); } };
+  await assert.rejects(core.applyInstall(io, { appHome: s.appHome, plan, source: "x", prefix: "", sha: "0", record: s.record }), /disk full/);
+  assert.equal(readFileSync(join(s.live, "main.js"), "utf8"), "// old\n");
+  assert.equal(existsSync(join(s.appHome, "layouts", "demo.json")), false);
+  assert.deepEqual(readdirSync(join(s.appHome, "automagik-herdr", "backup")), []);
+});

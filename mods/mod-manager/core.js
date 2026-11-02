@@ -216,6 +216,11 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
       const stage = `${stagingDir(appHome)}/${m}-${stamp()}`;
       staged.push([m, stage]);
       await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, stage]);
+      // The package brings plain files and folders only: a link it ships (a `.state` pointing
+      // outside, a dangling dotfile) would be written through or installed as is. Refused, as
+      // update.mjs refuses one in a release tarball.
+      const odd = (await run(io, "find", [stage, "!", "-type", "f", "!", "-type", "d"])).split("\n").filter(Boolean);
+      if (odd.length) throw new Error(`${m}: o pacote traz um link ou arquivo especial (${odd[0].slice(stage.length + 1)}): recusado`);
       const live = `${appHome}/mods/${m}`;
       if ((record?.mods ?? []).includes(m) && (await present(io, live))) await carryPrivate(io, live, stage);
     }
@@ -223,8 +228,12 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
     for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
     throw e;
   }
+  // Mods, then layouts, then keys, journalled: a failure anywhere puts every folder and layout
+  // back where it was. keys.json is written last, in one write, so a failed write changed nothing
+  // and nothing after it can fail.
   const aside = [];
   const placed = [];
+  const laid = [];
   try {
     for (const m of record?.mods ?? []) {
       const live = `${appHome}/mods/${m}`;
@@ -234,23 +243,29 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
       await run(io, "mv", [stage, `${appHome}/mods/${m}`]);
       placed.push([`${appHome}/mods/${m}`, stage]);
     }
+    for (const l of record?.layouts ?? []) {
+      const p = `${appHome}/layouts/${l}`;
+      if (await present(io, p)) aside.push([p, await moveAside(io, appHome, p, l)]);
+    }
+    for (const l of plan.layouts) {
+      const to = `${appHome}/layouts/${l}`;
+      if (await present(io, to)) throw new Error(`já existe: layouts/${l}`);
+      laid.push(to);
+      await run(io, "cp", [`${plan.base}/layouts/${l}`, to]);
+    }
+    if (plan.keyAdds.length) {
+      await writeKeys(io, appHome, (all) => {
+        for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
+      });
+    }
   } catch (e) {
+    for (const to of laid) await io.exec("rm", ["-f", to]);
     for (const [live, stage] of placed.reverse()) await io.exec("mv", [live, stage]);
     for (const [live, to] of aside.reverse()) await io.exec("mv", [to, live]);
     for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
     throw e;
   }
-  for (const l of record?.layouts ?? []) {
-    const p = `${appHome}/layouts/${l}`;
-    if (await present(io, p)) await moveAside(io, appHome, p, l);
-  }
-  for (const l of plan.layouts) await run(io, "cp", [`${plan.base}/layouts/${l}`, `${appHome}/layouts/${l}`]);
   const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
-  if (plan.keyAdds.length) {
-    await writeKeys(io, appHome, (all) => {
-      for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
-    });
-  }
   return {
     source, prefix, sha, mods: plan.mods, layouts: plan.layouts, keys: dedupeKeys(keys),
     risks: plan.risks.map((r) => r.label), at: new Date().toISOString(),
