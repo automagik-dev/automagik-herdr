@@ -602,7 +602,9 @@ export class BotForm {
       return v_flex().p(14).gap(2).child(h_flex().id("pick-new").h(30).px(8).items_center().rounded(7).cursor_pointer()
         .hover((s) => s.bg(t.hover)).on_click(() => this.create()).child("New bot"));
     }
-    return v_flex().p(14).gap(2).children(rows.length ? rows : [div().text_color(t.muted).child("No bots on this computer yet. Create one first.")]);
+    // Nothing known yet and the discovery still out: it is looking, not empty.
+    const none = this.refreshing ? "Finding bots…" : "No bots on this computer yet. Create one first.";
+    return v_flex().p(14).gap(2).children(rows.length ? rows : [div().text_color(t.muted).child(none)]);
   }
 
   // ---- the Create / Edit form (mockup/create-form.dc.html) ----

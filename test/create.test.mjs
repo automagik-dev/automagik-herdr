@@ -563,3 +563,13 @@ test("menu Inspect: a CLI failure is shown in place, not a blank section", async
   assert.ok(form.history.error);
   assert.ok(nodes.has("menu-history"));
 });
+
+test("Attach with an empty known list says it is looking until discovery answers, then that there are none", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([]);
+  const cx = makeCx();
+  const form = new BotForm({ overlay: "o9", form: "attach", terminal: "t1", known: [] }, cx);
+  assert.match(textOf(index(form.render(cx))), /Finding bots/);
+  await cx.settle();
+  assert.match(textOf(index(form.render(cx))), /No bots on this computer yet/);
+});
