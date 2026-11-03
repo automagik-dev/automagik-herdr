@@ -146,14 +146,18 @@ function machine(t, { launcher } = {}) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
   for (const d of [home, bin, join(apps, "Herdr.app")]) mkdirSync(d, { recursive: true });
-  const log = join(root, "herdr-app.log"), shown = join(root, "herdr-shown"), brew = join(root, "brew.log");
+  const log = join(root, "herdr-app.log"), shown = join(root, "herdr-shown"), brew = join(root, "brew.log"), spaces = join(root, "herdr-spaces.json");
   writeFileSync(log, "");
   writeFileSync(brew, "");
   exe(join(bin, "uname"), "#!/bin/sh\ncase $1 in -m) echo arm64 ;; *) echo Darwin ;; esac\n");
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brew}"\nexit 1\n`);
-  // herdr-app: logs its arguments; `status` prints the layout show() set, or fails with none.
+  // herdr-app: logs its arguments; `status` prints the layout show() set, or fails with none;
+  // `ls` prints the spaces openSpace() opened, or nothing.
   exe(join(bin, "herdr-app"), `#!/bin/sh
 printf '%s\\n' "$*" >> "${log}"
+if [ "$1" = ls ]; then
+  [ ! -f "${spaces}" ] || cat "${spaces}"
+fi
 if [ "$1" = status ]; then
   [ -f "${shown}" ] || exit 1
   printf '{\\n  "layout": "%s",\\n  "zoom": false\\n}\\n' "$(cat "${shown}")"
@@ -184,6 +188,7 @@ fi
     launcher, root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),
     link: join(home, ".local", "bin", "automagik-herdr"),
     show: (name) => writeFileSync(shown, name),
+    openSpace: (folder) => writeFileSync(spaces, JSON.stringify({ spaces: [{ id: "w1", folder, machine: null }] })),
     // The README's one-liner: `curl -fsSL …/install.sh | bash -s -- --yes`, the script on stdin.
     oneLiner: (...args) => {
       const r = spawnSync("bash", ["-s", "--", ...args], { cwd: root, env, encoding: "utf8", input: readFileSync(INSTALL) });
@@ -414,4 +419,55 @@ test("e2e: a pack whose sidebar ships no command fails loudly and leaves no dang
   assert.equal(r.code, 1, r.out);
   assert.match(r.err, /has neither automagik-herdr nor automagik-herdr\.mjs, so automagik-herdr is not linked\. Removed /);
   assert.equal(readdirSync(dirname(m.link)).includes("automagik-herdr"), false, "no link left behind");
+  // The run stopped at the link, after the pack crossed the rename: the held hooks notice still prints.
+  assert.match(r.out, /^IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten/m);
+});
+
+test("e2e: a project unknown at the upgrade keeps its hook and is warned about; opened as a space, a rerun moves it", { skip: !haveGit && "no git work tree" }, (t) => {
+  const m = machine(t);
+  // A v0.4.0 sidebar-only install, and a bot's project no list of the pack's names.
+  const old = join(m.mods, "spaces-agents");
+  mkdirSync(join(old, "bin"), { recursive: true });
+  writeFileSync(join(old, "VERSION"), `${OLD}\n`);
+  writeFileSync(join(old, "mod.json"), "{\"place\":\"none\"}\n");
+  writeFileSync(join(old, "main.js"), "// v0.4\n");
+  exe(join(old, "bin", "automagik-herdr"), WRAPPER);
+  exe(join(old, "bin", "run.sh"), RUN_SH);
+  mkdirSync(m.state, { recursive: true });
+  writeFileSync(join(m.state, "installed-by-install.sh"), `version=${OLD}\nbefore=none\n`);
+  const proj = join(m.root, "unlisted");
+  mkdirSync(join(proj, ".claude"), { recursive: true });
+  execFileSync("git", ["init", "-q", proj]);
+  const file = join(proj, ".claude", "settings.local.json");
+  const v04 = `${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: legacyHookCommand(m.appHome), timeout: 10 }] }] } }, null, 2)}\n`;
+  writeFileSync(file, v04);
+  const hookOf = () => JSON.parse(readFileSync(file, "utf8")).hooks.UserPromptSubmit[0].hooks[0].command;
+
+  const up = m.oneLiner("--yes");
+  assert.equal(up.code, 0, up.err);
+  assert.equal(readFileSync(file, "utf8"), v04, "not known yet: left as it is");
+  // Crossing the rename with no file rewritten still warns, last.
+  const lines = up.out.split("\n");
+  const at = lines.findIndex((l) => l.startsWith("IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten"));
+  assert.ok(at > 0, up.out);
+  assert.match(lines[at + 1], /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/);
+  assert.match(lines[at + 2], /were not rewritten .*open it as a space in Herdr and run the installer again/);
+  assert.ok(lines.findIndex((l) => l.startsWith("Done: Automagik Herdr")) > at);
+
+  // The person opens it in Herdr and reruns the installer: the same release, the repair path.
+  m.openSpace(proj);
+  const again = m.oneLiner("--yes");
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /already up to date/);
+  assert.equal(hookOf(), hookCommand(m.appHome), "the open space's hook moved");
+  assert.ok(existsSync(`${file}.am-backup`), "its original kept beside it");
+  const said = again.out.split("\n");
+  const from = said.indexOf("IMPORTANT: the bots' briefing hook moved to a new path in 1 settings file:");
+  assert.ok(from >= 0, again.out);
+  assert.equal(said[from + 1], `  ${proj}: ${file}`);
+  assert.ok(!again.out.includes("notice: "), "the tag never shows");
+  // A third run: nothing left to move, and no notice.
+  const third = m.oneLiner("--yes");
+  assert.equal(third.code, 0, third.err);
+  assert.ok(!third.out.includes("IMPORTANT:"), third.out);
 });

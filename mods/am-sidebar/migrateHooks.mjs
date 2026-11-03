@@ -412,21 +412,23 @@ export function revertHooks(projects, { appHome, git = runGit, also = [] } = {})
 }
 
 /**
- * The notice printed last after syncHooks moved hooks (lines; none when it moved none): every
- * settings file it rewrote, with its project; that a Claude session already running there keeps
- * the hook it loaded; and, after a move forward, how a project the pack doesn't know gets the
- * new hook. install.sh, `update.mjs install|update|rollback` and `automagik-herdr update` print it.
+ * The notice printed last after syncHooks (lines; none when nothing calls for one): every settings
+ * file it rewrote, with its project; that a Claude session already running there keeps the hook it
+ * loaded; and, after a move forward, how a project the pack doesn't know gets the new hook. A run
+ * that crossed the rename (`hooks.crossed`, update.mjs moveHooks) always warns, even with no file
+ * rewritten. install.sh, `update.mjs install|update|repair|rollback` and `automagik-herdr update` print it.
  */
 export function hooksNotice(hooks) {
   const forward = hooks?.direction === "forward";
   const files = (forward ? hooks.rewritten : hooks?.direction === "back" ? hooks.restored : null) ?? [];
-  if (!files.length) return [];
+  if (!files.length && !(forward && hooks.crossed)) return [];
   const n = `${files.length} settings file${files.length === 1 ? "" : "s"}`;
   return [
-    forward ? `IMPORTANT: the bots' briefing hook moved to a new path in ${n}:`
-      : `IMPORTANT: the bots' briefing hook went back to the older release's path in ${n}:`,
+    !files.length ? "IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten (the pack knew of none)."
+      : forward ? `IMPORTANT: the bots' briefing hook moved to a new path in ${n}:`
+        : `IMPORTANT: the bots' briefing hook went back to the older release's path in ${n}:`,
     ...files.map((f) => `  ${dirname(dirname(f))}: ${f}`),
-    forward ? "A Claude session already running in those projects keeps the OLD hook and gets NO briefing until it is restarted, or until /hooks is run in it once."
+    forward ? `A Claude session already running in ${files.length ? "those projects" : "a bot's project"} keeps the OLD hook and gets NO briefing until it is restarted, or until /hooks is run in it once.`
       : "A Claude session already running in those projects keeps the hook it loaded until it is restarted, or until /hooks is run in it once.",
     ...(forward ? ["Projects the pack doesn't know about were not rewritten and get no briefing. In one, run `automagik-herdr start <bot>` or `automagik-herdr attach <bot>` (either writes the new hook), or open it as a space in Herdr and run the installer again."] : []),
   ];

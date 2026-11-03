@@ -126,7 +126,16 @@ EOF
 }
 
 say() { printf '%s\n' "$*"; }
-fail() { printf 'automagik-herdr install: %s\n' "$*" >&2; exit 1; }
+# The briefing hooks' notice update.mjs gave (its `notice: ` lines), held in $TMP/notice for the
+# end of the run: printed once, there or before any failure after it, so it is never lost.
+held_notice() {
+  { [ -n "${TMP:-}" ] && [ -s "$TMP/notice" ]; } || return 0
+  say ""
+  cat "$TMP/notice"
+  say ""
+  : >"$TMP/notice"
+}
+fail() { held_notice; printf 'automagik-herdr install: %s\n' "$*" >&2; exit 1; }
 
 # A yes/no question. Stdin is the downloaded script under `curl | bash`, so the answer comes
 # from the terminal; with none (an agent, CI) the answer is no unless --yes was given.
@@ -514,6 +523,7 @@ install() {
       fail "could not check the installed pack: ${why:-$out $(cat "$TMP/log")}"
     else
       sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
+      sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
       case $out in *'"changed":false'*) changed=no ;; esac
       if [ "$changed" = yes ]; then say "Repaired the pack $VERSION in $MODS: what differed from the release is listed above."; fi
     fi
@@ -569,7 +579,7 @@ install() {
 
   # ---- f. next ----
   # The hooks notice after everything else the run printed and before its last lines, so it is read.
-  if [ -s "$TMP/notice" ]; then say ""; cat "$TMP/notice"; say ""; fi
+  held_notice
   # A failed check or an unfinished step is never "Done" nor "up to date".
   if [ "$rc" = 4 ]; then switch_hint; fail "the pack is installed, but a step after it did not finish (the warning above says what, and where the folders are)."; fi
   if [ "$rc" = 3 ] && [ "$same" = yes ]; then

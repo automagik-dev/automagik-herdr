@@ -455,5 +455,12 @@ test("hooksNotice: every file with its project, the running sessions, unknown pr
   const back = hooksNotice({ direction: "back", restored: [files[0]], skipped: [] });
   assert.equal(back[0], "IMPORTANT: the bots' briefing hook went back to the older release's path in 1 settings file:");
   assert.equal(back.length, 3, "no unknown-projects line on the way back");
-  for (const none of [null, undefined, { direction: null, skipped: [] }, { direction: "forward", rewritten: [], skipped: [] }]) assert.deepEqual(hooksNotice(none), []);
+  for (const none of [null, undefined, { direction: null, skipped: [] }, { direction: "forward", rewritten: [], skipped: [] },
+    { direction: "back", restored: [], skipped: [], crossed: true }]) assert.deepEqual(hooksNotice(none), []);
+  // Across the rename with nothing rewritten: still the warning, and both lines.
+  const silent = hooksNotice({ direction: "forward", rewritten: [], skipped: [], crossed: true });
+  assert.equal(silent.length, 3);
+  assert.match(silent[0], /^IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten/);
+  assert.match(silent[1], /a bot's project keeps the OLD hook and gets NO briefing/);
+  assert.match(silent[2], /^Projects the pack doesn't know about were not rewritten/);
 });
