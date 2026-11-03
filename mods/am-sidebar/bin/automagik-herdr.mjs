@@ -36,7 +36,7 @@ import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, reli
 import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
-import { plan as tidyPlan, planText } from "../tidy.js";
+import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState } from "./state.mjs";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
@@ -1267,26 +1267,116 @@ async function cmdBrief(opts, [ref]) {
 
 // ---- workers: a bot's one worker per task ----
 
-/** The bot whose pane runs this command: { me (hc get), bot, project }. Anyone else is refused. */
+/**
+ * The folders that may hold the calling pane's project, most telling first: its foreground's
+ * folder (where the agent works now), the folders of the other terminals in its Herdr space
+ * (one space = one project; the sidebar's own rule, from hc alone so no window is needed),
+ * its launch folder, this command's folder, then the remembered projects. Fallbacks only: callingBot
+ * asks the attach binding's project first, and keeps the hints whose bots file defines the bot.
+ */
+async function botProjectHints(me, address) {
+  const hints = [me.foreground?.cwd];
+  const space = me.labels?.[SPACE_LABEL];
+  if (space) {
+    try {
+      const peers = rowsOf(await hcJson(["ls", "--label", `${SPACE_LABEL}=${space}`]));
+      hints.push(...peers.filter((r) => local(r?.address) && r.address !== address && r.state === "live").map((r) => r.cwd));
+    } catch { /* hc ls failing: the space gives no hint */ }
+  }
+  hints.push(me.cwd, process.cwd());
+  return [...hints.filter((h) => typeof h === "string" && h.startsWith("/")), ...rememberedKeys()];
+}
+
+/**
+ * The projects among `folders` whose bots file defines `botId`, in the folders' order, each
+ * once: [{ key, project, bot }]. A folder gone, outside any project or with a bots file that
+ * doesn't parse is skipped (another project's broken file never blocks this bot).
+ */
+async function projectsDefining(botId, folders) {
+  const seen = new Set();
+  const found = [];
+  for (const folder of folders) {
+    let key;
+    try { key = await keyOf(folder); } catch { continue; }
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    let project;
+    try { project = loadProject(key); } catch { continue; }
+    const bot = project.file.bots.find((b) => b.id === botId);
+    if (bot) found.push({ key, project, bot });
+  }
+  return { found, looked: [...seen] };
+}
+
+/** A project (by key) as { key, project, bot } when its bots file defines `botId`, else null. */
+function definedIn(key, botId, { strict = false } = {}) {
+  let project;
+  try { project = loadProject(key); } catch (e) { if (strict) throw e; return null; }
+  const bot = project.file.bots.find((b) => b.id === botId);
+  return bot ? { key, project, bot } : null;
+}
+
+/**
+ * The bot whose pane runs this command: { me (hc get), bot, project }. Anyone else is refused.
+ * The bot is the attach ledger's binding of the pane, never its label. Its project is the one
+ * whose bots file defines it: `--project` when that one does; else the project the binding
+ * names (attach.js: the bot's main checkout) when it does; else the one project among the
+ * fallbacks (botProjectHints) that does. Two fallbacks defining it are refused, never chosen between.
+ */
 async function callingBot(opts) {
   const self = process.env.HC_TERMINAL_ID;
   if (!self) throw new CliError("Only a bot starts workers, from its own pane: HC_TERMINAL_ID isn't set here, so this isn't a bot's pane.");
   const me = await hcGet(self);
   if (!me) throw new CliError(`${self} isn't a terminal hc knows; start workers from a bot's pane.`);
   const address = me.address ?? self;
+  // Named before the ledger is read: its one-time label import looks in a --project too.
+  const named = opts.project !== undefined ? await namedKeyOf(opts.project) : null;
+  if (named) namedKeys.add(named);
   // Which bot this pane plays is the attach ledger's answer, never its label.
-  const botId = (await attachView()).byTerminal.get(address)?.binding.bot;
-  if (!botId) throw new CliError(`${address} isn't a bot's pane (the attach ledger ties no bot to it). Only a bot starts workers.`);
-  const key = await keyOf(me.cwd ?? me.foreground?.cwd ?? process.cwd());
-  if (opts.project !== undefined) {
-    const named = await namedKeyOf(opts.project);
-    if (named !== key) throw new CliError(`--project ${named} isn't the project of ${address}, ${key}. A bot starts workers only in its own project.`);
+  const binding = (await attachView()).byTerminal.get(address)?.binding;
+  const botId = binding?.bot;
+  if (!botId) throw new CliError(await unboundRefusal(me, address));
+  // The named project as namedKeyOf keys it (never a parent's); its bots file must parse.
+  let hit = named ? definedIn(named, botId, { strict: true }) : null;
+  if (!hit && !named && typeof binding.project === "string") hit = definedIn(binding.project, botId);
+  if (!hit) {
+    const hints = [...(typeof binding.project === "string" ? [binding.project] : []), ...await botProjectHints(me, address)];
+    const { found, looked } = await projectsDefining(botId, hints);
+    const defining = found.filter((f) => f.key !== named);
+    if (named) {
+      const which = defining.length ? `it's defined in ${defining.map((f) => f.key).join(" and ")}` : "no project here defines it";
+      throw new CliError(`--project ${named} doesn't define bot ${botId}, which ${address} plays (${under(named, BOTS_PATH)}); ${which}. `
+        + "A bot starts workers only in its own project.");
+    }
+    if (defining.length > 1) {
+      throw new CliError(`${address} plays bot ${botId}, which ${defining.length} projects define: ${defining.map((f) => f.key).join(", ")}. `
+        + "Pick its project with --project <folder>.");
+    }
+    if (!defining.length) {
+      throw new CliError(`${address} plays bot ${botId}, which no project here defines (looked in ${looked.join(", ") || "none"}). `
+        + "A bot starts workers only in its own project.");
+    }
+    hit = defining[0];
   }
-  const project = loadProject(key);
-  const bot = project.file.bots.find((b) => b.id === botId);
-  if (!bot) throw new CliError(`${address} plays bot ${botId}, which ${under(key, BOTS_PATH)} doesn't define. A bot starts workers only in its own project.`);
-  if (bot.planned) throw new CliError(`${bot.name} is planned; a planned bot starts no workers.`);
-  return { me: { ...me, address }, bot, project };
+  if (hit.bot.planned) throw new CliError(`${hit.bot.name} is planned; a planned bot starts no workers.`);
+  return { me: { ...me, address }, bot: hit.bot, project: hit.project };
+}
+
+/**
+ * Why a pane the attach ledger ties no bot to can't start workers. A pane still carrying a
+ * `bot` label from before the ledger (its one-time import found no project defining that bot
+ * from the pane's folder, or ran before) is told how to tie it: attach, from its project; a
+ * Claude session outside the project can't be attached (attachRefusal), so start it there.
+ */
+async function unboundRefusal(me, address) {
+  const base = `${address} isn't a bot's pane (the attach ledger ties no bot to it).`;
+  const labelled = me.labels?.[BOT_LABEL];
+  if (typeof labelled !== "string" || !labelled) return `${base} Only a bot starts workers.`;
+  const { found } = await projectsDefining(labelled, await botProjectHints(me, address));
+  const key = found.length === 1 ? found[0].key : "<its project>";
+  return `${base} Its ${BOT_LABEL}=${labelled} label is from before the ledger, which no longer reads labels. `
+    + `Tie it: automagik-herdr attach ${labelled} ${address} --project ${key}. A Claude session must run in that project to be `
+    + `attached; if it doesn't, start the bot there: automagik-herdr start ${labelled} --project ${key}.`;
 }
 
 const realDir = (p) => { try { return realpathSync(p); } catch { return null; } };
