@@ -21,12 +21,15 @@ changes where updates come from and how they are checked.
 - **No downgrades through the pointer.** Each update through the pointer records its `sequence`
   in the install record (`installed-by-install.sh`). A pointer older than the installed pack, by
   version or by sequence (an older signed pointer posted again), is refused with a clear message.
-  To go back on purpose, use `automagik-herdr update --rollback`.
+  To go back on purpose, `automagik-herdr update --rollback` returns to 0.15.0 (the pack the
+  update replaced).
 - **The installer follows.** `install.sh` installs the pack the signed pointer names, with the same
   checks. `--version <v>` installs a named monorepo release that carries the pack (not every
-  release does), checked against that release's own `.sha256`, and says so; a 0.x release is no
-  longer installed with `--version` (to go back to one, use `automagik-herdr update --rollback`
-  after an update). The one-liner is now
+  release does), checked against that release's own `.sha256`, and says so. This installer no
+  longer installs a 0.x release with `--version`. To pin a 0.x install, use the old tag's
+  installer, which still reads this repository's releases:
+  `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/v0.14.1/install.sh | bash -s -- --version 0.14.1`
+  (`automagik-herdr update` then takes 0.15.0, and the update after it 3.60.x). The one-liner is now
   `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash`;
   the old one in this repository keeps working and does the same.
 - **The mod manager's catalog** is the monorepo's
