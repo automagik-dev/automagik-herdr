@@ -127,6 +127,9 @@ test("leadPane: the live one with an agent in front, newest by created_ms, from 
   ];
   assert.equal(leadPane(rows).address, "t3");
   assert.equal(leadPane([{ address: "t9", state: "live", program: { agent: true } }]).address, "t9"); // no created_ms
+  // The program table says shell but an agent is in the foreground: it counts.
+  const shellSays = { address: "t8", state: "live", created_ms: 50, program: { agent: false }, foreground: { argv: ["claude"] } };
+  assert.equal(leadPane([...rows, shellSays]).address, "t8");
   // Attach copies from that pane.
   assert.deepEqual(attachWords(file(), ID.dev, { bot: ID.dev }, rows), ["role=dev", "category=eng", "squad=c", `${SQUAD_MARK}=c`]);
 });

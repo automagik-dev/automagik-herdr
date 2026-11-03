@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf, heldTerminalOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -417,11 +417,12 @@ export default class Spaces extends View {
 
   // Live bots, poses and trees from this render's terminals() (rows.js decides; no hc get
   // here: terminals() carries program.agent, status, status_ms and created_ms on this host;
-  // a command line it lacks comes from readBotArgv, read off the drawing path).
+  // a command line it lacks comes from readBotArgv, read off the drawing path, and counts
+  // for liveness too: the program table can say shell while the agent runs).
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
-    const live = liveFrom(this.all, known);
+    const live = liveFrom(this.all, known, (a) => this.argvOf.get(a)?.argv ?? null);
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
@@ -649,9 +650,13 @@ export default class Spaces extends View {
     const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
+    // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
+    // a peek, rather than nothing.
+    const held = live || planned ? null : heldTerminalOf(b.id, this.all, panes());
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
-      : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
+      : held ? () => focusOrPeek(held)
+        : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
       machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");
     const size = main ? 30 : 26;

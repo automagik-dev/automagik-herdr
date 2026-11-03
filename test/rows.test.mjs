@@ -291,3 +291,58 @@ test("clickActionOf: a terminal with a pane is focused; a parked one (no pane) i
   assert.deepEqual(clickActionOf("t4", panes), { command: "terminal.peek", args: { terminal: "t4" } }, "a local t4 is not box/t4");
   assert.deepEqual(clickActionOf("t1", null), { command: "terminal.peek", args: { terminal: "t1" } });
 });
+
+// The t21v case: herdr-core lists the pane by its shell (program.agent false, no report) while
+// claude runs in the foreground; only `hc get` shows that foreground.
+test("liveFrom: an agent in the foreground counts when the program table says shell", () => {
+  const shell = { key: "shell", name: "zsh", agent: false, shell: true };
+  const rows = [
+    T("t1", { labels: { bot: "b-mainmainma" }, program: shell, foreground: { argv: ["claude", "--resume", "x"] } }),
+    T("t2", { labels: { bot: "b-captaincap" }, program: shell }), // argv only from hc get
+    T("t3", { labels: { bot: "b-devdevdevd" }, program: shell }), // hc get: a shell in front
+    T("t4", { labels: { bot: "b-testtestte" }, program: shell }), // hc get: the sh -c wrapper
+    T("t5", { labels: { bot: "b-loneloneln" }, program: shell }), // not read yet
+  ];
+  const read = { t2: ["claude", "--model", "opus"], t3: ["-zsh"], t4: ["sh", "-c", "claude"] };
+  const live = liveFrom(rows, null, (a) => read[a] ?? null);
+  assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-mainmainma"]);
+  assert.deepEqual(live["b-mainmainma"].argv, ["claude", "--resume", "x"]);
+  assert.deepEqual(live["b-captaincap"].argv, ["claude", "--model", "opus"], "the hc get command line is carried");
+  // Without the hc get reads only the row's own foreground counts; a non-array read is ignored.
+  assert.deepEqual(Object.keys(liveFrom(rows)), ["b-mainmainma"]);
+  assert.deepEqual(Object.keys(liveFrom(rows, null, () => "claude")), ["b-mainmainma"]);
+  // The main bot's card reads as running, not "Main bot · not running".
+  const [tree] = buildTree({ projects: [{ key: KEY, file }], live, terminals: rows, now: NOW });
+  assert.equal(tree.main.live.terminal, "t1");
+  assert.match(secondLine({ kind: "main", node: tree.main }, tree), /^Main bot · (?!not running)/);
+});
+
+test("argvToAsk: a settled pane the program table calls no agent is read again, after the unread ones", () => {
+  const known = new Set(["b-a", "b-b", "b-c"]);
+  const shell = { key: "shell", agent: false };
+  const rows = [
+    T("t1", { labels: { bot: "b-a" }, created_ms: 10, program: shell }),
+    T("t2", { labels: { bot: "b-b" }, created_ms: 20 }),
+    T("t3", { labels: { bot: "b-c" }, created_ms: 30 }),
+  ];
+  const settled = (created) => ({ argv: ["claude"], created, settled: true });
+  // t1 and t2 settled: t2 (table says agent) is skipped, t1 (table says shell) is read again.
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", settled(10)], ["t2", settled(20)]])).ask, ["t3", "t1"]);
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", settled(10)], ["t2", settled(20)]]), 1).ask, ["t3"]);
+});
+
+test("heldTerminalOf: a bot's live terminal for its row's click, shown in a pane first, then newest", async () => {
+  const { heldTerminalOf } = await import("../mods/am-sidebar/rows.js");
+  const rows = [
+    T("t1", { labels: { bot: "b-a" }, created_ms: 10 }),
+    T("t2", { labels: { bot: "b-a" }, created_ms: 30 }),
+    T("t3", { labels: { bot: "b-a" }, created_ms: 99, state: "exited" }),
+    T("t4", { labels: { bot: "b-b" }, created_ms: 5 }),
+  ];
+  assert.equal(heldTerminalOf("b-a", rows), "t2", "newest live");
+  assert.equal(heldTerminalOf("b-a", rows, [{ pane: "p1", terminal: "t1" }]), "t1", "a pane shows it");
+  assert.equal(heldTerminalOf("b-b", rows, null), "t4");
+  assert.equal(heldTerminalOf("b-c", rows), null, "no live terminal");
+  assert.equal(heldTerminalOf("b-a", [T("t3", { labels: { bot: "b-a" }, state: "exited" })]), null);
+  assert.equal(heldTerminalOf(null, rows), null);
+});
