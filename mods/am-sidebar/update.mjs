@@ -713,8 +713,9 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
   // The mod manager's catalog: it reads data/am-mods/catalog.json, then the one in its data folder
   // from before the rename (core.js catalogUrl). Each one there that still holds a URL the pack
   // wrote gets the current one; a URL the person set, a file it can't read or a link stays theirs.
-  // With neither, the pack's goes in data/am-mods/. A local path (absolute) whose file is gone
-  // is not carried over: the pack's URL replaces it, as core.js falls back to it anyway.
+  // With neither, the pack's goes in data/am-mods/. An absolute path whose file is gone is only
+  // noted, never rewritten: it may be an unmounted volume or a moved checkout, and core.js
+  // falls back to the published index until it is back.
   const catalogs = ["am-mods", renamedFrom(RENAMES, "am-mods")].map((d) => join(appHome, "data", d, "catalog.json"));
   for (const file of catalogs.filter(exists)) {
     let url = null, gone = false;
@@ -725,10 +726,8 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
         gone = typeof url === "string" && url.startsWith("/") && !existsSync(url);
       }
     } catch { url = "(unreadable)"; }
-    if (gone) {
-      log(`dropped your mod manager catalog ${url}: the file is gone; using the published index`);
-      writeFileSync(file, JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
-    } else if (url && !PACK_CATALOG_URLS.includes(url)) log(`kept your mod manager catalog (${url}) in ${file}`);
+    if (gone) log(`your mod manager catalog ${url} is missing; the mod manager uses the published index until it is back`);
+    else if (url && !PACK_CATALOG_URLS.includes(url)) log(`kept your mod manager catalog (${url}) in ${file}`);
     else if (url !== CATALOG_URL) writeFileSync(file, JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
   }
   if (!catalogs.some(exists)) {

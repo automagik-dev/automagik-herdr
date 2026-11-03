@@ -228,7 +228,5 @@ test("catalogUrl: a local catalog path whose file is gone falls back to the publ
   assert.equal(await core.catalogUrl(ioOf(), home), gone, "a local path that is there counts again");
   at("am-mods", 1_000_000); at("mod-manager", 2_000_000);
   assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/index.json", "and loses to a newer one");
-  put("am-mods", "file:///catalogs/mine.json");
-  at("am-mods", 2_000_000); at("mod-manager", 1_000_000);
-  assert.equal(await core.catalogUrl(ioOf(), home), "file:///catalogs/mine.json", "a URL with a scheme is not probed");
+  // No case for file:// URLs: nothing reads them, so which one wins is not a contract.
 });
