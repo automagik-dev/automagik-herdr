@@ -6,8 +6,8 @@
 
 const local = (id) => String(id ?? "").split("/").pop();
 
-/** A worker's tab name: its task branch when it has one, else its row name (hc name first). */
-export const workerTabName = (helper) => helper?.task || helper?.name || helper?.terminal || null;
+/** A worker's tab name: its branch when it has one, else its row name (hc name first). */
+export const workerTabName = (helper) => helper?.branch || helper?.name || helper?.terminal || null;
 
 /**
  * What a helper row's click does. `terminal`: the helper; `botTerminal`: its bot's live
