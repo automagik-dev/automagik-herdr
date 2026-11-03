@@ -16,8 +16,12 @@ export const ASLEEP_MS = 10 * 60 * 1000;
 export const projectId = (p) => JSON.stringify([p?.machine ?? null, p?.key ?? null]);
 
 const addressOf = (t) => t?.address ?? t?.id ?? null;
-// Decision 3: an agent in front, by the program table, else by the foreground process.
-const agentInFront = (t) => rowIsAgent(t) ?? agentInForeground(t);
+// Decision 3: an agent in front, by the program table or by the foreground process. The
+// table can say shell while an agent runs (herdr-core lists the pane by its shell when the
+// agent's report is missing or stale), so a false there never hides an agent in front: the
+// row's own `foreground.argv`, else the command line the view read with `hc get` (`argvOf`).
+const agentInFront = (t, argvOf) => rowIsAgent(t) === true || agentInForeground(t)
+  || agentInForeground({ foreground: { argv: argvOf(addressOf(t)) } });
 
 /**
  * The live map: bot id -> its live pane, from `terminals()` rows. A terminal counts while it
@@ -25,14 +29,16 @@ const agentInFront = (t) => rowIsAgent(t) ?? agentInForeground(t);
  * agent in front. On any machine: the view shows remote bots too (launch.js' liveTerminalOf
  * is this computer's only, for Start and Attach). Several holders: the newest by
  * `created_ms` counts, flagged `duplicate`. `argv`: the pane's foreground command line when
- * the row carries it (`foreground.argv`), else null (the view reads it with `hc get`).
- * `parent`: the hc parent of that terminal (null: none), where its click opens a tab.
+ * the row carries it (`foreground.argv`), else what `argvOf(address)` gives (the command line
+ * the view read with `hc get`), else null. `parent`: the hc parent of that terminal (null:
+ * none), where its click opens a tab.
  */
-export function liveFrom(terminals, known = null) {
+export function liveFrom(terminals, known = null, argvOf = () => null) {
+  const readArgv = (a) => { const v = argvOf(a); return Array.isArray(v) ? v : null; };
   const holders = new Map();
   for (const t of terminals ?? []) {
     const id = t?.labels?.[BOT_LABEL];
-    if (!id || (known && !known.has(id)) || t.state !== "live" || !addressOf(t) || !agentInFront(t)) continue;
+    if (!id || (known && !known.has(id)) || t.state !== "live" || !addressOf(t) || !agentInFront(t, readArgv)) continue;
     holders.set(id, [...(holders.get(id) ?? []), t]);
   }
   const live = {};
@@ -41,7 +47,7 @@ export function liveFrom(terminals, known = null) {
     live[id] = {
       terminal: addressOf(pick), duplicate: rows.length > 1, parent: pick.parent ?? null, status: pick.status ?? null,
       status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
-      argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : null,
+      argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : readArgv(addressOf(pick)),
     };
   }
   return live;
@@ -282,18 +288,27 @@ export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
  * live, labelled with a `known` bot, and not carrying `foreground.argv`. A pane already in
  * `cached` (address -> argvEntry) with the same `created_ms` and its agent in front is
  * skipped: a bot pane runs the command it was started with. One read while still in its
- * `sh -c` wrapper is asked again. At most `max` per call; the rest wait for the next.
- * Returns { ask: addresses, gone: cached addresses no longer wanted }.
+ * `sh -c` wrapper (or at a shell) is asked again, and so is one whose row doesn't say
+ * `program.agent` true (false, or no program): the read alone can keep it live (liveFrom), so
+ * it is kept fresh and an agent that quits back to its shell stops counting. At most `max` per
+ * call: panes never read (no read cached, or one for an older pane at that address) first, so
+ * a just-started bot shows as running on the next refresh, but at most `max - 1` of them while
+ * any other is due; the rest (unsettled reads and re-reads) share what's left, taken from
+ * `start` round their list, so panes that never settle (a bot pane at its shell) can't starve
+ * each other. Returns { ask: addresses, gone:
+ * cached addresses no longer wanted, next: the `start` for the next call }.
  */
-export function argvToAsk(terminals, known, cached = new Map(), max = 3) {
+export function argvToAsk(terminals, known, cached = new Map(), max = 3, start = 0) {
   const rows = (terminals ?? []).filter((k) => k?.address && k.state === "live" && known.has(k.labels?.[BOT_LABEL])
     && !Array.isArray(k.foreground?.argv));
   const wanted = new Set(rows.map((k) => k.address));
-  const ask = rows.filter((k) => {
-    const hit = cached.get(k.address);
-    return !hit?.settled || hit.created !== (k.created_ms ?? null);
-  }).map((k) => k.address).slice(0, max);
-  return { ask, gone: [...cached.keys()].filter((a) => !wanted.has(a)) };
+  const fresh = (k) => { const hit = cached.get(k.address); return !hit || hit.created !== (k.created_ms ?? null); };
+  const due = rows.filter((k) => !fresh(k) && (!cached.get(k.address).settled || rowIsAgent(k) !== true)).map((k) => k.address);
+  // One slot stays with the rotation while it has anything, so first reads can't hold it off.
+  const first = rows.filter(fresh).map((k) => k.address).slice(0, due.length && max > 1 ? max - 1 : max);
+  const from = due.length ? ((start % due.length) + due.length) % due.length : 0;
+  const turn = Array.from({ length: Math.min(max - first.length, due.length) }, (_, n) => due[(from + n) % due.length]);
+  return { ask: [...first, ...turn], gone: [...cached.keys()].filter((a) => !wanted.has(a)), next: due.length ? (from + turn.length) % due.length : 0 };
 }
 
 /**
@@ -304,6 +319,19 @@ export function argvToAsk(terminals, known, cached = new Map(), max = 3) {
 export function argvEntry(get, created) {
   const argv = Array.isArray(get?.foreground?.argv) ? get.foreground.argv : null;
   return { argv, created: created ?? null, settled: Boolean(argv) && agentInForeground(get) };
+}
+
+/**
+ * What the view keeps after one `hc get` of a pane: `get` is its parsed answer, null when the
+ * ask failed. A read with a command line replaces `prev`; a failed or empty one keeps `prev`
+ * for the same pane (`created`), else leaves an unsettled entry with no command line, so the
+ * pane is no longer "never read" (argvToAsk) and waits its turn instead of taking a first-read
+ * slot every call (a remote machine that is down but still listed).
+ */
+export function argvAfter(prev, get, created) {
+  const entry = argvEntry(get, created);
+  if (entry.argv) return entry;
+  return prev && prev.created === entry.created ? prev : entry;
 }
 
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */
@@ -389,4 +417,22 @@ export function spaceRowOrder({ tree = null, agents = [], shells = [], open = ne
 export function clickActionOf(terminal, panes) {
   const shown = (panes ?? []).some((p) => p?.terminal === terminal);
   return { command: shown ? "agent.focus" : "terminal.peek", args: { terminal } };
+}
+
+/**
+ * The live terminal labelled with bot `botId` when liveFrom doesn't count it (no agent seen in
+ * front yet: the `sh -c` wrapper, a command line not read yet, a shell): the bot row's click
+ * still goes to it (clickActionOf), never nowhere. Of several, one a pane shows (`panes`:
+ * panes() rows) first, then the newest by `created_ms`. Null when the bot has no live terminal.
+ */
+export function heldTerminalOf(botId, terminals, panes = []) {
+  const shown = new Set((panes ?? []).map((p) => p?.terminal).filter(Boolean));
+  const held = (terminals ?? []).filter((t) => botId && t?.labels?.[BOT_LABEL] === botId && t.state === "live" && addressOf(t));
+  if (!held.length) return null;
+  const rank = (t) => [shown.has(addressOf(t)) ? 1 : 0, t.created_ms ?? -1];
+  const pick = held.reduce((a, b) => {
+    const [sa, ca] = rank(a), [sb, cb] = rank(b);
+    return sb > sa || (sb === sa && cb > ca) ? b : a;
+  });
+  return addressOf(pick);
 }

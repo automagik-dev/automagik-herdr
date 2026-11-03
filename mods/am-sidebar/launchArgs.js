@@ -123,7 +123,8 @@ export function roleOf(file, botId) {
  * edit's relabel, in the CLI and the sidebar alike.
  */
 export function leadPane(rows) {
-  const live = (rows ?? []).filter((r) => r?.state === "live" && (rowIsAgent(r) ?? agentInForeground(r)));
+  // program.agent false is not the last word: an agent in the foreground counts too.
+  const live = (rows ?? []).filter((r) => r?.state === "live" && (rowIsAgent(r) === true || agentInForeground(r)));
   // newest() starts from null, so a row with no created_ms would never be picked.
   return live.length ? live.reduce((a, b) => ((b.created_ms ?? -1) > (a.created_ms ?? -1) ? b : a)) : null;
 }
