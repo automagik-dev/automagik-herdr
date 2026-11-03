@@ -30,7 +30,7 @@
               "id": "spaces",
               "type": "block",
               "content": {
-                "mod": "spaces-agents"
+                "mod": "am-sidebar"
               },
               "size": {
                 "weight": 1

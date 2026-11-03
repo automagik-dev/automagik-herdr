@@ -4,8 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/spaces-agents/formModel.js";
-import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
+import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/am-sidebar/formModel.js";
+import { applyBotEdit, checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -261,7 +261,7 @@ test("rank: a stored rank outside the set is a problem until changed; the line n
 
 // ---- the generated lines run through a real shell and the real CLI ----
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const SHELLS = ["/bin/sh", "/bin/zsh"].filter((sh) => existsSync(sh));
 // Values a shell or the CLI's strict parser could take for something else.
 const NASTY = {

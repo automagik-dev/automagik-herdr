@@ -10,10 +10,10 @@ import { join } from "node:path";
 
 import { state } from "./use-stubs.mjs";
 import { CONTRAST, DIM, buildThemes, contrast, themeText, THEMES_DIR, ROOT } from "../scripts/themes.mjs";
-const { THEME_KEY, THEME_NAMES, ensureTheme, themeSettled, themeSteps } = await import("../mods/spaces-agents/theme.js");
-const { applyUpdate } = await import("../mods/spaces-agents/update.mjs");
+const { THEME_KEY, THEME_NAMES, ensureTheme, themeSettled, themeSteps } = await import("../mods/am-sidebar/theme.js");
+const { applyUpdate } = await import("../mods/am-sidebar/update.mjs");
 
-const PACK = join(ROOT, "mods/spaces-agents");
+const PACK = join(ROOT, "mods/am-sidebar");
 const HEX = /^#[0-9a-f]{6}$/;
 
 test("the committed theme files are what scripts/themes.mjs builds, in Herdr's theme shape", () => {
@@ -54,8 +54,8 @@ test("themeSteps: copy the absent ones; select once, only when both are there an
 function home(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-theme-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(join(root, "mods/spaces-agents"), { recursive: true });
-  cpSync(THEMES_DIR, join(root, "mods/spaces-agents/themes"), { recursive: true });
+  mkdirSync(join(root, "mods/am-sidebar"), { recursive: true });
+  cpSync(THEMES_DIR, join(root, "mods/am-sidebar/themes"), { recursive: true });
   Object.assign(state, { appHome: root, shared: new Map(), runs: [], themeList: [], calls: [], readFault: null, runFault: null, beforeWrite: null });
   return root;
 }
@@ -90,7 +90,7 @@ test("ensureTheme: an edited theme file in the app home is kept; a missing pack 
   assert.deepEqual(r.copied, ["automagik-light"]);
   assert.equal(readFileSync(join(root, "themes/automagik-dark.json"), "utf8"), "{ \"edited\": true }\n");
   const bare = home(t);
-  rmSync(join(bare, "mods/spaces-agents/themes"), { recursive: true });
+  rmSync(join(bare, "mods/am-sidebar/themes"), { recursive: true });
   state.themeList = THEME_NAMES.map((name) => ({ name }));
   const missing = await ensureTheme();
   assert.equal(missing.selected, false);
@@ -140,17 +140,17 @@ test("ensureTheme: recorded before selecting, so a selection that throws is neve
 
 test("an update carries themes/ (the release packs the whole folder; nothing is export-ignored)", async (t) => {
   for (const n of THEME_NAMES) {
-    const attr = execFileSync("git", ["check-attr", "export-ignore", "--", `mods/spaces-agents/themes/${n}.json`], { cwd: ROOT, encoding: "utf8" });
+    const attr = execFileSync("git", ["check-attr", "export-ignore", "--", `mods/am-sidebar/themes/${n}.json`], { cwd: ROOT, encoding: "utf8" });
     assert.match(attr, /export-ignore: unspecified/);
   }
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-carry-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const { PACK_MODS } = await import("../mods/spaces-agents/release.js");
+  const { PACK_MODS } = await import("../mods/am-sidebar/release.js");
   for (const m of PACK_MODS) cpSync(join(ROOT, "mods", m), join(root, "src", m), { recursive: true });
-  writeFileSync(join(root, "src/spaces-agents/VERSION"), "9.9.9\n");
+  writeFileSync(join(root, "src/am-sidebar/VERSION"), "9.9.9\n");
   const tgz = join(root, "pack.tgz");
   execFileSync("tar", ["czf", tgz, "-C", join(root, "src"), ...PACK_MODS], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
   const mods = join(root, "mods");
   await applyUpdate({ tgzPath: tgz, version: "9.9.9", modsDir: mods });
-  for (const n of THEME_NAMES) assert.ok(existsSync(join(mods, "spaces-agents/themes", `${n}.json`)), n);
+  for (const n of THEME_NAMES) assert.ok(existsSync(join(mods, "am-sidebar/themes", `${n}.json`)), n);
 });

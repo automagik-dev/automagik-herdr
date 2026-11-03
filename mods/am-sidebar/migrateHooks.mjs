@@ -23,14 +23,16 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { ENTRY_SOURCE, OURS, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
+import { ENTRY_SOURCE, OURS, directHookCommand, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
+import { PATH_RENAMES, SHARED_RENAMES, renamedFrom } from "./migrate.js";
 import { PROJECTS_FILE, listedProjects } from "./model.js";
+import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 
 export const HOOKS_JOURNAL = "hooks-journal.json";
 export const BACKUP_SUFFIX = ".am-backup";
 export const CLI_LINK = "automagik-herdr";
 /** The sidebar folders, in the order the entry point tries them. */
-export const SIDEBARS = Object.freeze(["am-sidebar", "spaces-agents"]);
+export const SIDEBARS = Object.freeze([PACK_NAME, OLD_PACK_NAME]);
 const MAX_BACKUPS = 100;
 
 const lstat = (path) => { try { return lstatSync(path); } catch { return null; } };
@@ -130,19 +132,19 @@ const usable = (p) => typeof p === "string" && isAbsolute(p) && resolve(p) !== "
 
 /**
  * The projects the pack knows on this computer: the sidebar's remembered projects (shared.json,
- * read only: am.sidebar.projects, then spaces-agents.projects), the CLI's lists (am-sidebar-projects.json,
- * spaces-agents-projects.json) and `extra` (the open spaces' folders). Absolute paths, once each.
+ * read only: am.sidebar.projects, then its name before the rename), the CLI's lists (PROJECTS_FILE,
+ * then the name PATH_RENAMES copies it from) and `extra` (the open spaces' folders). Absolute paths, once each.
  */
 export function knownProjects(appHome, extra = []) {
   const keys = [];
   try {
     const shared = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8"));
-    for (const name of ["am.sidebar.projects", "spaces-agents.projects"]) {
+    for (const name of ["am.sidebar.projects", renamedFrom(SHARED_RENAMES, "am.sidebar.projects")]) {
       const list = isObject(shared) && Object.hasOwn(shared, name) ? shared[name] : null;
       for (const p of Array.isArray(list) ? list : []) if (typeof p?.key === "string" && !p.machine) keys.push(p.key);
     }
   } catch { /* none, or unreadable: none */ }
-  for (const name of ["am-sidebar-projects.json", PROJECTS_FILE]) {
+  for (const name of [PROJECTS_FILE, PATH_RENAMES.find(([, to]) => to === PROJECTS_FILE)?.[0]].filter(Boolean)) {
     try { keys.push(...listedProjects(readFileSync(join(appHome, name), "utf8"))); } catch { /* none */ }
   }
   keys.push(...extra);
@@ -362,7 +364,8 @@ export function migrateHooks(projects, { appHome, backup = true, git = runGit, a
  * The way back, for a release whose own hook code doesn't know the stable entry point (v0.3 and
  * older would otherwise add a second hook beside it). Each journalled command goes back to what
  * it was, and a command still exactly this app home's stable one (written since by a Start or a
- * worker) goes back to v0.3's path, but only where the file still holds it: every other key, and
+ * worker) goes back to v0.3's path, and so does this pack's own direct command (directHookCommand,
+ * written when the entry point couldn't be placed), but only where the file still holds it: every other key, and
  * a command changed since, stays. Entries done, or no longer applicable, leave the journal; the
  * backups stay for manual recovery. Returns `{ restored: string[], skipped: {file, reason}[] }`.
  */
@@ -376,6 +379,7 @@ export function revertHooks(projects, { appHome, git = runGit, also = [] } = {})
   const files = new Set(byFile.keys());
   for (const folder of foldersOf(projects, { git, also })) files.add(resolve(join(folder, ".claude", SETTINGS)));
   const stable = hookCommand(appHome);
+  const direct = directHookCommand(appHome);
   const legacy = legacyHookCommand(appHome);
   const keep = [];
   for (const file of files) {
@@ -389,7 +393,7 @@ export function revertHooks(projects, { appHome, git = runGit, also = [] } = {})
     const r = retargetHooks(raw.toString("utf8"), (command) => {
       const i = pending.findIndex((e) => e.after === command);
       if (i >= 0) return pending.splice(i, 1)[0].before;
-      return command === stable ? legacy : null;
+      return command === stable || command === direct ? legacy : null;
     });
     if (r.error) {
       if (mine.length || OURS.test(raw.toString("utf8"))) skipped.push({ file, reason: `${r.error}: left as it is` });
@@ -405,6 +409,29 @@ export function revertHooks(projects, { appHome, git = runGit, also = [] } = {})
   }
   if (entries.length) writeJournal(appHome, keep);
   return { restored, skipped };
+}
+
+/**
+ * The notice printed last after syncHooks (lines; none when nothing calls for one): every settings
+ * file it rewrote, with its project; that a Claude session already running there keeps the hook it
+ * loaded; and, after a move forward, how a project the pack doesn't know gets the new hook. A run
+ * that crossed the rename (`hooks.crossed`, update.mjs moveHooks) always warns, even with no file
+ * rewritten. install.sh, `update.mjs install|update|repair|rollback` and `automagik-herdr update` print it.
+ */
+export function hooksNotice(hooks) {
+  const forward = hooks?.direction === "forward";
+  const files = (forward ? hooks.rewritten : hooks?.direction === "back" ? hooks.restored : null) ?? [];
+  if (!files.length && !(forward && hooks.crossed)) return [];
+  const n = `${files.length} settings file${files.length === 1 ? "" : "s"}`;
+  return [
+    !files.length ? "IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten (the pack knew of none)."
+      : forward ? `IMPORTANT: the bots' briefing hook moved to a new path in ${n}:`
+        : `IMPORTANT: the bots' briefing hook went back to the older release's path in ${n}:`,
+    ...files.map((f) => `  ${dirname(dirname(f))}: ${f}`),
+    forward ? `A Claude session already running in ${files.length ? "those projects" : "a bot's project"} keeps the OLD hook and gets NO briefing until it is restarted, or until /hooks is run in it once.`
+      : "A Claude session already running in those projects keeps the hook it loaded until it is restarted, or until /hooks is run in it once.",
+    ...(forward ? ["Projects the pack doesn't know about were not rewritten and get no briefing. In one, run `automagik-herdr start <bot>` or `automagik-herdr attach <bot>` (either writes the new hook), or open it as a space in Herdr and run the installer again."] : []),
+  ];
 }
 
 // ---- the entry point and the CLI link ----
@@ -448,10 +475,6 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit })
     const r = migrateHooks(projects, { appHome, git, also });
     for (const f of r.rewritten) log(`briefing hook moved to the entry point in ${f} (the original is beside it, ${basename(f)}${BACKUP_SUFFIX}…)`);
     r.skipped.forEach(left);
-    if (r.rewritten.length) {
-      log("A Claude session already running in one of those folders takes the new hook after /hooks there once; "
-        + "until then it runs the old path, which works until its folder is renamed.");
-    }
     return { direction: "forward", ...r };
   }
   const r = revertHooks(projects, { appHome, git, also });
@@ -461,8 +484,8 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit })
 }
 
 /**
- * Repoints `<binDir>/automagik-herdr` at the CLI of the sidebar folder the record lists (am-sidebar,
- * else spaces-agents) when it is a link to either one's CLI in this app home: its bin/automagik-herdr
+ * Repoints `<binDir>/automagik-herdr` at the CLI of the sidebar folder the record lists (PACK_NAME,
+ * else OLD_PACK_NAME) when it is a link to either one's CLI in this app home: its bin/automagik-herdr
  * wrapper when the folder ships one (it runs the .mjs through bin/run.sh, which finds a node where
  * PATH has none; install.sh's cli_target), else bin/automagik-herdr.mjs. A link to either entry is
  * ours. A link elsewhere is the person's and stays; a file there is left with a note; no link

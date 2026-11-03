@@ -50,12 +50,12 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
+  CATALOG_URL, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
-import { CLI_LINK, botPaneFolders, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
+import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
   noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
@@ -94,8 +94,12 @@ export function readVersion(packDir) {
 export const readMarker = (modsDir) => { try { return parseMarker(readFileSync(markerOf(modsDir), "utf8")); } catch { return null; } };
 const readSet = (modsDir) => { try { return parseMarker(readFileSync(join(prevSetOf(modsDir), ".pack"), "utf8")); } catch { return null; } };
 
-/** The installed pack's version: the ownership record's, else the VERSION in mods/spaces-agents. */
-export const installedVersion = ({ modsDir = defaultModsDir() } = {}) => readMarker(modsDir)?.version ?? readVersion(join(modsDir, PACK_NAME));
+/**
+ * The installed pack's version: the ownership record's, else the VERSION in the sidebar folder
+ * (PACK_NAME, else its name before the rename, OLD_PACK_NAME, as a hand-installed v0.2 has it).
+ */
+export const installedVersion = ({ modsDir = defaultModsDir() } = {}) => readMarker(modsDir)?.version
+  ?? readVersion(join(modsDir, [PACK_NAME, OLD_PACK_NAME].find((m) => isFile(join(modsDir, m, "VERSION"))) ?? PACK_NAME));
 
 /**
  * Checks `buf` against the SHA256SUMS line for `name` (`sums`: the file's text or parseSums' Map).
@@ -269,18 +273,18 @@ const writeMarker = (modsDir, record) => {
 };
 
 /**
- * v0.2.x left `spaces-agents.before-install` (the pack found at the first install) and
- * `spaces-agents.prev` in the state folder: both move to backup/, the first recorded as adopted
+ * v0.2.x left `<OLD_PACK_NAME>.before-install` (the pack found at the first install) and
+ * `<OLD_PACK_NAME>.prev` in the state folder: both move to backup/, the first recorded as adopted
  * so --uninstall puts it back.
  */
 function carryV1(modsDir, record, log) {
   const state = stateDirOf(modsDir);
-  for (const [old, adopted] of [[`${PACK_NAME}.before-install`, true], [`${PACK_NAME}.prev`, false]]) {
+  for (const [old, adopted] of [[`${OLD_PACK_NAME}.before-install`, true], [`${OLD_PACK_NAME}.prev`, false]]) {
     if (!exists(join(state, old))) continue;
-    const name = backupName(modsDir, `${PACK_NAME}-${adopted ? "before-install" : "v0.2-prev"}`);
+    const name = backupName(modsDir, `${OLD_PACK_NAME}-${adopted ? "before-install" : "v0.2-prev"}`);
     mkdirSync(backupOf(modsDir), { recursive: true });
     renameSync(join(state, old), join(backupOf(modsDir), name));
-    if (adopted) record.adopted.push({ mod: PACK_NAME, path: `backup/${name}` });
+    if (adopted) record.adopted.push({ mod: OLD_PACK_NAME, path: `backup/${name}` });
     log(`kept v0.2's ${old} in ${join(backupOf(modsDir), name)}`);
   }
 }
@@ -633,6 +637,13 @@ export function revertRefs({ modsDir, log = () => {}, warnings = [], left = () =
 
 /** Where install.sh links the CLI: $HOME/.local/bin. */
 export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".local", "bin");
+/**
+ * Whether a run crossed the rename: `before` is oldSidebarHere(modsDir) taken before it, and the
+ * sidebar's folder from before the rename (OLD_PACK_NAME) is gone from mods/ now.
+ */
+export const oldSidebarHere = (modsDir) => exists(join(modsDir, OLD_PACK_NAME));
+export const crossedRename = (modsDir, before) => before && !oldSidebarHere(modsDir);
+
 /** Whether `modsDir` is in the app home Herdr runs by default: only then are the open spaces asked for. */
 export const liveHome = (modsDir) => dirname(resolve(modsDir)) === join(homedir(), ".config", "herdr-app");
 
@@ -640,12 +651,14 @@ export const liveHome = (modsDir) => dirname(resolve(modsDir)) === join(homedir(
  * The briefing hooks and the CLI link after the folders and references (Group 6b, migrateHooks.mjs
  * syncHooks and relink). `binDir`: the folder holding the CLI link (null: the link is not looked at);
  * `window`: also the open spaces' and the bot panes' folders (`herdr-app ls`, `hc`). A failure is a warning.
- * Returns `{ hooks, link }` (hooks: syncHooks's result or null; link: the line logged or null).
+ * `crossed`: this run moved the sidebar off its folder from before the rename (crossedRename), so
+ * the hooks notice warns even when no settings file was rewritten.
+ * Returns `{ hooks, link }` (hooks: syncHooks's result plus `crossed`, or null; link: the line logged or null).
  */
-export function moveHooks({ modsDir, log = () => {}, warnings = [], binDir = null, window = false }) {
+export function moveHooks({ modsDir, log = () => {}, warnings = [], binDir = null, window = false, crossed = false }) {
   let hooks = null;
   let link = null;
-  try { hooks = syncHooks({ modsDir, extra: window ? [...openSpaces(), ...botPaneFolders()] : [], log }); } catch (error) {
+  try { hooks = { ...syncHooks({ modsDir, extra: window ? [...openSpaces(), ...botPaneFolders()] : [], log }), crossed }; } catch (error) {
     warnings.push(`the briefing hooks were not moved (${error.message}); each rewritten settings.local.json has its backup beside it`);
   }
   if (binDir) {
@@ -768,8 +781,10 @@ export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app
 /**
  * Points the CLI link at the entry the installed pack has: bin/automagik-herdr (it runs the .mjs
  * through bin/run.sh, which finds node 22.7+ or bun where PATH has none) or, in a pack from before
- * it (a rollback), bin/automagik-herdr.mjs. Only a link to one of those two in this pack is ours;
- * a file, a missing link or one pointing elsewhere is left alone. Cheap (an lstat, a readlink)
+ * it (a rollback), bin/automagik-herdr.mjs. Only a link to one of those two in this pack, or in
+ * the sidebar's folder from before the rename (OLD_PACK_NAME: a v0.4.x link the migration didn't
+ * move), is ours; one from the old folder moves only onto an entry that is there. A file, a
+ * missing link or one pointing elsewhere is left alone. Cheap (an lstat, a readlink)
  * and idempotent: the CLI runs it on every start. Returns `{ link, from, to }` when it
  * repointed the link, else null; throws only when the swap itself fails.
  */
@@ -778,13 +793,13 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
   const link = join(binDir, CLI_LINK);
   if (!isLink(link)) return null;
   const from = readlinkSync(link);
-  const bin = join(resolve(modsDir), name, "bin");
-  const wrapper = join(bin, "automagik-herdr");
-  const mjs = join(bin, "automagik-herdr.mjs");
+  const entries = (m) => ["automagik-herdr", "automagik-herdr.mjs"].map((f) => join(resolve(modsDir), m, "bin", f));
+  const [wrapper, mjs] = entries(name);
   const now = resolve(dirname(link), from);
-  if (now !== wrapper && now !== mjs) return null;
+  const old = name !== OLD_PACK_NAME && entries(OLD_PACK_NAME).includes(now);
+  if (now !== wrapper && now !== mjs && !old) return null;
   const to = isFile(wrapper) ? wrapper : mjs;
-  if (now === to) return null;
+  if (now === to || (old && !isFile(to))) return null;
   const tmp = join(binDir, `.${CLI_LINK}.relink-${process.pid}`);
   rmSync(tmp, { force: true });
   symlinkSync(to, tmp);
@@ -808,9 +823,10 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
+    const before = oldSidebarHere(modsDir);
     const installed = await applyUpdate({ tgzPath, version: found.update.version, modsDir, log });
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
-    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window, crossed: crossedRename(modsDir, before) });
     return { ...found, installed };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -826,7 +842,7 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
  * `changed` is false only when every file matched the release and no folder or layout was put
  * back (the layout's reference copy and the record are rewritten as on every install).
  */
-export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir(), log = () => {}, herdrApp = "herdr-app" }) {
+export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir(), log = () => {}, herdrApp = "herdr-app", window = false }) {
   const found = await verifyInstall({ tgzPath, version, modsDir });
   for (const m of found.missing) log(`missing: mods/${m}`);
   for (const d of found.damaged) {
@@ -842,7 +858,10 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
     const { failed: checkFailed, checked } = checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp });
     const changed = Boolean(repaired) || layout === "added" || layout === "replaced";
-    return { version, repaired: found.repair, layout, checkFailed, checked, changed, warnings: repaired?.warnings ?? [] };
+    const warnings = repaired?.warnings ?? [];
+    // The hooks too, so a rerun moves those of a project opened (or listed) since the install.
+    const hooks = moveHooks({ modsDir, log, warnings, window });
+    return { version, repaired: found.repair, layout, checkFailed, checked, changed, hooks, warnings };
   } finally {
     rmSync(tgzDir, { recursive: true, force: true });
   }
@@ -878,22 +897,27 @@ async function main(argv) {
   const { command, opts } = parseArgs(argv);
   const modsDir = opts.mods ?? defaultModsDir();
   const log = (line) => process.stderr.write(`${line}\n`);
+  // The hooks notice, last and tagged: install.sh prints the `notice: ` lines at the end of its run.
+  const notice = (hooks) => { for (const line of hooksNotice(hooks)) log(`notice: ${line}`); };
   // The CLI link and the open spaces belong to this computer's own app home; install.sh links the CLI itself.
   const host = { binDir: binDirOf(), window: liveHome(modsDir) };
   if (command === "check" || (command === "update" && opts.check)) return checkForUpdate({ modsDir });
   if (command === "apply" || command === "update") {
     const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, ...host });
+    if (command === "update") notice(r.installed?.hooks?.hooks);
     if (command === "apply" || opts.json) return r;
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };
   }
   if (command === "rollback") {
     const r = rollback({ modsDir, log, ...host });
+    notice(r.hooks?.hooks);
     if (r.warnings.length) process.exitCode = 4;
     return r;
   }
   if (command === "repair") {
     // Exit 3: a mod's herdr-app check failed; exit 4: a step after a swap did not finish.
-    const r = await repairInstall({ tgzPath: opts.from, version: opts.version, modsDir, log });
+    const r = await repairInstall({ tgzPath: opts.from, version: opts.version, modsDir, log, window: host.window });
+    notice(r.hooks?.hooks);
     if (r.warnings.length) process.exitCode = 4;
     else if (r.checkFailed.length) process.exitCode = 3;
     return r;
@@ -901,12 +925,15 @@ async function main(argv) {
   // install.sh: the tarball it downloaded and checked with shasum, through applyUpdate's checks.
   const appHome = dirname(resolve(modsDir));
   if (opts.setup) preflightKeys(appHome);
+  const before = oldSidebarHere(modsDir);
   const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, modsDir, adopt: Boolean(opts.adopt), log });
+  const crossed = () => crossedRename(modsDir, before);
   // Exit 4: installed, but a step after the swap did not finish (its warning says what and where).
   const done = () => { if (installed.warnings.length) process.exitCode = 4; };
   if (!opts.setup) {
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
-    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed() });
+    notice(installed.hooks?.hooks);
     done();
     return { installed };
   }
@@ -916,7 +943,8 @@ async function main(argv) {
     const failed = setupHome({ modsDir, tgzDir, record: readMarker(modsDir), log });
     // After setupHome: the pack's own layout is placed first, so only the person's are migrated.
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
-    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed() });
+    notice(installed.hooks?.hooks);
     done();
     if (failed.length && !process.exitCode) process.exitCode = 3;
     return { installed, checkFailed: failed };

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds Herdr's two Automagik themes, mods/spaces-agents/themes/automagik-{light,dark}.json
+// Builds Herdr's two Automagik themes, mods/am-sidebar/themes/automagik-{light,dark}.json
 // (DESIGN Decision 12, Group 5), from Automagik's own look. Run it after changing the inputs:
 //   node scripts/themes.mjs          writes both files
 //   node scripts/themes.mjs check    exits 1 when a committed file differs from what this builds
@@ -20,7 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-export const THEMES_DIR = join(ROOT, "mods/spaces-agents/themes");
+export const THEMES_DIR = join(ROOT, "mods/am-sidebar/themes");
 
 export const STAGE_LIGHT = Object.freeze({ bg: "#f6eee2", sidebar: "#fbf6ee", card: "#fffdf9", text: "#3c3049", accent: "#007087", lilac: "#e6dcf6" });
 export const STAGE_DARK = Object.freeze({ bg: "#1e1923", sidebar: "#262029", card: "#2b2431", text: "#f3e9dd", accent: "#7fd8ea", lilac: "#4a3d61" });

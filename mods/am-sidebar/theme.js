@@ -58,7 +58,7 @@ export async function ensureTheme() {
       await fs.mkdir(`${home}/themes`, { recursive: true });
       for (const n of first.copy) {
         // Herdr names no mod's own folder (DESIGN Group 3), so the pack's path is computed.
-        const text = await readTextFile(`${home}/mods/spaces-agents/themes/${n}.json`);
+        const text = await readTextFile(`${home}/mods/am-sidebar/themes/${n}.json`);
         if (text === null) throw new Error(`the pack has no themes/${n}.json`);
         try {
           // Expected null: writes only when there is no file, rejects when one appeared since

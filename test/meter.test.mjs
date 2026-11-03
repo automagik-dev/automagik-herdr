@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { METER_EVERY_MS, METER_FIRST_MS, METER_KEY, meterBin, syncMeter } from "../mods/spaces-agents/meter.js";
-import { formatMarker, parseMarker } from "../mods/spaces-agents/release.js";
+import { METER_EVERY_MS, METER_FIRST_MS, METER_KEY, meterBin, syncMeter } from "../mods/am-sidebar/meter.js";
+import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BIN = meterBin("/home/someone");
@@ -98,13 +98,13 @@ test("usagemeter sync: a missing binary (exec rejects) or a failing run is silen
 });
 
 test("the sidebar wires it: Herdr's exec and home(), 30 s after load, no LaunchAgent anywhere", () => {
-  const main = readFileSync(join(ROOT, "mods", "spaces-agents", "main.js"), "utf8");
+  const main = readFileSync(join(ROOT, "mods", "am-sidebar", "main.js"), "utf8");
   assert.match(main, /import \{[^}]*\bsyncMeter\b[^}]*\} from "\.\/meter\.js";/);
   assert.match(main, /cx\.timer\.after\(METER_FIRST_MS, \(cx\) => this\.meterTick\(cx\)\)/);
   assert.match(main, /syncMeter\(\{ exec, bin: meterBin\(home\(\)\), get: shared, set: setShared, state: this\.meter \}\)/);
   assert.match(main, /cx\.timer\.after\(wait, \(cx\) => this\.meterTick\(cx\)\)/);
   // meter.js is pure: no import at all, so node --test and the mod share it.
-  assert.doesNotMatch(readFileSync(join(ROOT, "mods", "spaces-agents", "meter.js"), "utf8"), /^import /m);
+  assert.doesNotMatch(readFileSync(join(ROOT, "mods", "am-sidebar", "meter.js"), "utf8"), /^import /m);
   for (const dir of readdirSync(join(ROOT, "mods"))) {
     for (const name of readdirSync(join(ROOT, "mods", dir)).filter((n) => /\.(m?js)$/.test(n))) {
       assert.doesNotMatch(readFileSync(join(ROOT, "mods", dir, name), "utf8"), /Library\/LaunchAgents|launchctl/, `${dir}/${name}`);
@@ -113,7 +113,7 @@ test("the sidebar wires it: Herdr's exec and home(), 30 s after load, no LaunchA
 });
 
 test("the marker's usagemeter line: written when set, read back, junk ignored, absent by default", () => {
-  const base = { version: "1.2.3", mods: ["spaces-agents"], layout: "added" };
+  const base = { version: "1.2.3", mods: ["am-sidebar"], layout: "added" };
   assert.doesNotMatch(formatMarker(base), /usagemeter/);
   const text = formatMarker({ ...base, usagemeter: "0.2.0" });
   assert.match(text, /\nusagemeter=0\.2\.0\n$/);

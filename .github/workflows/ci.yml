@@ -40,9 +40,9 @@ jobs:
             node --check "$f"
           done
           sh -n install.sh
-          sh -n mods/spaces-agents/bin/run.sh
-          sh -n mods/spaces-agents/bin/automagik-herdr
-          shellcheck -s sh install.sh mods/spaces-agents/bin/run.sh mods/spaces-agents/bin/automagik-herdr
+          sh -n mods/am-sidebar/bin/run.sh
+          sh -n mods/am-sidebar/bin/automagik-herdr
+          shellcheck -s sh install.sh mods/am-sidebar/bin/run.sh mods/am-sidebar/bin/automagik-herdr
 
       - name: Catalog
         run: node scripts/catalog.mjs --check

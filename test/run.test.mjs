@@ -10,11 +10,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BIN = fileURLToPath(new URL("../mods/spaces-agents/bin/", import.meta.url));
+const BIN = fileURLToPath(new URL("../mods/am-sidebar/bin/", import.meta.url));
 const RUN = join(BIN, "run.sh");
 const WRAPPER = join(BIN, "automagik-herdr");
 const CLI = join(BIN, "automagik-herdr.mjs");
-const VERSION = readFileSync(new URL("../mods/spaces-agents/VERSION", import.meta.url), "utf8").trim();
+const VERSION = readFileSync(new URL("../mods/am-sidebar/VERSION", import.meta.url), "utf8").trim();
 
 /** A scratch HOME and PATH folder; `fake(path, version)` writes a runtime that prints its name, args and stdin. */
 function scratch(t) {

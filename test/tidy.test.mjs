@@ -9,9 +9,9 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { plan, applyNonVisual, planText, folderFacts, displayName } from "../mods/spaces-agents/tidy.js";
-import { readState, spacesOf } from "../mods/spaces-agents/bin/state.mjs";
-import { runProgram } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
+import { plan, applyNonVisual, planText, folderFacts, displayName } from "../mods/am-sidebar/tidy.js";
+import { readState, spacesOf } from "../mods/am-sidebar/bin/state.mjs";
+import { runProgram } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { fixtures, golden, view } from "./sidebar-fixture.mjs";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
@@ -298,7 +298,7 @@ test("spacesOf turns herdr-app ls into State spaces", () => {
 // ---- the CLI, against fakes ----
 
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const ID = { main: "b-mmmmmmmmmm", cap: "b-cccccccccc", dev: "b-dddddddddd", beta: "b-bbbbbbbbbb" };
@@ -351,7 +351,7 @@ function scene(t) {
   const home = join(root, "home"), app = join(root, "app");
   mkdirSync(home);
   mkdirSync(app);
-  const list = join(app, "spaces-agents-projects.json");
+  const list = join(app, "am-sidebar-projects.json");
   writeFileSync(list, `${JSON.stringify([alpha, join(root, "gone"), beta], null, 2)}\n`);
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog };
   delete env.HC_TERMINAL_ID;
@@ -411,7 +411,7 @@ test("readState: only a folder found missing under a parent that is there counts
   const app = join(root, "app");
   mkdirSync(app);
   const gone = join(root, "gone"), unmounted = join(root, "volume", "proj"), unreadable = join(locked, "proj");
-  writeFileSync(join(app, "spaces-agents-projects.json"), JSON.stringify([gone, unmounted, unreadable]));
+  writeFileSync(join(app, "am-sidebar-projects.json"), JSON.stringify([gone, unmounted, unreadable]));
   const run = async (cmd, args) => (cmd === "hc" ? { code: 0, stdout: JSON.stringify({ terminals: [] }), stderr: "" } : runProgram(cmd, args));
   const state = await readState({ run, home: "/h", appHome: app }, { window: false });
   assert.deepEqual(Object.keys(state.folders), [gone], "the unreadable and the unmounted ones are left out");

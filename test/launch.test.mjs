@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, labelMoves, attachRefusal, parseCommand } from "../mods/spaces-agents/launchArgs.js";
-const { startBot, attachBot, liveTerminalOf } = await import("../mods/spaces-agents/launch.js");
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, labelMoves, attachRefusal, parseCommand } from "../mods/am-sidebar/launchArgs.js";
+const { startBot, attachBot, liveTerminalOf } = await import("../mods/am-sidebar/launch.js");
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });

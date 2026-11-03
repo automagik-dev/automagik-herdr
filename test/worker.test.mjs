@@ -8,12 +8,12 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
-import { effortArgs, promptArgs } from "../mods/spaces-agents/models.js";
+import { applyBotEdit, checkBots, parseBots } from "../mods/am-sidebar/model.js";
+import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { baseCandidates, branchSlug, parseWorktrees, readLedger, sessionChange, startRow, templateAgent, workerArgs, workerPlan,
-  workerRole, writesWorktree } from "../mods/spaces-agents/workers.js";
+  workerRole, writesWorktree } from "../mods/am-sidebar/workers.js";
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", stray: "b-zzzzzzzzzz" };
 
@@ -50,8 +50,8 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
-  mkdirSync(join(app, "mods/spaces-agents"), { recursive: true });
-  if (briefing) writeFileSync(join(app, "mods/spaces-agents/briefing.mjs"), "// stand-in\n");
+  mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
+  if (briefing) writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
   const statePath = join(root, "hc.json");
   const logPath = join(root, "hc.log");
   const terminals = [term("t1", { bot: ID.dev, cwd: project }), term("t2", { cwd: project }), term("t3", { bot: ID.stray, cwd: project }),
@@ -525,7 +525,7 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
 });
 
 test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with hc kill once merged", async () => {
-  const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/spaces-agents/briefingText.mjs");
+  const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/am-sidebar/briefingText.mjs");
   const file = parseBots(JSON.stringify(team())).file;
   const text = briefingText({ self: { ...file.bots[2], instructions: "x".repeat(4000) }, file });
   assert.ok(text.includes(WORKER_LINE));
@@ -631,7 +631,7 @@ test("worker: a live worker with no worker.role label holds its worktree as a wr
 });
 
 test("worker: the check and the start run under one lock per worktree, named by its real path's hash", async (t) => {
-  const { worktreeLock } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const s = scene(t);
   const [a, b] = [join(s.root, "wa"), join(s.root, "wb")];
   mkdirSync(a);

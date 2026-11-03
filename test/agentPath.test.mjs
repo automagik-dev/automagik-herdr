@@ -7,10 +7,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { besideDirs, envInterpreter, interpreterPath, safe } from "../mods/spaces-agents/agentPath.mjs";
-import { workerArgs } from "../mods/spaces-agents/workers.js";
+import { besideDirs, envInterpreter, interpreterPath, safe } from "../mods/am-sidebar/agentPath.mjs";
+import { workerArgs } from "../mods/am-sidebar/workers.js";
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const exe = (path, text) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, text); chmodSync(path, 0o755); };
 const runtime = (path, version) => exe(path, `#!/bin/sh\necho ${version}\n`);
@@ -247,7 +247,7 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
     { id: "b-cccccccccc", name: "Dev", kind: "member", look, role: "r", instructions: "i", agent: "claude", worker: { agent: "codex" } },
   ] }));
   const app = join(s.root, "app");
-  mkdirSync(join(app, "mods/spaces-agents"), { recursive: true });
+  mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
   const state = join(s.root, "hc.json");
   const log = join(s.root, "hc.log");
   writeFileSync(state, JSON.stringify({ next: 100, templates: [], terminals: [{ address: "t1", name: "t1", cwd: project, state: "live",

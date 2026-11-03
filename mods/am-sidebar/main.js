@@ -1,4 +1,4 @@
-// Changed from Herdr's `spaces` 0.1.7 (cloned as spaces-agents) by the Automagik Herdr pack;
+// Changed from Herdr's `spaces` 0.1.7 by the Automagik Herdr pack (the am-sidebar mod);
 // see the repository history for each change. Apache-2.0.
 //
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
@@ -18,7 +18,7 @@ import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
-import { carryShared } from "./migrate.js";
+import { SHARED_RENAMES, carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
 import { startBot, attachBot, modelTexts } from "./launch.js";
@@ -31,8 +31,8 @@ import { liveFrom, buildTree, placeTrees, knownBots, nextWake, projectId, second
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
-    ? { mod: "spaces-agents", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
-    : { mod: "spaces-agents", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
+    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
+    : { mod: "am-sidebar", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
 }
 
 // A terminal row's click: its pane when it has one, else a peek (a parked seat has no pane).
@@ -71,7 +71,7 @@ async function pngPaste(address) {
   const file = `${dir}/paste-${Date.now()}.png`;
   try {
     await fs.mkdir(dir, { recursive: true });
-    const r = await exec("osascript", ["-l", "JavaScript", `${appHome()}/mods/spaces-agents/clipboard-png.jxa`, file]);
+    const r = await exec("osascript", ["-l", "JavaScript", `${appHome()}/mods/am-sidebar/clipboard-png.jxa`, file]);
     if (r.code !== 0) throw new Error("Couldn't turn the clipboard image into a PNG.");
     if (!isPng(await fs.readFile(file))) throw new Error("The converted image isn't a PNG.");
     const put = await hc(["put", "--json", address, file]);
@@ -112,7 +112,7 @@ const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 const FALLBACK = 60000;
 // Character pictures (characters.js), under the app home outside mods/, by their path
 // relative to the app home, as image() takes it.
-const PETS = "spaces-agents-pets";
+const PETS = "am-sidebar-pets";
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
@@ -127,9 +127,10 @@ export function tone(t, status) {
   return t[status] ?? t.unknown;
 }
 
-/** The sidebar's shared keys from before the rename (migrate.js SHARED_RENAMES maps them to am.*). */
-const SHARED_OLD = ["spaces-agents.icons", "spaces-agents.projects", "spaces-agents.update-shown", "spaces-agents.theme-selected",
-  "space.colors", "sidebar.collapsed"];
+/** The sidebar's shared keys from before the rename: the old names migrate.js SHARED_RENAMES maps to these. */
+const SHARED_NEW = ["am.sidebar.icons", "am.sidebar.projects", "am.sidebar.update-shown", "am.sidebar.theme-selected",
+  "am.space.colors", "am.sidebar.collapsed"];
+const SHARED_OLD = Object.keys(SHARED_RENAMES).filter((old) => SHARED_NEW.includes(SHARED_RENAMES[old]));
 
 export default class Spaces extends View {
   init(given, cx) {
@@ -178,7 +179,7 @@ export default class Spaces extends View {
     // METER_EVERY_MS while Herdr is open, one run at a time (meter.js). No LaunchAgent, no daemon.
     this.meter = { busy: false };
     cx.timer.after(METER_FIRST_MS, (cx) => this.meterTick(cx));
-    // Cmd+V ("spaces-agents.paste") and Ctrl+V ("spaces-agents.paste_image"). An image
+    // Cmd+V ("am-sidebar.paste") and Ctrl+V ("am-sidebar.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
     // Otherwise as before: Cmd+V pastes text, or gives a local agent its Ctrl+V for an
     // image; Ctrl+V stays terminal.paste_image. The terminal is the one focused at the key.
@@ -441,7 +442,7 @@ export default class Spaces extends View {
       let check = { kind: "retry" };
       try {
         const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-        const { node, result } = await runCheck(exec, `${appHome()}/mods/spaces-agents/update.mjs`, this.updates.node,
+        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
           { mods: `${appHome()}/mods`, sleep });
         if (node) this.updates.node = node;
         check = readCheck(result);

@@ -32,7 +32,7 @@ function makeCx() {
 async function footer({ sidebar, files = {} }) {
   const root = mkdtempSync(join(tmpdir(), "hb-footer-"));
   state.appHome = root;
-  if (sidebar) { mkdirSync(join(root, "mods/spaces-agents"), { recursive: true }); writeFileSync(join(root, "mods/spaces-agents/mod.json"), "{}\n"); }
+  if (sidebar) { mkdirSync(join(root, "mods/am-sidebar"), { recursive: true }); writeFileSync(join(root, "mods/am-sidebar/mod.json"), "{}\n"); }
   for (const [path, body] of Object.entries(files)) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), body); }
   ui.props = { footer: true };
   const cx = makeCx();
@@ -51,7 +51,7 @@ test("the rail: Bots first, ahead of Mods, Automations and Quota, while the side
   assert.equal(nodes.get("bots").kids[0].__node.arg, "mods/sidebar-chrome/bot.svg");
 });
 
-test("the rail: no Bots tab without mods/spaces-agents/mod.json", async () => {
+test("the rail: no Bots tab without mods/am-sidebar/mod.json", async () => {
   assert.deepEqual(await footer({ sidebar: false }), ["mods", "automations", "quota", "settings", "machine"]);
 });
 
@@ -63,8 +63,8 @@ test("the Bots tab opens this mod's popup", async () => {
 });
 
 test("the forms are the sidebar mod's own: create 1000 x 840, the bot list 560 x 0.85, modal dialogs", () => {
-  assert.deepEqual(BOT_FORMS.create, { mod: "spaces-agents", kind: "dialog", modal: true, width: 1000, height: 840, props: { form: "create" } });
-  assert.deepEqual(BOT_FORMS.pick, { mod: "spaces-agents", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "pick" } });
+  assert.deepEqual(BOT_FORMS.create, { mod: "am-sidebar", kind: "dialog", modal: true, width: 1000, height: 840, props: { form: "create" } });
+  assert.deepEqual(BOT_FORMS.pick, { mod: "am-sidebar", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "pick" } });
 });
 
 function popup() {
