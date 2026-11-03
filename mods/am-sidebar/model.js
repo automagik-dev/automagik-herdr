@@ -87,8 +87,32 @@ export function workerProblem(worker) {
   if (bad.length) return `worker ${bad.join(", ")} not text`;
   const dashed = WORKER_FIELDS.filter((k) => typeof worker[k] === "string" && worker[k].trimStart().startsWith("-"));
   if (dashed.length) return `worker ${dashed.join(", ")} starts with a dash (an agent would read it as an option)`;
-  return worker.template !== undefined && !TEMPLATE_SHAPE.test(worker.template)
-    ? `worker template "${worker.template}" isn't an hc template name (letters, digits, ".", "_" and "-")` : null;
+  if (worker.template !== undefined && !TEMPLATE_SHAPE.test(worker.template)) {
+    return `worker template "${worker.template}" isn't an hc template name (letters, digits, ".", "_" and "-")`;
+  }
+  return swapProblem(worker.swap);
+}
+
+/** The fields of a bot's swap arm (`worker.swap`), the other agent, model or effort its planned swaps run. */
+export const SWAP_FIELDS = ["agent", "model", "effort"];
+const EFFORT_LIKE = /^[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * Why a `worker.swap` can't be used, or null when it is absent or fine: an object with at
+ * least one of agent, model and effort, each non-empty text not starting with a dash (an
+ * effort as the agents spell one), and nothing else (a template never swaps).
+ */
+export function swapProblem(swap) {
+  if (swap === undefined) return null;
+  if (!isObject(swap)) return "worker swap is not an object";
+  const other = Object.keys(swap).filter((k) => !SWAP_FIELDS.includes(k));
+  if (other.length) return `worker swap takes only agent, model and effort, not ${other.join(", ")}`;
+  if (!SWAP_FIELDS.some((k) => swap[k] !== undefined)) return "worker swap names no agent, model or effort";
+  const bad = SWAP_FIELDS.filter((k) => swap[k] !== undefined && !isText(swap[k]));
+  if (bad.length) return `worker swap ${bad.join(", ")} not text`;
+  const dashed = SWAP_FIELDS.filter((k) => typeof swap[k] === "string" && swap[k].trimStart().startsWith("-"));
+  if (dashed.length) return `worker swap ${dashed.join(", ")} starts with a dash (an agent would read it as an option)`;
+  return swap.effort !== undefined && !EFFORT_LIKE.test(swap.effort) ? `worker swap effort "${swap.effort}" isn't an effort level` : null;
 }
 
 /**

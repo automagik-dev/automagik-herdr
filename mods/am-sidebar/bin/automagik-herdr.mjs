@@ -26,9 +26,10 @@ import { interpreterPath } from "../agentPath.mjs";
 import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, LEDGER_FILE, ROLES, TASK_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE, baseCandidates,
-  branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan,
-  workerRole, worktreeFolder, writesWorktree } from "../workers.js";
+import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
+  baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
+  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
+  writesWorktree } from "../workers.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
@@ -319,6 +320,7 @@ async function describe(project, bot) {
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
     terminal: live?.address ?? null, status, duplicate: panes.duplicate,
     role: bot.role, rank: bot.rank ?? null, look: bot.look,
+    worker: bot.worker && typeof bot.worker === "object" ? bot.worker : null,
   };
   if (lead.warning) out.warning = lead.warning;
   if (hcError) out.hcError = hcError;
@@ -358,6 +360,7 @@ const OPTIONS = {
   "worker-agent": { type: "string" }, "worker-model": { type: "string" }, "worker-effort": { type: "string" },
   "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
+  task: { type: "string" },
 };
 
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
@@ -387,13 +390,17 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 changes nothing (--json: the plan's actions)
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
          [[--agent A] [--model M] [--effort E] | --template T] [--name N]
-         [--role dev|test|review|fix]
+         [--role dev|test|review|fix] [--task ID [--lead BOT]]
                                 from a bot's pane: start one worker for the task, an hc
                                 child of the bot in the task's worktree (prints its terminal);
                                 --template runs an hc template, alone; --role defaults from
                                 the bot's rank (tester: test, reviewer: review, fixer: fix,
                                 else dev). One writer (dev, test, fix) per worktree, any bot;
-                                reviewers run alongside
+                                reviewers run alongside. --task: Genie's short id (gl-231);
+                                the worker is named <id>-<role>, a --branch must contain the
+                                id, and --lead (default: this bot; a reviewer or fixer must
+                                pass it) is the task's lead bot. A bot with a worker.swap
+                                runs it on about one task in three, by rule
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back
 
@@ -605,6 +612,10 @@ async function cmdLs(opts) {
   return lines.join("\n");
 }
 
+/** A bot's worker defaults (or its swap arm) as one line: `agent codex · model gpt-5.5 · effort high`. */
+const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((k) => typeof w[k] === "string" && w[k])
+  .map((k) => `${k} ${w[k]}`).join(" · ") : "");
+
 async function cmdShow(opts, [ref]) {
   const project = await projectFor(opts);
   const bot = findBot(project.file, ref);
@@ -619,6 +630,8 @@ async function cmdShow(opts, [ref]) {
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal}` : ""}${info.duplicate ? " (duplicate label)" : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
     `  rank         ${info.rank ?? "-"}`,
+    `  worker       ${workerText(info.worker) || "-"}`,
+    ...(info.worker?.swap ? [`  swap         ${workerText(info.worker.swap)} (planned swaps: about 1 task in 3)`] : []),
     ...(info.warning ? [`  warning      ${info.warning}`] : []),
     "  instructions", ...(info.instructions ? info.instructions.split("\n").map((l) => `    ${l}`) : ["    -"]),
   ].join("\n");
@@ -837,7 +850,7 @@ async function cmdStart(opts, [ref]) {
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
   const unlogged = appendLedger(startRow({ kind: "seat", terminal, pid: await pidOf(terminal), botId: bot.id, worktree: key,
-    agent: bot.agent, model: bot.model }));
+    project: key, agent: bot.agent, model: bot.model }));
   if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
   listProject(key);
   // An edit that landed while this Start ran: the file read again, its role and category
@@ -915,7 +928,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const argv = get.foreground?.argv;
   const seatAgent = agentKeyOfArgv(argv, agentTable()) ?? (claude ? "claude" : bot.agent ?? null);
   const unlogged = appendLedger(startRow({ kind: "seat", terminal: address, pid: get.foreground?.pid ?? get.pid ?? null, botId: bot.id,
-    worktree: sessionFolder, agent: seatAgent, model: detectModel(argv, seatAgent) }));
+    worktree: sessionFolder, project: key, agent: seatAgent, model: detectModel(argv, seatAgent) }));
   if (unlogged) hook.warnings.push(unlogged);
   if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, open /hooks once in that session to load it.`);
   report(hook.warnings);
@@ -983,6 +996,8 @@ async function callingBot(opts) {
 }
 
 const realDir = (p) => { try { return realpathSync(p); } catch { return null; } };
+/** A path as the file system spells it (realpathSync.native: on a case-insensitive disk, the folder's own case). */
+const nativeDir = (p) => { try { return realpathSync.native(p); } catch { return null; } };
 
 /** --worktree: an existing worktree of the bot's project, not its main checkout, on a branch. */
 async function givenWorktree(path, key, bot) {
@@ -1078,7 +1093,7 @@ async function excludeWorktrees(key) {
  * worktree's real path, in `lockDir`. Local: it orders the CLIs on this computer only.
  */
 export function worktreeLock(lockDir, worktree) {
-  const real = realDir(worktree) ?? resolvePath(worktree);
+  const real = nativeDir(worktree) ?? resolvePath(worktree);
   return `${lockDir}/worktree-${createHash("sha256").update(real).digest("hex").slice(0, 16)}.lock`;
 }
 
@@ -1093,7 +1108,7 @@ async function workersIn(worktree, ls) {
   for (const r of rowsOf(ls)) {
     if (!local(r?.address) || (r.state !== undefined && r.state !== "live") || typeof r.cwd !== "string") continue;
     const cwd = r.cwd.startsWith("~/") ? `${home()}${r.cwd.slice(1)}` : r.cwd;
-    if ((realDir(cwd) ?? cwd) !== worktree) continue;
+    if ((nativeDir(cwd) ?? cwd) !== (nativeDir(worktree) ?? worktree)) continue;
     const labels = r.labels && typeof r.labels === "object" ? r.labels : (await hcGet(r.address))?.labels;
     if (labels?.[WORKER_OF_LABEL]) out.push({ address: r.address, labels });
   }
@@ -1122,6 +1137,27 @@ async function templateRuns(template, agents) {
   return templateAgent(hit.command, agents) ?? undefined;
 }
 
+/**
+ * Planned swaps: whether bot `botId`'s task `taskId` in project `key` runs the bot's other
+ * arm (worker.swap). The first byte of sha256(`${botId}:${key}:${taskId}`), mod 3, is 0:
+ * about one task in three, the same answer for every worker of that bot on that task.
+ */
+export const swapTask = (botId, key, taskId) => swapByte(createHash("sha256").update(`${botId}:${key}:${taskId}`).digest()[0]);
+
+/**
+ * The commit a worker's worktree started from: the base ref this command made it from, as a
+ * SHA; else the branch's oldest reflog entry (where it was created here: Genie's worktree
+ * from a fresh-fetched base); null when git keeps neither.
+ */
+async function baseCommit(place, key) {
+  if (place.created && place.base) {
+    const sha = (await git(["rev-parse", "--verify", "--quiet", `${place.base}^{commit}`], key))?.trim();
+    if (sha) return sha;
+  }
+  const log = await git(["reflog", "show", "--format=%H", `refs/heads/${place.branch}`], key);
+  return log?.trim().split("\n").filter(Boolean).at(-1) ?? null;
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
@@ -1130,18 +1166,59 @@ async function cmdWorker(opts, rest) {
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
   if (opts.template === "") throw new CliError("--template needs a name: --template <name> (hc templates lists them).", 2);
   if (opts.role !== undefined && !ROLES.includes(opts.role)) throw new CliError(`--role is one of ${ROLES.join(", ")}, not "${opts.role}".`, 2);
-  const pick = { template: opts.template, agent: opts.agent, model: opts.model, effort: opts.effort };
-  const alongside = ["agent", "model", "effort"].filter((k) => pick[k] !== undefined);
-  if (pick.template !== undefined && alongside.length) {
+  const given = { template: opts.template, agent: opts.agent, model: opts.model, effort: opts.effort };
+  const alongside = ["agent", "model", "effort"].filter((k) => given[k] !== undefined);
+  if (given.template !== undefined && alongside.length) {
     throw new CliError(`A template owns its command: --template goes alone, without --${alongside.join(", --")}.`, 2);
+  }
+  // The task contract (Genie R1-17): --task is Genie's short id; the worker is named after it.
+  const taskId = opts.task;
+  if (taskId !== undefined) {
+    const why = taskIdProblem(taskId);
+    if (why) throw new CliError(why, 2);
+    if (opts.name !== undefined) throw new CliError(`--name goes without --task: a task's worker is named ${taskId}-<role>.`, 2);
+    if (opts.branch !== undefined && !branchNamesTask(opts.branch, taskId)) {
+      throw new CliError(`--branch ${opts.branch} doesn't contain the task id ${taskId}; a task's branch names it (fix/${taskId}-login).`, 2);
+    }
+  }
+  if (opts.lead !== undefined && !LEAD_SHAPE.test(opts.lead)) {
+    throw new CliError(`--lead: "${opts.lead}" isn't a bot id (b- plus 10 base32 characters) or a Genie session (session-<uuid>).`, 2);
   }
   const { me, bot, project } = await callingBot(opts);
   const { role, error: roleError } = workerRole(bot, opts.role);
   if (roleError) throw new CliError(roleError, 2);
+  if (taskId !== undefined && opts.lead === undefined && LEAD_RANKS.includes(bot.rank)) throw new CliError("pass --lead <the task's lead bot>", 2);
+  const lead = opts.lead ?? bot.id;
+  const taskName = taskId !== undefined ? taskWorkerName(taskId, role) : null;
+  if (taskName && taskName.length > HC_NAME_MAX) {
+    throw new CliError(`${taskName} is longer than hc's ${HC_NAME_MAX}-character terminal names; a task's worker is named exactly <id>-<role>.`, 2);
+  }
   const agents = agentTable();
+  const warnings = [];
+  // Planned swaps (owner, council #4): on a task the rule picks, the bot's worker.swap replaces
+  // its worker defaults, and a per-task --agent, --model or --effort is recorded, not used.
+  // Never for a template worker; off a swap task, a per-task pick is an override.
+  let pick = given;
+  let swap = false;
+  let overrideRequested = null;
+  const arm = taskId !== undefined && !runsTemplate(bot, given) && swapTask(bot.id, project.key, taskId) ? swapArm(bot) : null;
+  if (arm?.agent && !resolveAgent(arm.agent, agents)) {
+    warnings.push(`${bot.name}'s worker swap agent "${arm.agent}" isn't one Herdr knows; this swap task runs without it.`);
+    delete arm.agent;
+  }
+  if (arm && Object.keys(arm).length) {
+    swap = true;
+    pick = { ...arm };
+    if (alongside.length) {
+      overrideRequested = Object.fromEntries(alongside.map((k) => [k, given[k]]));
+      warnings.push(`${taskId} is one of ${bot.name}'s planned swap tasks, so it runs ${workerText(arm)}; `
+        + `${alongside.map((k) => `--${k} ${given[k]}`).join(", ")} recorded, not used.`);
+    }
+  }
+  const override = !swap && Object.values(given).some((v) => v !== undefined);
   const plan = workerPlan(bot, pick, agents);
   if (plan.error) throw new CliError(plan.error, 2);
-  const warnings = [...plan.warnings];
+  warnings.push(...plan.warnings);
   // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
   let runs = plan.agent;
   if (plan.template) runs = await templateRuns(plan.template, agents);
@@ -1155,6 +1232,7 @@ async function cmdWorker(opts, rest) {
   if (runPath?.note) warnings.push(runPath.note);
   const place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
     : await branchWorktree(opts.branch, opts.base, project.key, warnings);
+  const base = await baseCommit(place, project.key);
   // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
   // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
   if (runs === undefined) {
@@ -1172,11 +1250,19 @@ async function cmdWorker(opts, rest) {
   const worktree = realDir(place.worktree) ?? place.worktree;
   const terminal = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
     const ls = await hcJson(["ls"]);
+    // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
+    // This computer's terminals only (hc names are unique per core), as workersIn sees them.
+    const holder = taskName && rowsOf(ls).find((r) => r?.name === taskName && local(r.address)
+      && (r.state === undefined || r.state === "live"));
+    if (holder) {
+      throw new CliError(`${taskName} is taken by a live terminal: ${holder.address}. A task's worker is named exactly <id>-<role>, `
+        + `never suffixed. Check it (hc read ${holder.address}) or end it (hc kill ${holder.address}) before starting another.`);
+    }
     const live = await workersIn(worktree, ls);
     const nameOf = (id) => project.file.bots.find((b) => b.id === id)?.name ?? id;
     const writing = role !== "review" && live.find((w) => writesWorktree(w.labels));
     const reviewing = role === "review" && live.find((w) => w.labels[WORKER_OF_LABEL] === bot.id
-      && w.labels[TASK_LABEL] === place.branch && w.labels[WORKER_ROLE_LABEL] === "review");
+      && workerBranch(w.labels) === place.branch && w.labels[WORKER_ROLE_LABEL] === "review");
     const hit = writing || reviewing;
     if (hit) {
       const what = writing ? `${place.worktree} already has a live writer: ${hit.address} (${nameOf(hit.labels[WORKER_OF_LABEL])}'s `
@@ -1185,9 +1271,10 @@ async function cmdWorker(opts, rest) {
       throw new CliError(`${what} Check it (hc read ${hit.address}) or end it (hc kill ${hit.address}) before starting another.`);
     }
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
-    const name = hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
+    const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address,
-      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, path: runPath?.path ?? process.env.PATH });
+      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template,
+      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -1196,18 +1283,23 @@ async function cmdWorker(opts, rest) {
     return address;
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const pid = await pidOf(terminal);
-  const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: place.branch, worktree: place.worktree,
-    agent: plan.agent, model: plan.model, effort: plan.effort, template: plan.template, role }));
+  const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: taskId, branch: place.branch,
+    project: project.key, lead, worktree, base, created: place.created, agent: plan.agent, model: plan.model, effort: plan.effort,
+    template: plan.template, role, swap, override, overrideRequested }));
   if (unlogged) warnings.push(unlogged);
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
-    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings };
+    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings,
+    task: taskId ?? null, project: project.key, lead, baseCommit: base, swap, override, override_requested: overrideRequested };
   if (opts.json) return out;
   const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
   const what = plan.template ? [`  template  ${plan.template}${runs ? ` (runs ${runs})` : ""}`]
     : [`  agent     ${plan.agent}`, `  model     ${plan.model ?? "(the agent's default)"}`,
       `  effort    ${plan.effort ?? "(the agent's default)"}`];
-  return [terminal, `  role      ${role}`, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
+  const contract = taskId !== undefined ? [`  task      ${taskId} (lead ${lead})`] : [];
+  const swapped = swap ? [`  swap      yes: ${bot.name}'s planned swap task`] : [];
+  return [terminal, `  role      ${role}`, ...contract, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
+    ...swapped,
     `End it once the task merges: hc kill ${terminal}`].join("\n");
 }
 
