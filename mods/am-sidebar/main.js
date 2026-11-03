@@ -24,14 +24,14 @@ import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js"
 import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { workerClick, workerTabName, openWorkerTab } from "./workerTab.js";
+import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
 import { liveFrom, buildTree, placeTrees, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
-    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
+    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 300 : 360, props: form }
     : { mod: "am-sidebar", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
 }
 
@@ -231,7 +231,7 @@ export default class Spaces extends View {
     // didn't carry it.
     this.modelTexts = {};
     this.argvOf = new Map();
-    // Workers whose tab is on its way (openHelper): a second click waits for it.
+    // Workers whose tab is on its way (openWorker): a second click waits for it.
     this.opening = new Set();
     this.loadModelTexts(cx);
     // Hermes's own icon from the program table (its process shows as Python).
@@ -593,7 +593,7 @@ export default class Spaces extends View {
       .children(this.guides(r.guides, t))
       .child(h_flex().id(`row-${r.id}`).flex_1().min_w(0).h(26).px(6).gap(8).items_center().rounded(8).text_size(12).cursor_pointer()
         .when(shown, (el) => el.bg(t.raised)).hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => this.openHelper(r, cx))
+        .on_click((_e, cx) => this.openWorker(r, cx))
         .child(pic)
         .child(div().flex_1().min_w(0).truncate().text_color(shown ? t.foreground : t.muted).child(h.name))
         .when(Boolean(h.template || h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10)
@@ -602,17 +602,19 @@ export default class Spaces extends View {
         .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) })));
   }
 
-  // A helper or worker row's click (workerTab.js): its pane; else a tab after its bot's tab,
-  // once per worker while that tab is on its way; else a peek.
-  openHelper(r, cx) {
-    const h = r.helper;
-    const plan = workerClick({ terminal: h.terminal, botTerminal: r.ownerTerminal, name: workerTabName(h), panes: panes(), spaces: spaces() });
-    if (plan.kind !== "open") return focusOrPeek(h.terminal);
-    if (this.opening.has(h.terminal)) return;
-    this.opening.add(h.terminal);
+  // A helper, worker or live bot row's click (workerTab.js rowWorker): its pane; else a tab
+  // after its bot's (a bot row: its hc parent's) tab, once per terminal while that tab is on
+  // its way; else a peek.
+  openWorker(r, cx) {
+    const w = rowWorker(r);
+    if (!w) return;
+    const plan = workerClick({ ...w, panes: panes(), spaces: spaces() });
+    if (plan.kind !== "open") return focusOrPeek(w.terminal);
+    if (this.opening.has(w.terminal)) return;
+    this.opening.add(w.terminal);
     cx.spawn(async (cx) => {
       const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify }); } finally { this.opening.delete(h.terminal); }
+      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify }); } finally { this.opening.delete(w.terminal); }
     });
   }
 
@@ -629,7 +631,7 @@ export default class Spaces extends View {
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     const onClick = live
-      ? () => focusOrPeek(live.terminal)
+      ? (cx) => this.openWorker(r, cx)
       : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
       machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");

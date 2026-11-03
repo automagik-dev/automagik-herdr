@@ -36,7 +36,8 @@ herdr-app do layout.switch '{"name":"automagik"}'
    - Your bots, space icons, colours and the collapsed state look as they did before.
    - `cmd-v` still pastes into a bot pane.
    - Your own layout (e.g. `main-agents`) still shows the sidebar and footer.
-9. **The briefing.** Restart one Claude bot, or run `/hooks` in it once, then send it a prompt.
+9. **The briefing.** Restart one Claude bot (`automagik-herdr restart <bot>`, or the bot row's
+   Restart), then send it a prompt.
    The briefing block arrives with the prompt. A session that was running during the upgrade and
    was not restarted gets no briefing: that is expected.
 10. **usagemeter.** About 30 s after Herdr loads, `usagemeter` has run once. Check the meter's own

@@ -42,7 +42,7 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   ];
   const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
   assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-devdevdevd", "b-mainmainma", "b-pmpmpmpmpm"]);
-  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
+  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, parent: null, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
   assert.equal(live["b-mainmainma"].duplicate, false);
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
