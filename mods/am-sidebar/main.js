@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf, heldTerminalOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, spaceRowOrder, clickActionOf, heldTerminalOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -897,8 +897,9 @@ export default class Spaces extends View {
   // A12: each live bot pane's foreground command line, for the model it runs. rows.js
   // argvToAsk picks the panes: labelled with a known bot, no `foreground.argv` in the row, not
   // read already for the same pane (created_ms), three at most. Asked after each discovery
-  // (on load, the 15-second timer and a .herdr change), never while drawing. A failed ask
-  // keeps what was read before; a pane gone is dropped.
+  // (on load, the 15-second timer and a .herdr change), never while drawing. A failed or empty
+  // ask keeps what was read before, else marks the pane read (rows.js argvAfter); a pane gone
+  // is dropped.
   readBotArgv(cx) {
     if (this.argvBusy) return;
     const rows = terminals();
@@ -912,13 +913,12 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       try {
         for (const address of ask) {
-          let entry;
+          let get = null;
           try {
             const r = await hc(["get", address, "--json"]);
-            if (r.code !== 0) continue;
-            entry = argvEntry(JSON.parse(r.stdout), createdOf.get(address));
-          } catch { continue; }
-          if (!entry.argv) continue;
+            if (r.code === 0) get = JSON.parse(r.stdout);
+          } catch {}
+          const entry = argvAfter(this.argvOf.get(address), get, createdOf.get(address));
           if (JSON.stringify(entry.argv) !== JSON.stringify(this.argvOf.get(address)?.argv)) changed = true;
           this.argvOf.set(address, entry);
         }

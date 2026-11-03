@@ -291,10 +291,11 @@ export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
  * `sh -c` wrapper (or at a shell) is asked again, and so is one whose row doesn't say
  * `program.agent` true (false, or no program): the read alone can keep it live (liveFrom), so
  * it is kept fresh and an agent that quits back to its shell stops counting. At most `max` per
- * call: panes never read (no read cached, or one for an older pane at that address) always
- * first, so a just-started bot shows as running on the next refresh; the rest (unsettled reads
- * and re-reads) share what's left, taken from `start` round their list, so panes that never
- * settle (a bot pane at its shell) can't starve each other. Returns { ask: addresses, gone:
+ * call: panes never read (no read cached, or one for an older pane at that address) first, so
+ * a just-started bot shows as running on the next refresh, but at most `max - 1` of them while
+ * any other is due; the rest (unsettled reads and re-reads) share what's left, taken from
+ * `start` round their list, so panes that never settle (a bot pane at its shell) can't starve
+ * each other. Returns { ask: addresses, gone:
  * cached addresses no longer wanted, next: the `start` for the next call }.
  */
 export function argvToAsk(terminals, known, cached = new Map(), max = 3, start = 0) {
@@ -302,8 +303,9 @@ export function argvToAsk(terminals, known, cached = new Map(), max = 3, start =
     && !Array.isArray(k.foreground?.argv));
   const wanted = new Set(rows.map((k) => k.address));
   const fresh = (k) => { const hit = cached.get(k.address); return !hit || hit.created !== (k.created_ms ?? null); };
-  const first = rows.filter(fresh).map((k) => k.address).slice(0, max);
   const due = rows.filter((k) => !fresh(k) && (!cached.get(k.address).settled || rowIsAgent(k) !== true)).map((k) => k.address);
+  // One slot stays with the rotation while it has anything, so first reads can't hold it off.
+  const first = rows.filter(fresh).map((k) => k.address).slice(0, due.length && max > 1 ? max - 1 : max);
   const from = due.length ? ((start % due.length) + due.length) % due.length : 0;
   const turn = Array.from({ length: Math.min(max - first.length, due.length) }, (_, n) => due[(from + n) % due.length]);
   return { ask: [...first, ...turn], gone: [...cached.keys()].filter((a) => !wanted.has(a)), next: due.length ? (from + turn.length) % due.length : 0 };
@@ -317,6 +319,19 @@ export function argvToAsk(terminals, known, cached = new Map(), max = 3, start =
 export function argvEntry(get, created) {
   const argv = Array.isArray(get?.foreground?.argv) ? get.foreground.argv : null;
   return { argv, created: created ?? null, settled: Boolean(argv) && agentInForeground(get) };
+}
+
+/**
+ * What the view keeps after one `hc get` of a pane: `get` is its parsed answer, null when the
+ * ask failed. A read with a command line replaces `prev`; a failed or empty one keeps `prev`
+ * for the same pane (`created`), else leaves an unsettled entry with no command line, so the
+ * pane is no longer "never read" (argvToAsk) and waits its turn instead of taking a first-read
+ * slot every call (a remote machine that is down but still listed).
+ */
+export function argvAfter(prev, get, created) {
+  const entry = argvEntry(get, created);
+  if (entry.argv) return entry;
+  return prev && prev.created === entry.created ? prev : entry;
 }
 
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */

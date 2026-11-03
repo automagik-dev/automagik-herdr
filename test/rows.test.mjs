@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk, argvEntry,
+  secondLine, argvToAsk, argvEntry, argvAfter,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -397,4 +397,42 @@ test("argvToAsk: a pane never read is asked first, ahead of the shell-held rotat
   // A new pane at an old address counts as never read.
   const reborn = held.map((k) => (k.address === "t3" ? { ...k, created_ms: 99 } : k));
   assert.equal(argvToAsk(reborn, known, cached, 3, 4).ask[0], "t3");
+});
+
+test("argvAfter: a failed or empty read marks the pane read, keeps an earlier read of the same pane", () => {
+  const claude = argvEntry({ foreground: { argv: ["claude"] } }, 10);
+  assert.deepEqual(argvAfter(undefined, null, 10), { argv: null, created: 10, settled: false }, "failed first read");
+  assert.deepEqual(argvAfter(undefined, {}, 10), { argv: null, created: 10, settled: false }, "no argv");
+  assert.equal(argvAfter(claude, null, 10), claude, "a failed ask keeps the read before");
+  assert.deepEqual(argvAfter(claude, null, 11), { argv: null, created: 11, settled: false }, "not for a new pane");
+  assert.deepEqual(argvAfter(claude, { foreground: { argv: ["-zsh"] } }, 10).argv, ["-zsh"], "a read replaces it");
+});
+
+test("argvToAsk: panes whose reads fail join the rotation; a quit agent is re-read; a new pane is read", () => {
+  const shell = { key: "shell", agent: false };
+  const known = new Set(["b-1", "b-2", "b-3", "b-4", "b-5"]);
+  // Three remote panes on a machine that is down: every hc get fails. One quit agent.
+  const down = ["box/t1", "box/t2", "box/t3"].map((a, n) => T(a, { labels: { bot: `b-${n + 1}` }, created_ms: n, program: shell }));
+  const quit = T("t4", { labels: { bot: "b-4" }, created_ms: 40, program: shell });
+  const rows = [...down, quit];
+  const cached = new Map([["t4", argvEntry({ foreground: { argv: ["claude"] } }, 40)]]);
+  // Simulate readBotArgv: ask, then store what each read gives (the remote ones fail).
+  const reads = { t4: { foreground: { argv: ["-zsh"] } } };
+  let start = 0, askedT4 = false;
+  for (let tick = 0; tick < 3 && !askedT4; tick++) {
+    const { ask, next } = argvToAsk(rows, known, cached, 3, start);
+    start = next;
+    askedT4 = ask.includes("t4");
+    for (const a of ask) cached.set(a, argvAfter(cached.get(a), reads[a] ?? null, rows.find((k) => k.address === a).created_ms));
+  }
+  assert.ok(askedT4, "the quit agent is re-read despite three failing panes");
+  assert.equal(liveFrom(rows, known, (a) => cached.get(a)?.argv)["b-4"], undefined, "and stops counting");
+  // Even before any failed read is cached, one slot stays with the rotation.
+  const none = new Map([["t4", argvEntry({ foreground: { argv: ["claude"] } }, 40)]]);
+  assert.deepEqual(argvToAsk(rows, known, none).ask, ["box/t1", "box/t2", "t4"]);
+  // A fourth, new pane is read on the next call: the failed ones are no longer "never read".
+  const fresh = T("t5", { labels: { bot: "b-5" }, created_ms: 50, program: shell });
+  assert.ok(argvToAsk([...rows, fresh], known, cached, 3, start).ask.includes("t5"));
+  for (const a of ["box/t1", "box/t2", "box/t3"]) cached.set(a, argvAfter(cached.get(a), null, rows.find((k) => k.address === a).created_ms));
+  assert.equal(argvToAsk([...rows, fresh], known, cached, 3, start).ask[0], "t5", "first once all three have failed");
 });
