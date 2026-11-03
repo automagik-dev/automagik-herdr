@@ -10,6 +10,19 @@ const local = (id) => String(id ?? "").split("/").pop();
 export const workerTabName = (helper) => helper?.branch || helper?.name || helper?.terminal || null;
 
 /**
+ * The worker a sidebar row's click is about, or null: a helper row's helper under its bot's
+ * live terminal; a live bot row's own terminal under its hc parent, named after the bot. A
+ * member bot started by another bot's agent (a captain under the main bot) is that agent's
+ * worker too, so a click without a pane opens it as a tab after its starter's tab.
+ */
+export function rowWorker(r) {
+  if (r?.kind === "helper") return { terminal: r.helper.terminal, botTerminal: r.ownerTerminal ?? null, name: workerTabName(r.helper) };
+  const live = r?.node?.planned ? null : r?.node?.live;
+  if (!live?.terminal) return null;
+  return { terminal: live.terminal, botTerminal: live.parent ?? null, name: r.node.bot?.name || live.terminal };
+}
+
+/**
  * What a helper row's click does. `terminal`: the helper; `botTerminal`: its bot's live
  * terminal (null: none); `panes` / `spaces`: panes() and spaces() rows, read at click time.
  * { kind: "focus" } when a pane shows it; { kind: "open", space, tab, index, name } when its
