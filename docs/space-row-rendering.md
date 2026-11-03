@@ -202,6 +202,17 @@ bot means every field is null.
   `.herdr/bots.json` (its id when not found). The key `other` is labelled `other`.
 - Empty `parts`: no bar, and the legend says `no breakdown yet` in `dim`.
 
+Both clients read `.herdr/bots.json` for these names the same way (the desktop's `model.js`
+`parseBots`):
+
+- The file is read only when it is JSON, an object, with `version` exactly `1` and a `bots` list.
+  Any other file gives no names: every label is its id. A client that read a good copy of the file
+  earlier keeps using that copy while later reads are refused.
+- A bot counts only with a non-blank string `id`, a non-blank string `name` and a `kind` of
+  `main` or `member`; a repeated id: the first one counts. A bot left out is labelled by its id.
+- A category counts only with a non-blank string `id` and a string `title`; a repeated id: the
+  first one counts. An empty `title`, or a category left out, is labelled by its id.
+
 ## 9. Changes
 
 ### From t16r
@@ -210,6 +221,8 @@ Requests from Pocket that don't contradict the mock are taken and recorded here,
 
 - 2026-11-02, taken: a hex table for every token the rules use (section 5), Automagik dark and
   light, because the phone has no `theme()`.
+- 2026-11-03, taken: section 8 says how both clients read `.herdr/bots.json` for names. A file
+  whose `version` isn't 1 gives no names (labels fall back to ids), as on the desktop.
 - 2026-11-02, noted (no rule change): Pocket gets bot and category names from Pocket Link, since the
   phone can't read `.herdr/bots.json`. The labels in section 8 are the same either way.
 
