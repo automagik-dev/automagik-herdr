@@ -1,4 +1,4 @@
-# md-menu
+# am-markdown
 
 Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text
 talks about; click one and it renders in a preview pane beside the chat. One mod, two faces.
@@ -37,18 +37,18 @@ verbatim notice is `LICENSE-upstream`).
   local files are watched with `watchFolder`; another machine's are re-read every 3 s while their tab
   is shown.
 - **Default app**: `sh -c realpath` first (refusing folders and `*.md` links to programs), then
-  `open` / `rundll32` / `xdg-open`; `md-menu.open` reaches every shown preview and the focused one
+  `open` / `rundll32` / `xdg-open`; `am-markdown.open` reaches every shown preview and the focused one
   acts.
 - **Offered where**: a right-click on a terminal (props `{tab: "pane", target}`) or opened by a key
-  (`mod.open:md-menu`, which falls back to the focused terminal, else the tab's first terminal).
+  (`mod.open:am-markdown`, which falls back to the focused terminal, else the tab's first terminal).
 
 ## The shared-state names
 
-`am.markdown.slots`, `.show` and `.last` were markdown-browser's `markdown-browser.slots`, `.show`
-and `.last` before the rename: on load the mod copies an old value into an empty `am.*` key once
+`am.markdown.slots`, `.show` and `.last` had the old Markdown browser's names before the
+rename (`migrate.js` SHARED_RENAMES lists them): on load the mod copies an old value into an empty `am.*` key once
 and leaves the old key in place for one release (`SHARED_OLD`; the rename migration in
-spaces-agents/migrate.js lists every such key). Only this mod writes them — the menu when it opens or re-points a preview. A
-preview opened by hand (`pane.split {mod: "md-menu", props: {file}}`) carries no `slot` and writes
+am-sidebar/migrate.js lists every such key). Only this mod writes them — the menu when it opens or re-points a preview. A
+preview opened by hand (`pane.split {mod: "am-markdown", props: {file}}`) carries no `slot` and writes
 nothing; the menu simply opens beside it and takes its place when asked to.
 
 ## Built from
@@ -58,8 +58,8 @@ import, so `node` can run it), `open.js` (the default-app check), `mod.json` (`p
 popup 380 × 460), `LICENSE`, `LICENSE-upstream` (MIT). Herdr API: `props`, `run`, `panes`, `focused`,
 `terminals`, `hc`, `exec`, `home`, `shared`, `setShared`, `notify`, `closeOverlay`, `openOverlay`,
 `theme`, `keys`, `spaces`, `readTextFile`, `watchFolder`, `nextCommand`.
-Layout: the shown layout's root needs `"terminal_menu": "md-menu"`; previews are split as
-`{mod: "md-menu", props: {file, on}}`.
+Layout: the shown layout's root needs `"terminal_menu": "am-markdown"`; previews are split as
+`{mod: "am-markdown", props: {file, on}}`.
 
 ## Watch out
 
@@ -76,13 +76,13 @@ Layout: the shown layout's root needs `"terminal_menu": "md-menu"`; previews are
 
 ## Checked
 
-`test/md-menu-faces.test.mjs` (3 tests, a stub runtime) is criterion 1's committed check: a printed
+`test/am-markdown-faces.test.mjs` (3 tests, a stub runtime) is criterion 1's committed check: a printed
 `NOTES.md` becomes a row and a path that is not on disk stays hidden; a click splits a pane to the
-right as `md-menu` with a slot and records `slots`/`show`/`last`; a second click re-points that slot
+right as `am-markdown` with a slot and records `slots`/`show`/`last`; a second click re-points that slot
 in place. The in-app click-through on a scratch home belongs to Group 8's end-to-end run.
 
 ## Done when
 
-`herdr-app check mods/md-menu` passes; right-clicking a terminal that printed a `.md` path lists it;
+`herdr-app check mods/am-markdown` passes; right-clicking a terminal that printed a `.md` path lists it;
 clicking it opens (or switches) the preview in the tab; editing the file updates the pane within a
 second; **Default app** opens it.

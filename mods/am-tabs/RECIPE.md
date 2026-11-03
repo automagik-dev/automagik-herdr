@@ -1,4 +1,4 @@
-# auto-tabs
+# am-tabs
 
 The window's tab bar: one pill per tab of the shown space, named from what runs in it, with a close
 ✕ on hover and on middle press, the side-panel buttons and the window buttons. Derived from Herdr's
@@ -15,7 +15,7 @@ its program's name, else "Terminal"), `Z` when the tab is zoomed, a spinner whil
 any other tab while the pointer is over it — it is drawn absolutely inside 22 px of right padding
 the pill always reserves, so showing it never changes the pill's size. When the space has settled tabs, one dim `N settled`
 pill sits before `+`.
-Right of the tabs: `+` (opens `new-menu`), the `Files` and `Changes` buttons when the space's panel
+Right of the tabs: `+` (opens the pack's `am-new-menu`, in place of Herdr's stock `new-menu`), the `Files` and `Changes` buttons when the space's panel
 list allows them, and on platforms that draw no window buttons, `−`, `□`, `✕` for the window.
 
 ## How it behaves
@@ -45,10 +45,10 @@ list allows them, and on platforms that draw no window buttons, `−`, `□`, `�
 
 ## Built from
 
-`mods/auto-tabs/main.js` (bar, pills, presses, panel memory), `names.js` (title parsing and naming),
+`mods/am-tabs/main.js` (bar, pills, presses, panel memory), `names.js` (title parsing and naming),
 `mod.json` (`place: none`). Herdr API: `spaces`, `panes`, `run`, `openOverlay`, `theme`, `window`,
-`shared`, `layout`, `settings`, `setShared`. Layout: the `tabs` block's `content.mod` is `auto-tabs`,
-`size.px` 42. Programs opened: `new-menu` (the `+` popup) and `menu` (right press).
+`shared`, `layout`, `settings`, `setShared`. Layout: the `tabs` block's `content.mod` is `am-tabs`,
+`size.px` 42. Programs opened: `am-new-menu` (the `+` popup) and `menu` (right press).
 
 ## Watch out
 
@@ -66,6 +66,6 @@ list allows them, and on platforms that draw no window buttons, `−`, `□`, `�
 
 ## Done when
 
-`herdr-app check mods/auto-tabs` passes; tabs carry their agent's name; hovering any tab shows its
+`herdr-app check mods/am-tabs` passes; tabs carry their agent's name; hovering any tab shows its
 ✕ and middle-pressing closes it; dragging reorders; the panel buttons open and close the side panel
 per space.

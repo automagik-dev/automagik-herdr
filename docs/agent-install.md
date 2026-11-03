@@ -8,7 +8,7 @@ Install Automagik Herdr on this Mac and set up my first bot.
 2. Verify, don't assume: a version and a checksum don't say what was installed. All must hold:
    automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
    sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
-   am-quota,auto-tabs,automations,md-menu,mod-manager,new-menu-tui,sidebar-chrome,spaces-agents;
+   am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs;
    herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those eight mods.
    If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
    found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.

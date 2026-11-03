@@ -1,6 +1,7 @@
-# new-menu-tui
+# am-new-menu
 
-The `+` menu: start a terminal or an installed coding agent in the shown space (or a space row's
+The `+` menu (the tab bar's `+`, and a space row's, in place of Herdr's stock one): start a
+terminal or an installed coding agent in the shown space (or a space row's
 `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu`; it asks
 herdr-core which agents are actually installed instead of offering a fixed list.
 
@@ -39,5 +40,5 @@ Herdr API: `knownAgents`, `spaces`, `panes`, `run`, `openOverlay`, `closeOverlay
 
 ## Done when
 
-`herdr-app check mods/new-menu-tui` passes; the `+` lists installed agents; `⌘1` starts the first;
+`herdr-app check mods/am-new-menu` passes; the `+` lists installed agents; `⌘1` starts the first;
 New worktree opens the worktree dialog.
