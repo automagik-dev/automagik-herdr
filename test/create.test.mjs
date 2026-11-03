@@ -573,3 +573,80 @@ test("Attach with an empty known list says it is looking until discovery answers
   await cx.settle();
   assert.match(textOf(index(form.render(cx))), /No bots on this computer yet/);
 });
+
+// ---- #88 review: pick while discovering, a failed prompt read, Focus as the row's click, busy labels ----
+
+test("Bot settings (pick) with an empty known list says it is looking, never New bot alone, until discovery answers", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([MAIN]);
+  const cx = makeCx();
+  const form = new BotForm({ overlay: "o9", form: "pick", known: [] }, cx);
+  assert.match(textOf(index(form.render(cx))), /Finding bots/);
+  assert.ok(!nodes.has("pick-new"), "no New bot while the bots may still be found: a duplicate risk");
+  await cx.settle();
+  index(form.render(cx));
+  assert.ok(nodes.has(`pick-${MAIN.id}`) && !nodes.has("pick-new"));
+  seed([]);
+  const empty = new BotForm({ overlay: "o9", form: "pick", known: [] }, cx);
+  await cx.settle();
+  index(empty.render(cx));
+  assert.ok(nodes.has("pick-new"), "discovery answered with no bot: New bot");
+});
+
+test("menu Prompt: a failed read is shown in the section, not Reading… forever", async () => {
+  seed([MAIN]); // the menu's bot isn't in the file (removed since the row was drawn)
+  const { form, draw, click } = await menu();
+  draw();
+  await click("menu-prompt");
+  const text = textOf(draw());
+  assert.ok(nodes.has("menu-prompt-error"));
+  assert.match(text, /Can't read the prompt: .*has no bot b-ompaaaaaaa/);
+  assert.doesNotMatch(text, /Reading…/);
+  assert.equal(form.promptBase, null);
+});
+
+test("menu Focus does what the row's click does: a kept pane with no pane opens as a tab after its starter's", async () => {
+  seed([MAIN, OMP]);
+  state.panes = [{ terminal: "t1", tab: "tab1" }];
+  state.spaces = [{ id: "s1", folder: project, machine: null, tabs: [{ id: "tab1", index: 1 }] }];
+  // Herdr gives the kept terminal its pane in a new tab.
+  state.runFault = (name) => { if (name === "terminal.keep") state.panes.push({ terminal: "t5", tab: "tab2" }); };
+  try {
+    const { draw, click } = await menu({ live: "t5", worker: { terminal: "t5", botTerminal: "t1", name: OMP.name } });
+    draw();
+    await click("menu-focus");
+  } finally { state.runFault = null; state.panes = []; }
+  const names = state.runs.map(([name]) => name);
+  assert.deepEqual(names.slice(0, 3), ["space.select", "tab.select", "terminal.keep"]);
+  assert.deepEqual(state.runs[2], ["terminal.keep", { terminal: "t5", place: "tab" }]);
+  assert.ok(!names.includes("terminal.peek"), "not a peek");
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu Focus with no pane and no starter's tab peeks, as the row's click does", async () => {
+  seed([MAIN, OMP]);
+  const { draw, click } = await menu({ live: "t5", worker: { terminal: "t5", botTerminal: null, name: OMP.name } });
+  draw();
+  await click("menu-focus");
+  assert.deepEqual(state.runs.at(-1), ["terminal.peek", { terminal: "t5" }]);
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu busy labels: only the running action's item changes", async () => {
+  seed([MAIN, OMP]);
+  fakeCli({ id: OMP.id, detached: ["t5"] });
+  const { form, cx, draw } = await menu({ live: "t5", terminal: "t9" });
+  form.detach(cx); // its spawn hasn't run yet: Detach is in progress
+  draw();
+  assert.equal(textOf(nodes.get("menu-detach")), "Detaching…");
+  for (const [id, label] of [["menu-restart", "Restart"], ["menu-restart-fresh", "Restart with a new conversation"], ["menu-attach", "Attach to the focused pane (t9)"]]) {
+    assert.equal(textOf(nodes.get(id)), label, id);
+  }
+  await cx.settle();
+  const r = await menu({ terminal: "t9" });
+  r.form.restart({ key: project }, { id: OMP.id }, r.cx, { fresh: true });
+  r.draw();
+  assert.equal(textOf(nodes.get("menu-start")), "Start");
+  assert.equal(textOf(nodes.get("menu-restart")), "Restart", "a fresh restart leaves plain Restart's label");
+  await r.cx.settle();
+});
