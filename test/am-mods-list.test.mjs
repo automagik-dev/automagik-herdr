@@ -117,10 +117,10 @@ test("groupMods: the pack, yours, then built-in folded to one row; the counts ar
   const mods = await core.listMods(io, { appHome, records: [] });
   const folded = core.groupMods(mods);
   assert.deepEqual(folded.groups.map((g) => [g.key, g.title, g.mods.length, g.folded]),
-    [["pack", "Automagik Herdr 0.5.1", 8, false], ["yours", "Yours", 2, false], ["herdr", "Herdr built-in", 2, true]]);
-  assert.deepEqual(folded.counts, ["8 Automagik Herdr", "2 yours", "2 built-in", "1 off"]);
-  // Heading, 8 pack mods, heading, 2 of yours, one built-in row (the heading, selectable).
-  assert.equal(folded.rows.length, 1 + 8 + 1 + 2 + 1);
+    [["pack", "Automagik Herdr 0.5.1", PACK_MODS.length, false], ["yours", "Yours", 2, false], ["herdr", "Herdr built-in", 2, true]]);
+  assert.deepEqual(folded.counts, [`${PACK_MODS.length} Automagik Herdr`, "2 yours", "2 built-in", "1 off"]);
+  // Heading, every pack mod, heading, 2 of yours, one built-in row (the heading, selectable).
+  assert.equal(folded.rows.length, 1 + PACK_MODS.length + 1 + 2 + 1);
   assert.deepEqual(folded.rows.filter((r) => r.group).map((r) => [r.group.key, r.selectable]), [["pack", false], ["yours", false], ["herdr", true]]);
   assert.ok(folded.rows.every((r) => !r.mod || r.mod.kind !== "herdr"));
   assert.equal(folded.rows.at(-1).group.key, "herdr");
