@@ -27,10 +27,10 @@ import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
-  baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
+  SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
-import { carriedLabels, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
+import { carriedLabels, continueRefusal, ledgerSession, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
@@ -388,9 +388,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
                                 the bot's agent again in its pane's place (same space and tab,
                                 labels kept): the new pane starts, and the old one ends only once
-                                the new one's agent is up (prints the new terminal). It resumes
-                                the conversation (claude --resume <session> or --continue, codex
-                                resume --last, --continue for pi, omp, kimi, agy and hermes);
+                                the new one's agent has stayed up (prints the new terminal). It
+                                resumes the conversation (claude --resume <session>, or --continue
+                                when no other bot's Claude shares the folder; codex resume --last;
+                                --continue for pi, omp, kimi, agy and hermes);
                                 --fresh: a new one; --agent/--model: a swap (always new;
                                 --save: also into ${BOTS_PATH}). Refused while the bot is
                                 working or has helpers that would end with it, unless --force.
@@ -855,7 +856,8 @@ const seatJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, parent: 
  * model pin, the A1 parent, the A16 labels, the place in Herdr's window, the briefing hook, the
  * ledger row. `over` (Restart): `argv` (the whole command, checked by the caller), `agent`,
  * `model`, `cwd`, `place` (undefined: placementOf the project), `carry` (labels kept from the
- * old pane). Resolves { terminal, parent, argv, labels, place, hook }.
+ * old pane), `deferLedger` (the seat row left to `logSeat()`). Resolves { terminal, parent,
+ * argv, labels, place, hook, logSeat }.
  */
 async function launchSeat(project, bot, over = {}) {
   const { file, key } = project;
@@ -887,9 +889,13 @@ async function launchSeat(project, bot, over = {}) {
   let terminal = null;
   try { terminal = JSON.parse(r.stdout).address ?? null; } catch { terminal = null; }
   if (!terminal) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
-  const unlogged = appendLedger(startRow({ kind: "seat", terminal, pid: await pidOf(terminal), botId: bot.id, worktree: cwd,
-    project: key, agent: agentKey, model }));
-  if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
+  // Restart (`over.deferLedger`) writes the seat row only once the pane has proved itself.
+  const logSeat = async () => {
+    const unlogged = appendLedger(startRow({ kind: "seat", terminal, pid: await pidOf(terminal), botId: bot.id, worktree: cwd,
+      project: key, agent: agentKey, model }));
+    if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
+  };
+  if (!over.deferLedger) await logSeat();
   listProject(key);
   // An edit that landed while this Start ran: the file read again, its role and category
   // put on the new pane (relabelWords against the labels it started with).
@@ -909,29 +915,60 @@ async function launchSeat(project, bot, over = {}) {
       + `Watch it with hc attach ${terminal}. To give the next start a pane, open a space on ${key} first, or pass --space <id> (herdr-app ls lists the ids).`);
     report(hook.warnings.slice(-1));
   }
-  return { terminal, parent, argv, labels, place, hook };
+  return { terminal, parent, argv, labels, place, hook, logSeat };
 }
 
 // ---- restart: the bot's agent again, in its pane's place ----
 
-/** How long Restart gives the replacement to bring its agent in front before it gives up. */
-const RESTART_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS) || 20_000;
+/** How long Restart gives the replacement to prove itself before it gives up on it. */
+const RESTART_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS) || 30_000;
+/**
+ * How long the replacement's agent must stay in front, every check, before the old pane ends:
+ * an agent is in front at once and only then reads its arguments (claude --resume with a stale
+ * id, --continue with no conversation, a swap to an agent that fails at startup exit in 1-3s).
+ * An agent that reports its own status to hc (`reported`) has started its session: a shorter
+ * settle then.
+ */
+const RESTART_STABLE_MS = Number(process.env.AUTOMAGIK_HERDR_RESTART_STABLE_MS) || 5000;
+const RESTART_SETTLE_MS = Math.min(1500, RESTART_STABLE_MS);
 const later = (ms) => new Promise((go) => setTimeout(go, ms));
 
 /**
- * Waits until `terminal` runs an agent (Decision 3's live rule): { state: "live" | "ended" |
- * "late", get }. "ended": its program exited (a resume that found nothing, say).
+ * Waits until `terminal` has had an agent in front (Decision 3's live rule) at every check for
+ * RESTART_STABLE_MS (RESTART_SETTLE_MS once it reports): { state: "live" | "ended" | "late",
+ * get }. "ended": its program exited (a resume that found nothing, say).
  */
 async function agentUp(terminal, ms = RESTART_WAIT_MS) {
   const until = Date.now() + ms;
+  let since = null;
   for (;;) {
     const get = await hcGet(terminal);
-    if (get?.state === "live" && agentInForeground(get)) return { state: "live", get };
     if (!get || get.state === "finished") return { state: "ended", get };
+    if (get.state === "live" && agentInForeground(get)) {
+      since ??= Date.now();
+      if (Date.now() - since >= (get.reported === true ? RESTART_SETTLE_MS : RESTART_STABLE_MS)) return { state: "live", get };
+    } else since = null;
     if (Date.now() >= until) return { state: "late", get };
     await later(250);
   }
 }
+
+/** The workers ledger's rows ([] when it can't be read). */
+function ledgerRows() {
+  try { return readLedger(readText(ledgerPath(appHome())) ?? ""); } catch { return []; }
+}
+
+/** Other bots' live Claude panes on this computer whose folder is `cwd`: [{ address, name }]. */
+async function claudeBotsIn(cwd, botId, file) {
+  const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
+  const gets = (await Promise.all(rows.map((r) => hcGet(r.address)))).filter(Boolean);
+  return gets.filter((g) => g.state === "live" && g.labels?.[BOT_LABEL] && g.labels[BOT_LABEL] !== botId && agentInForeground(g)
+    && (g.foreground?.cwd ?? g.cwd) === cwd && (isClaude(null, g) || agentKeyOfArgv(g.foreground?.argv) === "claude"))
+    .map((g) => ({ address: g.address, name: file.bots.find((b) => b.id === g.labels[BOT_LABEL])?.name ?? `bot ${g.labels[BOT_LABEL]}` }));
+}
+
+/** What cmdRestart returns once it has printed its own answer (a bot restarting itself). */
+export const PRINTED = Symbol.for("automagik-herdr.printed");
 
 /** The live terminals whose hc parent is `address`, as hc get answers (they may end with it). */
 async function helpersOf(address) {
@@ -971,9 +1008,12 @@ async function cmdRestart(opts, [ref]) {
     const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force });
     if (refusal) throw new CliError(refusal);
   }
+  // The Claude session to resume: the old pane's agent.session label, else the ledger's last
+  // session row for that terminal.
+  const known = !old ? null : sessionOf(old) ? { session: sessionOf(old), transcript: null } : ledgerSession(ledgerRows(), old.address);
   const plan = restartPlan({
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
-    runningAgent: old ? agentKeyOfArgv(old.foreground?.argv, agentTable()) : null, session: sessionOf(old),
+    runningAgent: old ? agentKeyOfArgv(old.foreground?.argv, agentTable()) : null, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
   });
   // The same folder as the old pane when it keys to the project (a resumed Claude session is
@@ -982,25 +1022,38 @@ async function cmdRestart(opts, [ref]) {
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   if (oldCwd && oldCwd !== key) { try { if ((await keyOf(oldCwd)) === key) cwd = oldCwd; } catch { /* gone: the project's */ } }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
-  const seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry: carriedLabels(old) });
+  const resumeId = plan.mode === "resume" && plan.agent === "claude" ? known?.session ?? null : null;
+  // --continue takes the folder's latest conversation: never while another bot's Claude runs there.
+  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
+    const refusal = continueRefusal({ name: bot.name, old, cwd, sharers: await claudeBotsIn(cwd, bot.id, file) });
+    if (refusal) throw new CliError(refusal);
+  }
+  // A resumed session keeps its label on the new pane, so the next restart resumes it too.
+  const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}) };
+  const seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, deferLedger: Boolean(old) });
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
   if (old) {
-    // The old pane ends only once the new one runs its agent: the space is never left empty.
+    // The old pane ends only once the new one has kept its agent up: the space is never left empty.
     const up = await agentUp(seat.terminal);
     if (up.state !== "live") {
+      // An abandoned replacement is ended (no seat row was written for it); the old pane stays.
+      const ended = up.state === "ended" || (await hc(["kill", seat.terminal])).code === 0;
       throw new CliError(up.state === "ended"
-        ? `${seat.terminal} exited before its agent came up (hc read ${seat.terminal} says why); ${old.address} still runs ${bot.name}, untouched.`
+        ? `${seat.terminal} exited before its agent was up (hc read ${seat.terminal} says why); ${old.address} still runs ${bot.name}, untouched.`
           + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : "")
-        : `${seat.terminal} has no agent in front after ${RESTART_WAIT_MS / 1000}s; ${old.address} still runs ${bot.name}, untouched. `
-          + `Look at it (hc read ${seat.terminal}), then end the one you don't want: hc kill <terminal>.`);
+        : `${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
+          + `${old.address} still runs ${bot.name}, untouched.`);
     }
-    const killed = await hc(["kill", old.address]);
-    if (killed.code !== 0) say(`${old.address} wasn't ended (hc kill: ${(killed.stderr || killed.stdout).trim()}); end it with hc kill ${old.address}.`);
+    await seat.logSeat();
+    if (resumeId) {
+      const unlogged = appendLedger(sessionRow({ terminal: seat.terminal, session: resumeId, transcript: known?.transcript ?? null }));
+      if (unlogged) say(unlogged);
+    }
   }
-  if (plan.mode === "resume" && plan.agent === "claude" && !sessionOf(old)) {
+  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
     say(`No Claude session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (--continue). `
-      + `If that is another bot's, restart again with --fresh.`);
+      + `No other bot's Claude runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
   }
   let saved = false;
   if (opts.save) {
@@ -1011,10 +1064,26 @@ async function cmdRestart(opts, [ref]) {
       saved = true;
     }
   }
-  const what = old ? `${seat.terminal} replaces ${old.address}, ${restartText(plan, sessionOf(old))}` : `${bot.name} wasn't running; started in ${seat.terminal}${swap ? ` on ${plan.agent}` : ""}`;
-  if (!opts.json) report([`${bot.name}: ${what}${saved ? `; ${BOTS_PATH} now says ${plan.agent}${plan.model ? ` (${plan.model})` : ""}` : ""}.`]);
-  return opts.json ? { ...seatJson(bot, seat), replaced: old?.address ?? null, mode: old ? plan.mode : "start", agent: plan.agent, model: plan.model,
-    session: plan.mode === "resume" ? sessionOf(old) : null, note: plan.note, saved, warnings } : seat.terminal;
+  const what = old ? `${seat.terminal} replaces ${old.address}, ${restartText(plan, resumeId)}` : `${bot.name} wasn't running; started in ${seat.terminal}${swap ? ` on ${plan.agent}` : ""}`;
+  const answer = () => {
+    if (!opts.json) report([`${bot.name}: ${what}${saved ? `; ${BOTS_PATH} now says ${plan.agent}${plan.model ? ` (${plan.model})` : ""}` : ""}.`]);
+    return opts.json ? { ...seatJson(bot, seat), replaced: old?.address ?? null, mode: old ? plan.mode : "start", agent: plan.agent, model: plan.model,
+      session: resumeId, note: plan.note, saved, warnings } : seat.terminal;
+  };
+  if (!old) return answer();
+  // A bot restarting itself runs this inside the pane the kill ends: everything is written and
+  // printed first, then the kill, the last thing it does.
+  if (process.env.HC_TERMINAL_ID && [old.address, old.name].includes(process.env.HC_TERMINAL_ID)) {
+    const out = answer();
+    // Flushed (a pipe's write can be asynchronous) before the kill takes this process with it.
+    await new Promise((done) => process.stdout.write(opts.json ? `${JSON.stringify(out, null, 2)}\n` : `${out}\n`, done));
+    await new Promise((done) => process.stderr.write("", done));
+    await hc(["kill", old.address]);
+    return PRINTED;
+  }
+  const killed = await hc(["kill", old.address]);
+  if (killed.code !== 0) say(`${old.address} wasn't ended (hc kill: ${(killed.stderr || killed.stdout).trim()}); end it with hc kill ${old.address}.`);
+  return answer();
 }
 
 async function cmdAttach(opts, [ref, terminal]) {
@@ -1555,6 +1624,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     const out = await run(opts, rest);
+    if (out === PRINTED) return 0;
     if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     else if (out) process.stdout.write(`${out}\n`);
     if (TIDIES.has(command)) await tidyQuietly();

@@ -219,16 +219,20 @@ automagik-herdr update [--check | --rollback]
   whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
-  new one has its agent in front, so the space is never left empty. If the new one never comes
-  up, the old one is left running and both are named. It resumes the conversation: Claude by the
-  session id the briefing hook recorded on the pane (`agent.session`), else `--continue` in the
-  bot's folder (with a warning: that is the folder's latest conversation); `codex resume --last`;
+  new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
+  its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
+  leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
+  running. It resumes the conversation: Claude by the session id on the pane (`agent.session`,
+  carried to the new pane), else the workers ledger's last session row for that terminal, else
+  `--continue` in the bot's folder, which is refused while another bot's Claude runs in that
+  folder (it could resume theirs; `--fresh` starts a new one); `codex resume --last`;
   `--continue` for pi, omp, kimi, agy and hermes. Any other agent starts fresh, and says so.
   `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
   conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
   A bot that isn't running is started. It is refused while the bot is working (it would cut the
   turn in half) or has helpers, such as workers, that hc would end with its pane; `--force`
-  restarts anyway. It prints the new terminal.
+  restarts anyway. A bot restarting itself writes and prints everything before the kill that ends
+  its own pane. It prints the new terminal.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
   project is refused.
 

@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
@@ -45,8 +46,8 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   writeFileSync(logPath, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
   delete env.HC_TERMINAL_ID;
-  const cli = (args, { cwd = project, input } = {}) => {
-    const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
+  const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
+    const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env: { ...env, ...extra }, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -864,8 +865,14 @@ test("start: an edit landing during hc run relabels the new pane; a failed relab
 
 // ---- restart ----
 
+// The replacement must keep its agent in front this long before the old pane ends (5s live).
+process.env.AUTOMAGIK_HERDR_RESTART_STABLE_MS = "300";
+const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
+const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+const ledgerOf = (s) => readLedger(existsSync(ledgerPath(s.app)) ? readFileSync(ledgerPath(s.app), "utf8") : "");
+
 /** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
-function restartScene(t, { status = "idle", extra = [], session = "s-1", runAs } = {}) {
+function restartScene(t, { status = "idle", extra = [], session = SID, runAs } = {}) {
   const s = scene(t);
   s.seed(team());
   const old = term("t5", { bot: ID.main, cwd: s.project, status });
@@ -881,14 +888,13 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   const r = s.cli(["restart", "Genie"]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out.trim(), "t100", "prints the new terminal");
-  assert.match(r.err, /Genie: t100 replaces t5, resuming session s-1\./);
+  assert.match(r.err, new RegExp(`Genie: t100 replaces t5, resuming session ${SID}\\.`));
   const calls = s.calls();
   const run = runCall(calls);
-  assert.deepEqual(run.slice(run.indexOf("--")), ["--", "claude", "--resume", "s-1"]);
-  assert.ok(["herdr.space=sp9", "herdr.tab=tb3", `bot=${ID.main}`, "role=main", "squad=core"].every((l) => run.includes(l)), run.join(" "));
+  assert.deepEqual(run.slice(run.indexOf("--")), ["--", "claude", "--resume", SID]);
+  assert.ok(["herdr.space=sp9", "herdr.tab=tb3", `bot=${ID.main}`, "role=main", "squad=core", `agent.session=${SID}`].every((l) => run.includes(l)), run.join(" "));
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
-  // Started, seen live (hc get of the new pane), and only then the old one killed.
-  // Between run and kill: the ledger's pid lookup and at least one agent-up check, both hc get t100.
+  // Started, seen live at several checks (hc get of the new pane), and only then the old one killed.
   const ran = at(calls, "run"), killed = at(calls, "kill", "t5");
   assert.ok(ran >= 0 && ran < killed, JSON.stringify(calls));
   const seen = calls.slice(ran, killed).filter((c) => c[0] === "get" && c[1] === "t100").length;
@@ -897,6 +903,14 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   const state = s.hcState();
   assert.equal(state.terminals.find((x) => x.address === "t5").state, "finished");
   assert.equal(state.terminals.find((x) => x.address === "t100").state, "live");
+  // The seat row and the resumed session's row, for t100.
+  const rows = ledgerOf(s).filter((x) => x.terminal === "t100");
+  assert.deepEqual(rows.map((x) => [x.event, x.kind ?? x.session]), [["start", "seat"], ["session", SID]]);
+  assert.equal(rows[0].project, s.project);
+  // A second restart resumes the same conversation: the label went with it (t100 is mid-turn in the fake).
+  const again = s.cli(["restart", "Genie", "--force"]);
+  assert.equal(again.code, 0, again.err);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run")[1].slice(-3), ["claude", "--resume", SID]);
 });
 
 test("restart refuses a working bot (nothing started or ended) unless --force", (t) => {
@@ -921,24 +935,34 @@ test("restart refuses while a helper would end with the pane; a member bot that 
   assert.equal(runCall(s.calls()), undefined);
 });
 
-test("restart keeps the old pane when the new one never brings its agent up, or exits", (t) => {
+test("restart keeps the old pane when the new one never brings its agent up, exits, or exits after coming up", (t) => {
   process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS = "400";
   t.after(() => { delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS; });
   const s = restartScene(t, { runAs: "shell" });
   const r = s.cli(["restart", "Genie"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /t100 has no agent in front after 0.4s; t5 still runs Genie, untouched\. Look at it \(hc read t100\)/);
-  assert.equal(at(s.calls(), "kill"), -1);
+  assert.match(r.err, /t100 didn't keep an agent in front within 0\.4s, so it was ended; t5 still runs Genie, untouched\./);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t100"], "the abandoned pane ended, never t5");
   assert.equal(s.hcState().terminals.find((x) => x.address === "t5").state, "live");
+  assert.equal(ledgerOf(s).some((x) => x.terminal === "t100"), false, "no seat row for the abandoned pane");
   const s2 = restartScene(t, { runAs: "exit" });
   const r2 = s2.cli(["restart", "Genie"]);
   assert.equal(r2.code, 1);
-  assert.match(r2.err, /t100 exited before its agent came up .*t5 still runs Genie, untouched\. Try automagik-herdr restart b-aaaaaaaaaa --fresh\./);
+  assert.match(r2.err, /t100 exited before its agent was up .*t5 still runs Genie, untouched\. Try automagik-herdr restart b-aaaaaaaaaa --fresh\./);
   assert.equal(at(s2.calls(), "kill"), -1);
+  // Its agent in front at the first check, then gone (a stale --resume id): the old pane survives.
+  delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS;
+  const s3 = restartScene(t, { runAs: "flaky" });
+  const r3 = s3.cli(["restart", "Genie"]);
+  assert.equal(r3.code, 1);
+  assert.match(r3.err, /t100 exited before its agent was up/);
+  assert.equal(at(s3.calls(), "kill"), -1);
+  assert.equal(s3.hcState().terminals.find((x) => x.address === "t5").state, "live");
+  assert.equal(ledgerOf(s3).some((x) => x.terminal === "t100"), false);
 });
 
 test("restart with no session id known: claude --continue, with a warning; --fresh starts a new conversation", (t) => {
-  const s = restartScene(t, { session: null });
+  const s = restartScene(t, { session: "-rf" }); // not a session id: never passed to --resume
   const r = s.cli(["restart", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().replaced, r.json().terminal], ["resume", "t5", "t100"]);
@@ -988,4 +1012,39 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   assert.deepEqual([started.json().mode, started.json().replaced], ["start", null]);
   assert.deepEqual(s.calls().filter((c) => c[0] === "run")[1].slice(-2), ["--", "claude"]);
   assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t6"]);
+});
+
+test("restart: the ledger's session row for the old pane stands in for a missing label; --continue is refused beside another bot's Claude", (t) => {
+  const s = restartScene(t, { session: null });
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(ledgerPath(s.app), [{ event: "session", terminal: "t5", session: SID2, transcript: "/x.jsonl" }, { event: "session", terminal: "t6", session: SID }]
+    .map((x) => `${JSON.stringify(x)}\n`).join(""));
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(runCall(s.calls()).slice(-3), ["claude", "--resume", SID2]);
+  assert.deepEqual(ledgerOf(s).filter((x) => x.terminal === "t100" && x.event === "session").map((x) => [x.session, x.transcript]), [[SID2, "/x.jsonl"]]);
+  // No label, no ledger row, and Captain's Claude in the same folder: refused, nothing started.
+  const mate = term("t9", { bot: ID.cap, cwd: "" });
+  const s2 = restartScene(t, { session: null, extra: [mate] });
+  const st = s2.hcState();
+  st.terminals.find((x) => x.address === "t9").cwd = s2.project;
+  st.terminals.find((x) => x.address === "t9").foreground.cwd = s2.project;
+  writeFileSync(join(s2.root, "hc.json"), JSON.stringify(st));
+  const refused = s2.cli(["restart", "Genie"]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /Genie has no recorded Claude session .* and Captain \(t9\) also runs Claude in .*, so --continue could resume theirs\. Nothing was started; restart with --fresh/);
+  assert.equal(runCall(s2.calls()), undefined);
+  assert.equal(s2.cli(["restart", "Genie", "--fresh"]).code, 0);
+});
+
+test("a bot restarting itself writes and prints everything before the kill that ends its own pane", (t) => {
+  const s = restartScene(t);
+  const r = s.cli(["restart", "Genie", "--agent", "codex", "--save", "--json"], { env: { HC_TERMINAL_ID: "t5" } });
+  // The fake hc ends the CLI as the real kill of its own pane would: what it printed first stands.
+  assert.equal(r.json().terminal, "t100", r.err);
+  assert.deepEqual([r.json().replaced, r.json().mode, r.json().saved], ["t5", "swap", true]);
+  assert.equal(s.bots().bots[0].agent, "codex", "saved before the kill");
+  const calls = s.calls();
+  assert.deepEqual(calls.at(-1), ["kill", "t5"], "the kill is the last hc call");
+  assert.ok(ledgerOf(s).some((x) => x.terminal === "t100" && x.kind === "seat"));
 });

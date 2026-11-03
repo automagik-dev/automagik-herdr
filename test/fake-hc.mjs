@@ -31,6 +31,11 @@ switch (words[0]) {
   case "get": {
     const t = find(words[1]);
     if (!t) fail(`no terminal ${words[1]}`);
+    // exitAfterGets: answered live that many times, then the program exits (a failed resume).
+    if (typeof t.exitAfterGets === "number") {
+      if (t.exitAfterGets <= 0) { t.state = "finished"; delete t.exitAfterGets; } else t.exitAfterGets -= 1;
+      save();
+    }
     out(t);
     break;
   }
@@ -71,10 +76,12 @@ switch (words[0]) {
     const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
     const address = `t${state.next ?? 100}`;
     state.next = (state.next ?? 100) + 1;
-    // state.runAs: "shell" (the agent never comes in front) or "exit" (it ends at once).
+    // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
+    // "flaky" (its agent is in front for one hc get, then it exits).
     const shell = state.runAs === "shell";
     state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: state.runAs === "exit" ? "finished" : "live", created_ms: Date.now(),
-      pid: 9000 + Number(address.slice(1)), foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" } });
+      pid: 9000 + Number(address.slice(1)), foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" },
+      ...(state.runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
@@ -88,6 +95,9 @@ switch (words[0]) {
     t.state = "finished";
     save();
     out({ address: t.address, state: t.state });
+    // Killing the caller's own terminal ends the caller (this fake runs exec'd by the wrapper,
+    // so its parent is the program that called hc).
+    if (process.env.HC_TERMINAL_ID && [t.address, t.name].includes(process.env.HC_TERMINAL_ID)) process.kill(process.ppid, "SIGKILL");
     break;
   }
   case "templates": {
