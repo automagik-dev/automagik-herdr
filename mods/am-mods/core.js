@@ -440,9 +440,9 @@ export async function searchMarket(io, { query = "", sort = "stars", page = 1, p
 // ---- the official catalog (herdr.dev/mods) ----
 
 // Our marketplace: this pack publishes its own index (catalog/index.json, same shape as
-// herdr.dev's), and an installed copy may point anywhere via data/mod-manager/catalog.json.
-// The pack publishes from `dev`. Kept equal to mods/spaces-agents/release.js's CATALOG_URL by
-// test/pack-installer.test.mjs; an installed copy can override it via data/mod-manager/catalog.json.
+// herdr.dev's), and an installed copy may point anywhere via data/am-mods/catalog.json.
+// The pack publishes from `dev`. Kept equal to mods/am-sidebar/release.js's CATALOG_URL by
+// test/pack-installer.test.mjs; an installed copy can override it via data/am-mods/catalog.json.
 export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
 
 /** The commit the catalog pins for `source` (its `headCommit`), or null: an install fetches that commit. */
@@ -462,15 +462,16 @@ export function parseCatalog(json) {
   return { generatedAt: json?.generatedAt ?? null, count: mods.length, byMod };
 }
 
-// Where the index is: the pack's installer writes data/mod-manager/catalog.json ({ url }), copied
-// to data/am-mods/ by the rename migration; the mod's own catalog.json is the copy in a checkout,
+// Where the index is: the pack's installer writes data/am-mods/catalog.json ({ url }); an install
+// from before the rename has data/mod-manager/'s, copied to data/am-mods/ by the rename migration
+// and read as the fallback; the mod's own catalog.json is the copy in a checkout,
 // and the published index is the fallback. A URL the person set wins wherever it is, the most
 // recently changed one when both data folders hold one (else data/am-mods first): a copy still
 // holding a URL the pack wrote never shadows it.
 const PACK_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
 export async function catalogUrl(io, appHome) {
   const found = [];
-  for (const path of [`${appHome}/data/am-mods/catalog.json`, `${appHome}/data/mod-manager/catalog.json`, `${appHome}/mods/mod-manager/catalog.json`]) {
+  for (const path of [`${appHome}/data/am-mods/catalog.json`, `${appHome}/data/mod-manager/catalog.json`, `${appHome}/mods/am-mods/catalog.json`]) {
     try {
       const raw = await io.readText(path);
       const url = raw ? JSON.parse(raw)?.url : null;

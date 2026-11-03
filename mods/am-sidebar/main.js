@@ -788,7 +788,7 @@ export default class Spaces extends View {
       let found;
       try { found = await discoverProjects(); } catch { return; }
       if (run !== this.botsRun) return;
-      // For the footer's Bots tab (sidebar-chrome): whether this computer has a bot, as the
+      // For the footer's Bots tab (am-footer): whether this computer has a bot, as the
       // Bot settings list counts them. Set only on a change.
       const defined = found.some((p) => !p.machine && p.file?.bots?.length > 0);
       if (shared("bots.defined") !== defined) setShared("bots.defined", defined);
@@ -1100,7 +1100,7 @@ export default class Spaces extends View {
       .text_size(13).text_color(t.dim).child("+");
     if (this.hoverSpace !== w.id) return el.opacity(0);
     return this.ownPress(el.hover(s => s.bg(t.raised).text_color(t.foreground)).tooltip("New agent here"),
-      () => openOverlay({ mod: "new-menu-tui", kind: "popup", width: 250, height: 512, props: { space: w.id } }));
+      () => openOverlay({ mod: "am-new-menu", kind: "popup", width: 250, height: 512, props: { space: w.id } }));
   }
 
   // A control inside a row: its press neither selects nor drags the row (a drag from

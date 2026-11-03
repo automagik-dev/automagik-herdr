@@ -53,7 +53,7 @@ import {
   CATALOG_URL, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
-import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
+import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
@@ -448,7 +448,16 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
       moves.push([fresh, live]);
       record.mods.push(m);
     }
-    // A mod another pack mod took in (space-icon, markdown-browser): the record's leaves with the
+    // A person's old-named folder beside its am-* folder (left by an earlier run without --adopt):
+    // left again, or adopted now. With no am-* folder yet, the loop above decided it.
+    for (const m of repair ? [] : folders) {
+      const old = own(OLD_OF, m), oldLive = old && join(modsDir, old);
+      if (!old || owned.has(old) || plan.left.includes(old) || plan.adopted.some((a) => a.mod === old)) continue;
+      if (!exists(oldLive) || isLink(oldLive)) continue;
+      if (adopt) adoptFolder(old);
+      else plan.left.push(old);
+    }
+    // A mod another pack mod took in (migrate.js ABSORBED): the record's leaves with the
     // set (below); a person's own is left, or adopted, once the mod that took it in is shipped.
     for (const [m, into] of Object.entries(ABSORBED)) {
       const live = join(modsDir, m);
@@ -701,11 +710,11 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
     }
   }
   if (added) writeFileSync(keysPath, JSON.stringify(mine, null, 2) + "\n");
-  // The mod manager's catalog: it reads data/am-mods/catalog.json, then data/mod-manager/'s
-  // (core.js catalogUrl). Each one there that still holds a URL the pack wrote gets the current
-  // one; a URL the person set, a file it can't read or a link stays theirs. With neither, the
-  // pack's goes in data/mod-manager/.
-  const catalogs = ["am-mods", "mod-manager"].map((d) => join(appHome, "data", d, "catalog.json"));
+  // The mod manager's catalog: it reads data/am-mods/catalog.json, then the one in its data folder
+  // from before the rename (core.js catalogUrl). Each one there that still holds a URL the pack
+  // wrote gets the current one; a URL the person set, a file it can't read or a link stays theirs.
+  // With neither, the pack's goes in data/am-mods/.
+  const catalogs = ["am-mods", renamedFrom(RENAMES, "am-mods")].map((d) => join(appHome, "data", d, "catalog.json"));
   for (const file of catalogs.filter(exists)) {
     let url = null;
     try { url = isLink(file) ? "(a link)" : JSON.parse(readFileSync(file, "utf8"))?.url ?? null; } catch { url = "(unreadable)"; }
@@ -713,8 +722,8 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
     else if (url !== CATALOG_URL) writeFileSync(file, JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
   }
   if (!catalogs.some(exists)) {
-    mkdirSync(dirname(catalogs[1]), { recursive: true });
-    writeFileSync(catalogs[1], JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
+    mkdirSync(dirname(catalogs[0]), { recursive: true });
+    writeFileSync(catalogs[0], JSON.stringify({ url: CATALOG_URL }, null, 2) + "\n");
   }
 
   placeLayout({ modsDir, tgzDir, record, log });

@@ -1,4 +1,4 @@
-// The `herdr` surface md-menu needs beyond what herdr-stub already models: props and panes the test
+// The `herdr` surface am-markdown needs beyond what herdr-stub already models: props and panes the test
 // sets, a theme, key bindings, and the overlay/command calls the mod makes. Everything else —
 // exec, hc, shared, setShared, focused, run — comes from herdr-stub unchanged.
 export * from "./herdr-stub.mjs";

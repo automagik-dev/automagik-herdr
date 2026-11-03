@@ -1,4 +1,4 @@
-// Buttons other mods add to the footer rail (mods/sidebar-chrome/contributions.js): parsing and
+// Buttons other mods add to the footer rail (mods/am-footer/contributions.js): parsing and
 // validating mod.json, the order and the cap, the badge rule, and the scan over a scratch app home.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   MAX_BUTTONS, FALLBACK_ICON, badgeCount, collectFooter, iconLooksValid, iconPath, modNames, oneAtATime, parseFooter, scanFooter, touchesFooter,
-} from "../mods/sidebar-chrome/contributions.js";
+} from "../mods/am-footer/contributions.js";
 
 const TASKS = { id: "tasks", label: "Tasks", icon: "mods/genie-herdr/tasks.svg", command: "mod.open", args: { name: "tasks-mock" }, badge: "genie.tasks.waiting" };
 const modJson = (footer, extra = {}) => JSON.stringify({ place: "none", ...extra, automagik: { footer } });

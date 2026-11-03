@@ -42,7 +42,7 @@
               "id": "automations-panel",
               "type": "block",
               "content": {
-                "mod": "automations"
+                "mod": "am-automations"
               },
               "size": {
                 "weight": 1
@@ -70,7 +70,7 @@
           "id": "sidebar-footer",
           "type": "block",
           "content": {
-            "mod": "sidebar-chrome",
+            "mod": "am-footer",
             "props": {
               "footer": true
             }
@@ -97,7 +97,7 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "auto-tabs"
+            "mod": "am-tabs"
           },
           "size": {
             "px": 42
@@ -194,7 +194,7 @@
     }
   ],
   "background": "canvas",
-  "terminal_menu": "md-menu",
+  "terminal_menu": "am-markdown",
   "terminal_padding": [
     14,
     12

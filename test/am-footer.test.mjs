@@ -1,4 +1,4 @@
-// The footer rail (sidebar-chrome) under a stub runtime: the Bots tab comes first and shows only
+// The footer rail (am-footer) under a stub runtime: the Bots tab comes first and shows only
 // while the sidebar mod is installed, and its popup offers New bot and Bot settings as the sidebar
 // mod's own forms. Not Herdr itself: the in-app check in the mod's RECIPE still applies.
 import test from "node:test";
@@ -10,14 +10,14 @@ import { registerHooks } from "node:module";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./footer-herdr.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
-const fromMod = (context) => context.parentURL?.includes("/mods/sidebar-chrome/");
+const fromMod = (context) => context.parentURL?.includes("/mods/am-footer/");
 registerHooks({
   resolve: (specifier, context, next) =>
     stubs[specifier] && fromMod(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context),
 });
 
 const { state, ui } = await import(stubs.herdr);
-const { default: Footer, BOT_FORMS, botsMenuItems } = await import("../mods/sidebar-chrome/main.js");
+const { default: Footer, BOT_FORMS, botsMenuItems } = await import("../mods/am-footer/main.js");
 const { all, index, nodes, textOf } = await import(stubs["gpui-kit"]);
 
 const TABS = new Set(["bots", "mods", "automations", "quota", "pocket", "settings", "machine"]);
@@ -48,7 +48,7 @@ async function footer({ sidebar, files = {} }) {
 
 test("the rail: Bots first, ahead of Mods, Automations and Quota, while the sidebar mod is installed", async () => {
   assert.deepEqual(await footer({ sidebar: true }), ["bots", "mods", "automations", "quota", "settings", "machine"]);
-  assert.equal(nodes.get("bots").kids[0].__node.arg, "mods/sidebar-chrome/bot.svg");
+  assert.equal(nodes.get("bots").kids[0].__node.arg, "mods/am-footer/bot.svg");
 });
 
 test("the rail: no Bots tab without mods/am-sidebar/mod.json", async () => {
@@ -59,7 +59,7 @@ test("the Bots tab opens this mod's popup", async () => {
   await footer({ sidebar: true });
   ui.overlays = [];
   nodes.get("bots").click(null, makeCx());
-  assert.deepEqual(ui.overlays, [{ mod: "sidebar-chrome", kind: "popup", width: 200, height: 90, props: { botsMenu: true } }]);
+  assert.deepEqual(ui.overlays, [{ mod: "am-footer", kind: "popup", width: 200, height: 90, props: { botsMenu: true } }]);
 });
 
 test("the forms are the sidebar mod's own: create 1000 x 840, the bot list 560 x 0.85, modal dialogs", () => {
@@ -141,7 +141,7 @@ test("a contributed button's badge: a count for a number above 0, nothing for 0,
 test("a contributed button with a missing icon draws the neutral glyph", async () => {
   const files = { "mods/tasks-mock/mod.json": TASKS_MOD["mods/tasks-mock/mod.json"] };
   await footer({ sidebar: false, files });
-  assert.equal(nodes.get("tasks-mock/tasks").kids[0].__node.arg, "mods/sidebar-chrome/circle.svg");
+  assert.equal(nodes.get("tasks-mock/tasks").kids[0].__node.arg, "mods/am-footer/circle.svg");
 });
 
 test("a mod.json change rescans at once; a batch of other files does not", async () => {

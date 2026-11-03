@@ -232,19 +232,23 @@ function assertFullPack(m, r) {
   assert.deepEqual(readFileSync(join(m.appHome, PACK_LAYOUT)), shipped, "the automagik layout is the pack's");
   assert.deepEqual(readFileSync(join(m.state, "automagik.json")), shipped);
   // Activation: the layout shows the sidebar, the footer rail, the tab bar, both panels and the
-  // Markdown menu; the sidebar's + opens new-menu-tui; every pack mod it names is installed.
+  // Markdown menu; the sidebar's + opens am-new-menu; every pack mod it names is installed.
   const layout = JSON.parse(shipped);
   const blocks = [];
   const walk = (n) => { if (n.content?.mod) blocks.push(n.content); (n.children ?? []).forEach(walk); };
   walk(layout);
   const named = blocks.map((c) => c.mod);
-  for (const mod of ["am-sidebar", "auto-tabs", "automations", "am-quota"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
-  assert.deepEqual(blocks.find((c) => c.mod === "sidebar-chrome")?.props, { footer: true }, "the footer rail");
-  assert.equal(layout.terminal_menu, "md-menu");
-  assert.match(readFileSync(join(m.mods, "am-sidebar", "main.js"), "utf8"), /openOverlay\(\{ mod: "new-menu-tui"/, "the sidebar's + opens new-menu-tui");
+  for (const mod of ["am-sidebar", "am-tabs", "am-automations", "am-quota"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
+  assert.deepEqual(blocks.find((c) => c.mod === "am-footer")?.props, { footer: true }, "the footer rail");
+  assert.equal(layout.terminal_menu, "am-markdown");
+  assert.match(readFileSync(join(m.mods, "am-sidebar", "main.js"), "utf8"), /openOverlay\(\{ mod: "am-new-menu"/, "the sidebar's + opens am-new-menu");
+  // The tab bar's + too: the pack's menu replaces Herdr's stock new-menu (owner, Group 7).
+  const tabs = readFileSync(join(m.mods, "am-tabs", "main.js"), "utf8");
+  assert.match(tabs, /button\("tab-new", "\+", \(\) => openOverlay\(\{ mod: "am-new-menu"/, "the tab bar's + opens am-new-menu");
+  assert.doesNotMatch(tabs, /mod: "new-menu"/, "never the stock new-menu");
   for (const mod of [...named, layout.terminal_menu].filter((n) => PACK_MODS.includes(n))) assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} (in the layout) is installed`);
   // The mod manager: its catalog and its key (merged only where free).
-  assert.deepEqual(JSON.parse(readFileSync(join(m.appHome, "data", "mod-manager", "catalog.json"), "utf8")), { url: CATALOG_URL });
+  assert.deepEqual(JSON.parse(readFileSync(join(m.appHome, "data", "am-mods", "catalog.json"), "utf8")), { url: CATALOG_URL });
   const keys = JSON.parse(readFileSync(join(m.appHome, "keys.json"), "utf8"));
   for (const [section, entries] of Object.entries(PACK_KEYS)) for (const [key, action] of Object.entries(entries)) assert.equal(keys[section]?.[key], action, `key ${key}`);
   for (const mod of PACK_MODS) assert.ok(existsSync(join(m.mods, mod)), mod);
@@ -369,7 +373,7 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
-  for (const what of ["footer rail (sidebar-chrome)", "tab bar (auto-tabs)", "Markdown menu (md-menu)", "automations panel", "quota panel (am-quota)"]) {
+  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel", "quota panel (am-quota)"]) {
     assert.ok(note.includes(what), `it names the ${what}: ${note}`);
   }
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);

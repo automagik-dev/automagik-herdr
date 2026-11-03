@@ -1,7 +1,7 @@
-// The `herdr` surface sidebar-chrome (the footer) needs beyond md-menu-herdr.mjs: Herdr's update
+// The `herdr` surface am-footer (the footer) needs beyond am-markdown-herdr.mjs: Herdr's update
 // state, and an app home the test points at a scratch folder (state.appHome).
 import { state } from "./herdr-stub.mjs";
-export * from "./md-menu-herdr.mjs";
+export * from "./am-markdown-herdr.mjs";
 
 export const updates = () => ({ app: {} });
 

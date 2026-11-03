@@ -1,4 +1,4 @@
-// md-menu's contract, driven through a stub runtime: what the terminal printed becomes rows, a
+// am-markdown's contract, driven through a stub runtime: what the terminal printed becomes rows, a
 // missing path stays hidden, and a click opens or re-points the preview the way the shared keys say.
 // Not Herdr itself — the in-app check in RECIPE.md still applies.
 //
@@ -14,11 +14,11 @@ import { join } from "node:path";
 import { registerHooks } from "node:module";
 
 const stubs = {
-  herdr: new URL("./md-menu-herdr.mjs", import.meta.url).href,
+  herdr: new URL("./am-markdown-herdr.mjs", import.meta.url).href,
   "gpui-kit": new URL("./gpui-stub.mjs", import.meta.url).href,
   "gpui-base": new URL("./gpui-stub.mjs", import.meta.url).href,
 };
-const fromMod = (context) => context.parentURL?.includes("/mods/md-menu/");
+const fromMod = (context) => context.parentURL?.includes("/mods/am-markdown/");
 registerHooks({
   resolve: (specifier, context, next) =>
     stubs[specifier] && fromMod(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context),
@@ -26,7 +26,7 @@ registerHooks({
 
 const herdr = await import(stubs.herdr);
 const { state } = herdr;
-const { default: MdMenu } = await import("../mods/md-menu/main.js");
+const { default: MdMenu } = await import("../mods/am-markdown/main.js");
 const { index, textOf, nodes } = await import(stubs["gpui-kit"]);
 
 const SLOTS = "am.markdown.slots";
@@ -90,7 +90,7 @@ async function reset({ props, panes, printed = "" }) {
 
 // A directory to resolve paths against, with the file a terminal "printed".
 const folder = () => {
-  const dir = mkdtempSync(join(tmpdir(), "md-menu-"));
+  const dir = mkdtempSync(join(tmpdir(), "am-markdown-"));
   writeFileSync(join(dir, "NOTES.md"), "# Notes\n");
   return dir;
 };
@@ -123,21 +123,21 @@ test("the menu lists the Markdown the terminal printed, and hides a path that is
   assert.match(empty, /No Markdown files in this terminal/);
 });
 
-test("a click splits a new pane to the right, as md-menu, and records its slot", async () => {
+test("a click splits a new pane to the right, as am-markdown, and records its slot", async () => {
   const dir = folder();
   const view = await menuView(dir);
   index(view.render(cxFor()));
   assert.ok(nodes.get("mm-0"), "the first Markdown row is drawn");
   nodes.get("mm-0").click(null, cxFor());
   // The app creates the pane within the same turn; the mod polls for it before it will record it.
-  herdr.ui.panes = [...herdr.ui.panes, { pane: "p2", tab: "t1", mod: "md-menu" }];
+  herdr.ui.panes = [...herdr.ui.panes, { pane: "p2", tab: "t1", mod: "am-markdown" }];
   await until(() => state.shared.get(SLOTS) && state.shared.get(SHOW), "the slot to be recorded");
 
   const split = state.runs.find(([name]) => name === "pane.split");
   assert.ok(split, "the panes were split");
   const args = split[1];
   assert.equal(args.direction, "right");
-  assert.equal(args.mod, "md-menu", "the preview is this mod now, not markdown-browser");
+  assert.equal(args.mod, "am-markdown", "the preview is this mod now, not the old Markdown panel");
   assert.equal(args.pane, "p1", "beside the pane that was clicked");
   assert.equal(args.props.file, join(dir, "NOTES.md"));
   assert.ok(args.props.slot, "the new pane carries a slot");
@@ -150,7 +150,7 @@ test("a click splits a new pane to the right, as md-menu, and records its slot",
 test("a second click switches the tab's preview in place instead of splitting again", async () => {
   const dir = folder();
   const pane = { pane: "p1", tab: "t1", terminal: "t1", focused: true, cwd: dir };
-  const preview = { pane: "p2", tab: "t1", mod: "md-menu", focused: true };
+  const preview = { pane: "p2", tab: "t1", mod: "am-markdown", focused: true };
   await reset({ props: { tab: "pane", target: { pane: "p1" } }, panes: [pane, preview], printed: `opened ${dir}/NOTES.md\n` });
   state.focused = { tab: "t1", pane: "p1" };
   state.shared.set(SLOTS, { p2: "s1" });

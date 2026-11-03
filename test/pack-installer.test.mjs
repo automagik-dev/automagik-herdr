@@ -8,7 +8,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as core from "../mods/mod-manager/core.js";
+import * as core from "../mods/am-mods/core.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CATALOG = join(ROOT, "scripts", "catalog.mjs");
@@ -24,7 +24,7 @@ const ioOf = (fail = () => false) => ({
   writeText: async (path, text) => writeFileSync(path, text),
 });
 const scratch = (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "mod-manager-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 };

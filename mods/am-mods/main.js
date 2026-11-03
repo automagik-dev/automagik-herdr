@@ -9,7 +9,7 @@ import * as core from "./core.js";
 
 const RECORDS = "am.mods.installed";
 // The rename shim (D12): the list from before the rename is copied over once on load, and the old
-// key stays (spaces-agents/migrate.js SHARED_RENAMES).
+// key stays (am-sidebar/migrate.js SHARED_RENAMES).
 const SHARED_OLD = Object.freeze({ "mod-manager.installed": RECORDS });
 function carryShared() {
   for (const [old, now] of Object.entries(SHARED_OLD)) if (shared(now) == null && shared(old) != null) setShared(now, shared(old));
@@ -38,7 +38,7 @@ const anonymous = async (url) => {
 
 const records = () => shared(RECORDS) ?? [];
 const saveRecords = (list) => setShared(RECORDS, list);
-const cacheDir = () => `${appHome()}/.mod-manager-cache`;
+const cacheDir = () => `${appHome()}/.am-mods-cache`;
 const repoPage = (source) => (/^[\w.-]+\/[\w.-]+$/.test(source) ? `https://github.com/${source}` : null);
 const short = (sha) => (sha ? sha.slice(0, 7) : "?");
 

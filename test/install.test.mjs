@@ -151,8 +151,8 @@ test("a fresh install puts the pack and the command in place; a second run chang
   for (const f of ["run.sh", "automagik-herdr"]) assert.equal(lstatSync(join(s.pack, "bin", f)).mode & 0o111, 0o111, f);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
-  assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:mod-manager" } });
-  assert.match(readFileSync(join(s.appHome, "data", "mod-manager", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
+  assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:am-mods" } });
+  assert.match(readFileSync(join(s.appHome, "data", "am-mods", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
@@ -240,7 +240,7 @@ test("a tarball holding a symlink installs nothing, and leaves the old pack", (t
   const s = scratch(t);
   mkdirSync(s.pack, { recursive: true });
   writeFileSync(join(s.pack, "main.js"), "// the old pack\n");
-  s.publish("9.9.0", { edit: (dir) => symlinkSync("/etc/passwd", join(dir, "auto-tabs", "evil")) });
+  s.publish("9.9.0", { edit: (dir) => symlinkSync("/etc/passwd", join(dir, "am-tabs", "evil")) });
   const r = s.run("--yes");
   assert.equal(r.code, 1);
   assert.match(r.err, /nothing was installed: .*evil: not a plain file or folder/);
@@ -369,37 +369,37 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 test("adopt, then update twice: the adopted original stays in backup/, and --uninstall puts it back", (t) => {
   const s = scratch(t);
-  mkdirSync(join(s.mods, "sidebar-chrome", ".state"), { recursive: true });
-  writeFileSync(join(s.mods, "sidebar-chrome", "main.js"), "// hand-installed\n");
-  writeFileSync(join(s.mods, "sidebar-chrome", ".state", "rail.json"), "{\"tab\":\"mods\"}\n");
-  const original = treeSum(join(s.mods, "sidebar-chrome"));
+  mkdirSync(join(s.mods, "am-footer", ".state"), { recursive: true });
+  writeFileSync(join(s.mods, "am-footer", "main.js"), "// hand-installed\n");
+  writeFileSync(join(s.mods, "am-footer", ".state", "rail.json"), "{\"tab\":\"mods\"}\n");
+  const original = treeSum(join(s.mods, "am-footer"));
   s.publish("9.9.0");
   const first = s.run("--yes", "--adopt");
   assert.equal(first.code, 0, first.err);
-  const backup = join(s.state, "backup", `sidebar-chrome-${today()}`);
-  assert.ok(first.out.includes(`adopted mods/sidebar-chrome: the original is kept in ${backup}`), first.out);
-  assert.match(s.mark(), /^adopted=sidebar-chrome:backup\/sidebar-chrome-\d{4}-\d\d-\d\d$/m);
-  assert.equal(readFileSync(join(s.mods, "sidebar-chrome", ".state", "rail.json"), "utf8"), "{\"tab\":\"mods\"}\n", "its state carried over");
+  const backup = join(s.state, "backup", `am-footer-${today()}`);
+  assert.ok(first.out.includes(`adopted mods/am-footer: the original is kept in ${backup}`), first.out);
+  assert.match(s.mark(), /^adopted=am-footer:backup\/am-footer-\d{4}-\d\d-\d\d$/m);
+  assert.equal(readFileSync(join(s.mods, "am-footer", ".state", "rail.json"), "utf8"), "{\"tab\":\"mods\"}\n", "its state carried over");
   for (const v of ["9.10.0", "9.11.0"]) {
     s.publish(v);
     const r = s.run("--yes");
     assert.equal(r.code, 0, r.err);
     assert.deepEqual(s.versions(), s.all(v));
     assert.equal(treeSum(backup), original, `${v}: the adopted original is untouched`);
-    assert.equal(existsSync(join(s.state, ".prev", "sidebar-chrome", "main.js")), true);
+    assert.equal(existsSync(join(s.state, ".prev", "am-footer", "main.js")), true);
   }
-  assert.deepEqual(readdirSync(join(s.state, "backup")), [`sidebar-chrome-${today()}`]);
+  assert.deepEqual(readdirSync(join(s.state, "backup")), [`am-footer-${today()}`]);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.equal(treeSum(join(s.mods, "sidebar-chrome")), original);
+  assert.equal(treeSum(join(s.mods, "am-footer")), original);
   assert.equal(existsSync(backup), false);
-  assert.deepEqual(readdirSync(s.mods), ["sidebar-chrome"]);
+  assert.deepEqual(readdirSync(s.mods), ["am-footer"]);
 });
 
 test("old-named folders the installer didn't write are left alone without --adopt; --uninstall leaves them too", (t) => {
   const s = scratch(t);
   const mine = {};
-  for (const m of ["am-sidebar", "auto-tabs"]) {
+  for (const m of ["am-sidebar", "am-tabs"]) {
     mkdirSync(join(s.mods, m, "bin"), { recursive: true });
     writeFileSync(join(s.mods, m, "main.js"), `// ${m}, hand-placed\n`);
     writeFileSync(join(s.mods, m, "VERSION"), "9.9.0\n");
@@ -408,14 +408,14 @@ test("old-named folders the installer didn't write are left alone without --adop
   s.publish("9.9.0");
   const first = s.run("--yes");
   assert.equal(first.code, 0, first.err);
-  assert.match(first.out, /left alone: mods\/auto-tabs \(not installed by automagik-herdr; --adopt/);
+  assert.match(first.out, /left alone: mods\/am-tabs \(not installed by automagik-herdr; --adopt/);
   assert.match(first.out, /Left .*automagik-herdr as it is: .*am-sidebar is not this installer's/);
   assert.match(s.mark(), new RegExp(`^mods=${PACK_MODS.filter((m) => !(m in mine)).join(",")}$`, "m"));
   for (const m in mine) assert.equal(treeSum(join(s.mods, m)), mine[m], m);
   assert.equal(existsSync(s.link), false);
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(readdirSync(s.mods), ["am-sidebar", "auto-tabs"]);
+  assert.deepEqual(readdirSync(s.mods), ["am-sidebar", "am-tabs"]);
   for (const m in mine) assert.equal(treeSum(join(s.mods, m)), mine[m], m);
 });
 
@@ -532,11 +532,11 @@ test("free keys only, and an unreadable keys.json stops the install before any f
 test("a failing herdr-app check exits 1 after installing, naming the mod and the rollback", (t) => {
   const s = scratch(t);
   s.addHerdrApp();
-  writeFileSync(join(s.bin, "herdr-app"), `${readFileSync(join(s.bin, "herdr-app"), "utf8")}case "$2" in */auto-tabs) echo broken >&2; exit 1 ;; esac\n`);
+  writeFileSync(join(s.bin, "herdr-app"), `${readFileSync(join(s.bin, "herdr-app"), "utf8")}case "$2" in */am-tabs) echo broken >&2; exit 1 ;; esac\n`);
   s.publish("9.9.0");
   const r = s.run("--yes");
   assert.equal(r.code, 1);
-  assert.match(r.out, /check FAILED: auto-tabs: broken/);
+  assert.match(r.out, /check FAILED: am-tabs: broken/);
   assert.match(r.err, /herdr-app check failed .*update --rollback/);
   assert.doesNotMatch(r.out, /Done/);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
@@ -597,25 +597,25 @@ test("a same-version rerun repairs a corrupted main.js, a deleted layout and a m
   assert.deepEqual(s.versions(), s.all("9.9.0"));
 
   // A missing sibling mod, the sidebar's VERSION and the command intact.
-  rmSync(join(s.mods, "auto-tabs"), { recursive: true });
+  rmSync(join(s.mods, "am-tabs"), { recursive: true });
   const sibling = s.run("--yes");
   assert.equal(sibling.code, 0, sibling.err);
-  assert.match(sibling.out, /missing: mods\/auto-tabs/);
-  assert.match(sibling.out, /repaired mods\/auto-tabs: it was missing; installed 9\.9\.0/);
+  assert.match(sibling.out, /missing: mods\/am-tabs/);
+  assert.match(sibling.out, /repaired mods\/am-tabs: it was missing; installed 9\.9\.0/);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
 
   // A pack mod the mod manager switched off (moved to mods-disabled/) stays off.
-  const off = join(s.appHome, "mods-disabled", "md-menu");
+  const off = join(s.appHome, "mods-disabled", "am-markdown");
   mkdirSync(dirname(off), { recursive: true });
-  execFileSync("mv", [join(s.mods, "md-menu"), off]);
+  execFileSync("mv", [join(s.mods, "am-markdown"), off]);
   const checksOff = s.checks().length;
   const clean = s.run("--yes");
   assert.equal(clean.code, 0, clean.err);
-  assert.equal(existsSync(join(s.mods, "md-menu")), false, "a switched-off mod is not turned back on");
+  assert.equal(existsSync(join(s.mods, "am-markdown")), false, "a switched-off mod is not turned back on");
   assert.equal(existsSync(join(off, "main.js")), true);
   const ran = s.checks().slice(checksOff);
   assert.equal(ran.length, PACK_MODS.length - 1, "every pack mod but the switched-off one is checked");
-  assert.equal(ran.some((c) => c.endsWith("/md-menu")), false);
+  assert.equal(ran.some((c) => c.endsWith("/am-markdown")), false);
   assert.match(clean.out, /Automagik Herdr 9\.9\.0 is already up to date .*every file matches the release/);
   assert.doesNotMatch(clean.out, /repaired|Done/);
   assert.deepEqual(sums(), before, "Sheepdog, Pocket-Link and the personal layout are untouched");
@@ -624,23 +624,23 @@ test("a same-version rerun repairs a corrupted main.js, a deleted layout and a m
 
 test("a same-version rerun never installs a pack-named folder the record doesn't list, and restores a lost exec bit", (t) => {
   const s = scratch(t);
-  // The person's own md-menu, there before the install: left alone, so not in the record.
-  mkdirSync(join(s.mods, "md-menu"), { recursive: true });
-  writeFileSync(join(s.mods, "md-menu", "main.js"), "// mine\n");
+  // The person's own am-markdown, there before the install: left alone, so not in the record.
+  mkdirSync(join(s.mods, "am-markdown"), { recursive: true });
+  writeFileSync(join(s.mods, "am-markdown", "main.js"), "// mine\n");
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
-  assert.doesNotMatch(s.mark(), /md-menu/);
-  // Switched off (mods-disabled/), or removed: neither brings the pack's md-menu in.
-  const off = join(s.appHome, "mods-disabled", "md-menu");
+  assert.doesNotMatch(s.mark(), /am-markdown/);
+  // Switched off (mods-disabled/), or removed: neither brings the pack's am-markdown in.
+  const off = join(s.appHome, "mods-disabled", "am-markdown");
   mkdirSync(dirname(off), { recursive: true });
-  execFileSync("mv", [join(s.mods, "md-menu"), off]);
+  execFileSync("mv", [join(s.mods, "am-markdown"), off]);
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /already up to date/);
-  assert.equal(existsSync(join(s.mods, "md-menu")), false);
+  assert.equal(existsSync(join(s.mods, "am-markdown")), false);
   rmSync(off, { recursive: true });
   assert.equal(s.run("--yes").code, 0);
-  assert.equal(existsSync(join(s.mods, "md-menu")), false);
+  assert.equal(existsSync(join(s.mods, "am-markdown")), false);
   // A shipped executable that lost its exec bit differs from the release.
   const cmd = join(s.pack, "bin", "automagik-herdr.mjs");
   chmodSync(cmd, 0o644);
@@ -655,10 +655,10 @@ test("a same-version rerun whose herdr-app check fails exits 1 with the check's 
   s.addHerdrApp();
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
-  writeFileSync(join(s.bin, "herdr-app"), `${readFileSync(join(s.bin, "herdr-app"), "utf8")}case "$2" in */md-menu) printf 'main.js:3: SyntaxError\\n  at load\\n' >&2; exit 1 ;; esac\n`);
+  writeFileSync(join(s.bin, "herdr-app"), `${readFileSync(join(s.bin, "herdr-app"), "utf8")}case "$2" in */am-markdown) printf 'main.js:3: SyntaxError\\n  at load\\n' >&2; exit 1 ;; esac\n`);
   const r = s.run("--yes");
   assert.equal(r.code, 1);
-  assert.match(r.out, /check FAILED: md-menu: main\.js:3: SyntaxError\n {8}at load\n/);
+  assert.match(r.out, /check FAILED: am-markdown: main\.js:3: SyntaxError\n {8}at load\n/);
   assert.match(r.err, /herdr-app check failed for a mod/);
   assert.doesNotMatch(r.out, /up to date|Done/);
 });
@@ -887,7 +887,7 @@ test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
-  for (const m of ["am-quota", "auto-tabs"]) {
+  for (const m of ["am-quota", "am-tabs"]) {
     mkdirSync(join(s.mods, m, ".state"));
     writeFileSync(join(s.mods, m, ".state", "cred"), `${m} secret\n`);
   }
@@ -895,7 +895,7 @@ test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from
   assert.equal(existsSync(join(s.mods, "am-quota")), false);
   const again = s.run("--yes");
   assert.equal(again.code, 0, again.err);
-  for (const m of ["am-quota", "auto-tabs"]) assert.equal(readFileSync(join(s.mods, m, ".state", "cred"), "utf8"), `${m} secret\n`, m);
+  for (const m of ["am-quota", "am-tabs"]) assert.equal(readFileSync(join(s.mods, m, ".state", "cred"), "utf8"), `${m} secret\n`, m);
 });
 
 test("--uninstall never glob-expands the record, and moves only backup/<name> paths it adopted", (t) => {
@@ -904,16 +904,16 @@ test("--uninstall never glob-expands the record, and moves only backup/<name> pa
   writeFileSync(join(s.state, "backup", "keep", "main.js"), "// mine\n");
   mkdirSync(join(s.mods, "pocket-link"), { recursive: true });
   writeFileSync(join(s.mods, "pocket-link", "main.js"), "// pocket\n");
-  writeFileSync(join(s.root, "auto-tabs"), "a file in the cwd a glob would find\n");
-  mkdirSync(join(s.mods, "auto-tabs"));
-  writeFileSync(join(s.mods, "auto-tabs", "main.js"), "// not the record's\n");
+  writeFileSync(join(s.root, "am-tabs"), "a file in the cwd a glob would find\n");
+  mkdirSync(join(s.mods, "am-tabs"));
+  writeFileSync(join(s.mods, "am-tabs", "main.js"), "// not the record's\n");
   const stateBefore = treeSum(s.state);
   writeFileSync(join(s.state, "installed-by-install.sh"),
-    "version=9.9.0\nmods=*,auto-*\nbefore=none\nadopted=am-quota:,auto-tabs:.,md-menu:backup/,mod-manager:backup/../..,new-menu-tui:/etc,automations:backup/*,sidebar-chrome:backup/.hidden\n");
+    "version=9.9.0\nmods=*,am-t*\nbefore=none\nadopted=am-quota:,am-tabs:.,am-markdown:backup/,am-mods:backup/../..,am-new-menu:/etc,am-automations:backup/*,am-footer:backup/.hidden\n");
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(readdirSync(s.mods), ["auto-tabs", "pocket-link"], "nothing put back; `auto-*` matched nothing");
-  assert.equal(readFileSync(join(s.mods, "auto-tabs", "main.js"), "utf8"), "// not the record's\n");
+  assert.deepEqual(readdirSync(s.mods), ["am-tabs", "pocket-link"], "nothing put back; `am-t*` matched nothing");
+  assert.equal(readFileSync(join(s.mods, "am-tabs", "main.js"), "utf8"), "// not the record's\n");
   assert.equal(readFileSync(join(s.mods, "pocket-link", "main.js"), "utf8"), "// pocket\n");
   rmSync(join(s.state, "installed-by-install.sh"), { force: true });
   assert.equal(treeSum(s.state), stateBefore, "the state folder is whole");
