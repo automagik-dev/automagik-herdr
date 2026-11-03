@@ -99,7 +99,8 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
 
 /**
  * Every project's bot tree. `projects`: discoverProjects()' entries ({ key, machine?, file,
- * warnings? }); one tree per machine and key however often it is listed (worktree spaces).
+ * warnings?, stale? }); one tree per machine and key however often it is listed (worktree
+ * spaces), `stale` carried over.
  * `live`: liveFrom()'s map. `terminals`: terminals() rows, for helpers only. A member nests
  * under its effective lead (A1, by definition only, never by hc parent); the main bot's
  * direct reports group by `category` in file order, then the uncategorised; a planned bot
@@ -137,7 +138,7 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
       // No main bot (or a file that did not parse): every bot at the top, nothing nested.
       if (!warnings.includes("no main bot") && file.bots.length) warnings.unshift("no main bot");
       trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: null, categories: [],
-        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings });
+        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings, ...(p.stale ? { stale: true } : {}) });
       continue;
     }
     placed.add(main.id);
@@ -149,7 +150,8 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
     const mainNode = node(main);
     // main's own `members` are its direct reports, already grouped above.
     mainNode.members = [];
-    trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings });
+    trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings,
+      ...(p.stale ? { stale: true } : {}) });
   }
   return trees;
 }

@@ -5,14 +5,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { discover, limiter, within, TimedOut } from "../mods/am-sidebar/discover.js";
+import { discover, limiter, machineGate, within, TimedOut } from "../mods/am-sidebar/discover.js";
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const never = () => new Promise(() => {});
 const FILE = (name) => ({ file: { version: 1, categories: [], bots: [{ id: name }] }, warnings: [] });
 
 // A fake io: each machine's latency (Infinity: never answers), its folders' keys, and a log.
-// Its key lookups bound themselves (as bots.js does each call) after `timeoutMs`.
+// Its calls to another machine bound themselves (as bots.js does each call) after `timeoutMs`.
 function fakeIo({ latency = {}, keyOf = (folder) => folder, last = () => undefined, listed = [], timeoutMs = 0, cachedKey } = {}) {
   const io = { calls: [], inflight: {}, max: {}, done: [] };
   const answer = async (machine, what, value) => {
@@ -28,8 +28,9 @@ function fakeIo({ latency = {}, keyOf = (folder) => folder, last = () => undefin
       return value();
     } finally { io.inflight[m] -= 1; }
   };
-  io.keyOf = (folder, machine) => within(answer(machine, `key ${folder}`, () => keyOf(folder, machine)), machine ? timeoutMs : 0, sleep);
-  io.read = (p) => answer(p.machine, `read ${p.key}`, () => FILE(`${p.machine ?? "local"}:${p.key}`));
+  const timed = (machine, p) => within(p, machine ? timeoutMs : 0, sleep);
+  io.keyOf = (folder, machine) => timed(machine, answer(machine, `key ${folder}`, () => keyOf(folder, machine)));
+  io.read = (p) => timed(p.machine, answer(p.machine, `read ${p.key}`, () => FILE(`${p.machine ?? "local"}:${p.key}`)));
   io.last = last;
   io.cachedKey = cachedKey;
   io.listed = async () => listed;
@@ -95,8 +96,8 @@ test("discover: this computer's projects are listed before a slow machine answer
 
 test("discover: a machine that never answers holds back only its own projects, which show their last good file", async () => {
   const last = (p) => (p.machine === "dead" && ["/x", "/k"].includes(p.key) ? FILE(`dead-last${p.key}`) : undefined);
-  // /w was keyed before: once "dead" is away, its known key still places it.
-  const cachedKey = (f, m) => (m === "dead" && f === "/w" ? "/k" : undefined);
+  // /w was keyed before: its known key places it at once, whatever "dead" does.
+  const cachedKey = (f, m) => (m === "dead" && f === "/w" ? { key: "/k", fresh: true } : undefined);
   const io = fakeIo({ latency: { local: 2, dead: Infinity, far: 5 }, last, keyOf: (f) => f, timeoutMs: 60, cachedKey });
   const spaces = [
     { id: "s1", folder: "/x", machine: "dead" },
@@ -108,11 +109,11 @@ test("discover: a machine that never answers holds back only its own projects, w
   const updates = [];
   const t0 = Date.now();
   const found = await discover({ spaces, remembered: [{ key: "/x", machine: "dead" }] }, io,
-    { sleep, timeoutMs: 60, limit: 1, onUpdate: (list) => updates.push(list) });
+    { limit: 1, onUpdate: (list) => updates.push(list) });
   const took = Date.now() - t0;
   assert.ok(took < 400, `took ${took} ms`);
   // This computer's and far's projects were listed before the dead machine's time ran out.
-  assert.deepEqual(updates.map((l) => l.map((p) => p.key)), [["/b", "/x"], ["/b", "/y", "/x"]]);
+  assert.deepEqual(updates.map((l) => l.map((p) => p.key)), [["/b", "/k", "/x"], ["/b", "/y", "/k", "/x"]]);
   // In the end: the remembered dead project and /w's (by its known key) with their last good
   // files; /z (never keyed) is skipped.
   assert.deepEqual(found.map((p) => [p.machine, p.key, p.spaces]), [[null, "/b", ["s2"]], ["far", "/y", ["s3"]], ["dead", "/k", ["s5"]], ["dead", "/x", []]]);
@@ -130,4 +131,46 @@ test("discover: a project's spaces and the list keep sidebar order however the a
   const found = await discover({ spaces, remembered: [{ key: "/r", machine: null }] }, io, { listed: [] });
   assert.deepEqual(found.map((p) => p.key), ["/one", "/f1", "/f3", "/f4", "/f5", "/r"]);
   assert.deepEqual(found[0].spaces, ["s0", "s2"]);
+});
+
+test("discover: a known key places its space at once; one not fresh is looked up again, and a new key moves the space in the same discovery", async () => {
+  const cachedKey = (f) => ({ "/a": { key: "/a", fresh: true }, "/b": { key: "/old", fresh: false } })[f];
+  const io = fakeIo({ latency: { local: 20 }, keyOf: (f) => (f === "/b" ? "/new" : f), cachedKey });
+  const spaces = [{ id: "s1", folder: "/a", machine: null }, { id: "s2", folder: "/b", machine: null }];
+  const found = await discover({ spaces }, io);
+  assert.deepEqual(found.map((p) => [p.key, p.spaces]), [["/a", ["s1"]], ["/new", ["s2"]]]);
+  // The fresh key wasn't asked; the stale one was, once.
+  assert.deepEqual(io.calls.filter(([, w]) => w.startsWith("key")).map(([, w]) => w), ["key /b"]);
+});
+
+test("machineGate: a machine that never answers is sent at most `limit` calls, however many are asked", async () => {
+  const gate = machineGate(8, 20);
+  let started = 0;
+  const hang = () => { started += 1; return never(); };
+  // 15 folders, three discoveries' worth of calls.
+  for (let round = 0; round < 3; round++) {
+    const asks = Array.from({ length: 15 }, () => gate.call(hang, { sleep, remote: true }).catch((e) => e));
+    for (const e of await Promise.all(asks)) assert.ok(e instanceof TimedOut);
+  }
+  assert.equal(started, 8);
+  assert.equal(gate.stuck, 8);
+  assert.equal(gate.away, true);
+  assert.equal(gate.answered, false);
+});
+
+test("machineGate: a call that times out queued never starts; one that answers frees its place and marks the machine answered", async () => {
+  const gate = machineGate(1, 20);
+  let release;
+  const first = gate.call(() => new Promise((done) => { release = done; }), { sleep, remote: true }).catch((e) => e);
+  let ran = false;
+  const second = gate.call(() => { ran = true; return "late"; }, { sleep, remote: true }).catch((e) => e);
+  assert.ok((await second) instanceof TimedOut);
+  assert.ok((await first) instanceof TimedOut);
+  release("ok"); // the stuck call answers after all
+  await sleep(5);
+  assert.equal(ran, false);
+  assert.equal(gate.stuck, 0);
+  assert.equal(gate.answered, true);
+  assert.equal(gate.away, false);
+  assert.equal(await gate.call(() => "now", { sleep, remote: true }), "now");
 });

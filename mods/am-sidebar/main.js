@@ -565,7 +565,8 @@ export default class Spaces extends View {
       .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
   }
 
-  // One tree's rows, as spaceRowOrder gives them, in one block.
+  // One tree's rows, as spaceRowOrder gives them, in one block; dimmed while it shows a file
+  // from the last run of Herdr its machine hasn't confirmed (bots.js lastOf: `stale`).
   botBlock(tree, t, dark, shown) {
     const rows = shown.map((r) => {
       if (r.kind === "category") return this.categoryRow(r, t);
@@ -574,7 +575,7 @@ export default class Spaces extends View {
         .child(div().flex_1().min_w(0).truncate().child(`${base(tree.key)}: ${r.text}`));
       return this.botRow(r, tree, t, dark);
     });
-    return [v_flex().id(`bots-${projectId(tree)}`).children(rows)];
+    return [v_flex().id(`bots-${projectId(tree)}`).opacity(tree.stale ? 0.5 : 1).children(rows)];
   }
 
   categoryRow(r, t) {
