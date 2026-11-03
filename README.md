@@ -71,9 +71,9 @@ release (v0.5.0 or later: earlier ones have no pack), `--adopt` takes over same-
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
 the installer added it and you haven't changed it.
 
-It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.2.0, the token
+It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
-`SHA256SUMS`, written atomically. It skips the download when that version is already there and
+`SHA256SUMS` and against the sha256 the pack pins for that build, written atomically. It skips the download when that version is already there and
 never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
 time; there is no LaunchAgent and no daemon. A dev build counts by its version number, so
@@ -81,6 +81,26 @@ time; there is no LaunchAgent and no daemon. A dev build counts by its version n
 `--no-usagemeter` leaves the binary alone, on install and on `--uninstall`; a failed install is
 only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
 that version and Pocket Link is not installed; usagemeter's data is kept.
+
+The phone reads each machine's own usage summary there (the `herdr-meter` document in that
+machine's herdr-core), so usagemeter runs on every linked machine too: the installer installs the
+same pinned build on each connected machine in `hc machine ls` (each machine downloads it and checks
+both hashes itself; one that fails is a warning naming it), and the sidebar's 10-minute run syncs
+each connected machine after this computer, one at a time. `automagik-herdr meter install
+[--machine M]` does it again, for example for a machine linked later. `--usagemeter-local-only`
+keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
+remembered.
+
+**Updating to this release from an earlier one:** the update is run by the earlier release's
+command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
+installs the pinned usagemeter on this computer and every connected linked machine, and records
+that you asked for it. From then on, `automagik-herdr update` keeps them on the pack's pin within
+what you chose. An earlier install's record is never read as a yes for the linked machines: if
+that installer put usagemeter on this computer, `update` keeps it there only; if it recorded
+nothing (an earlier `install.sh --no-usagemeter` recorded nothing), `update` installs nowhere and
+prints that command instead. Either way the sidebar syncs only this computer until you run it. `--uninstall` removes it
+from a linked machine only where the install record says the pack put it and it is still that
+version.
 
 ### From v0.2 to v0.4.x
 

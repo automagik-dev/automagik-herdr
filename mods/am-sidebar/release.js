@@ -27,15 +27,24 @@ export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markd
 export const POCKET_LINK = "pocket-link";
 /**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
- * `<os>-<arch>`, checked against that release's SHA256SUMS. install.sh carries the same version
- * (a test keeps them equal). The binary is shared with Pocket Link: never downgraded.
+ * `<os>-<arch>`, checked against that release's SHA256SUMS and against the sha256 pinned here (the
+ * release's SHA256SUMS proves the download is whole, `sha256` that it is the build this pack
+ * pinned). install.sh carries the same version and hashes (a test keeps them equal), and
+ * `node scripts/usagemeter-pin.mjs` (CI) checks them against the release itself. The binary is
+ * shared with Pocket Link: never downgraded.
  */
 export const USAGEMETER = Object.freeze({
   repo: "automagik-dev/usagemeter",
-  version: "0.2.0",
+  version: "0.3.0",
   assets: Object.freeze({
     "darwin-arm64": "usagemeter-darwin-arm64", "darwin-x86_64": "usagemeter-darwin-x86_64",
     "linux-x86_64": "usagemeter-linux-x86_64", "linux-aarch64": "usagemeter-linux-aarch64",
+  }),
+  sha256: Object.freeze({
+    "usagemeter-darwin-arm64": "80542d40e71369359cc1048c2d3a00b5703a10657651ca36e4207dfcf7d9824f",
+    "usagemeter-darwin-x86_64": "f44107b3b5482b58e8592d482a01299c559ab71ded4d68a5c76b597c96ae6670",
+    "usagemeter-linux-aarch64": "fa08460ebba5f4670bfa5777340c9ac20c89788f560bfadd24aeb30babdcfff4",
+    "usagemeter-linux-x86_64": "25094c783abf14081d03547596e109b8601b7b47b8efccf76fa4473141cc26c6",
   }),
 });
 /** The one layout the pack ships, beside the mod folders in the tarball. */
@@ -55,9 +64,14 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
  * the rename reverts, `installed=<ISO time>` when update.mjs last put the pack's folders in place
- * (the mod manager's INSTALLED column; am-mods/core.js parsePackMarker reads it too), and
- * `usagemeter=<version>` when install.sh put the usagemeter binary in
- * ~/.local/bin (--uninstall removes only that one). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
+ * (the mod manager's INSTALLED column; am-mods/core.js parsePackMarker reads it too),
+ * `usagemeter=<version>` when install.sh put the usagemeter binary in ~/.local/bin (--uninstall
+ * removes only that one), `usagemeter-machines=<machine>:<version>,…` for the linked machines the
+ * pack put it on (meterFleet.js), and `usagemeter-scope=all|local|none`, what the person chose
+ * (install.sh: all by default, local with --usagemeter-local-only, none with --no-usagemeter;
+ * `automagik-herdr meter install` sets all, or local with --local). An older install.sh wrote no
+ * scope, not even for --no-usagemeter: meterFleet.js meterScope reads that as local when it shows
+ * `usagemeter=`, else as "not asked"; never as all. A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -78,18 +92,24 @@ export function parseMarker(text) {
     migrated: list(get("migrated")).filter((p) => ADOPTED_PATH.test(p)),
     installed: ISO_TIME.test(get("installed")) ? get("installed") : null,
     usagemeter: /^\d+\.\d+\.\d+$/.test(get("usagemeter")) ? get("usagemeter") : null,
+    usagemeterOn: Object.fromEntries(list(get("usagemeter-machines")).map((e) => [e.slice(0, e.lastIndexOf(":")), e.slice(e.lastIndexOf(":") + 1)])
+      .filter(([m, v]) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(m) && /^\d+\.\d+\.\d+$/.test(v))),
+    usagemeterScope: ["all", "local", "none"].includes(get("usagemeter-scope")) ? get("usagemeter-scope") : null,
   };
 }
 
 /** What `installed=` may hold: `new Date().toISOString()`. */
 export const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
-export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], installed = null, usagemeter = null }) =>
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], installed = null, usagemeter = null,
+  usagemeterOn = {}, usagemeterScope = null }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
     ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
     ...(migrated.length ? [`migrated=${migrated.join(",")}`] : []),
     ...(installed ? [`installed=${installed}`] : []),
-    ...(usagemeter ? [`usagemeter=${usagemeter}`] : [])].join("\n") + "\n";
+    ...(usagemeter ? [`usagemeter=${usagemeter}`] : []),
+    ...(Object.keys(usagemeterOn ?? {}).length ? [`usagemeter-machines=${Object.entries(usagemeterOn).map(([m, v]) => `${m}:${v}`).join(",")}`] : []),
+    ...(usagemeterScope ? [`usagemeter-scope=${usagemeterScope}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */
 export const NO_UPDATE_ENV = "AUTOMAGIK_HERDR_NO_UPDATE";
 export const FIRST_CHECK_MS = 20_000;

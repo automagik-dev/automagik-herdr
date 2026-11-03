@@ -3,7 +3,10 @@
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
 // change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run,
 // server status (state.core), kill (the terminal finishes), templates (state.templates:
-// [{ name, command }]).
+// [{ name, command }]), machine ls and exec --on (state.machines: [{ name, state, uname, home,
+// path?, temporary? }]: a linked machine is a scratch home folder; its `uname -sm` is `uname`,
+// anything else runs here with HOME=home and `path` (a folder of fakes) first on PATH).
+import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -111,6 +114,26 @@ switch (words[0]) {
   case "templates": {
     if (!state.templates) fail("hc: no templates folder");
     out({ templates: state.templates });
+    break;
+  }
+  case "machine": {
+    if (words[1] !== "ls") fail(`fake hc: no machine ${words[1]}`, 2);
+    out({ machines: (state.machines ?? []).map(({ name, state: s, temporary = false }) => ({ name, host: name, state: s, temporary, target: name })) });
+    break;
+  }
+  case "exec": {
+    // hc exec [--json] [--timeout N] [--on M] -- argv… (argv as given: not filtered for --json).
+    let i = args.indexOf("exec") + 1, on = null;
+    for (; i < args.length && args[i] !== "--"; i += 1) if (args[i] === "--on") on = args[++i]; else if (args[i] === "--timeout") i += 1;
+    const argv = args.slice(i + 1);
+    const m = (state.machines ?? []).find((x) => x.name === on);
+    if (!m) fail(JSON.stringify({ error: { kind: "not_found", message: `no machine "${on}"` } }), 3);
+    if (m.state !== "connected") fail(`hc: ${on} is not connected`);
+    const b64 = (s) => Buffer.from(s ?? "").toString("base64");
+    if (argv[0] === "uname") { out({ code: 0, stdout: b64(`${m.uname}\n`), stderr: "", timed_out: false }); break; }
+    const r = spawnSync(argv[0], argv.slice(1), { cwd: m.home, encoding: "utf8",
+      env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin` } });
+    out({ code: r.status ?? -1, stdout: b64(r.stdout), stderr: b64(r.stderr), timed_out: false });
     break;
   }
   default:
