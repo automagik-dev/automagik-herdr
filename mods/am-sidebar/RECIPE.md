@@ -102,7 +102,7 @@ labels), `briefing.mjs` + `briefingText.mjs`, `updateCheck.js` + `update.mjs` + 
 `argv.js`, `paste.js`, `clipboard-png.jxa`, `bin/automagik-herdr.mjs` (the
 same rules from a terminal, through `hc`, plus `update`), `layouts/automagik.json` (Herdr's `main`
 layout with the pack in place of `spaces` and `agents`), and `mod.json` (`place: none`, titled
-"Automagik Sidebar", `cloned_from` recorded). Tests for every pure module live in the
+"Automagik Sidebar"; the lineage is this file's and NOTICE's, not a `cloned_from`). Tests for every pure module live in the
 repository's `test/`.
 
 Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run`, `openOverlay`,

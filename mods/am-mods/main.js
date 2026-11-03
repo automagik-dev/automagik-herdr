@@ -17,10 +17,10 @@ function carryShared() {
 const PAGE = 10;
 const FETCH = 50;
 const FOOTER = {
-  list: "↑↓ mover · u atualizar · U atualizar tudo · x remover · o abrir repo · m marketplace · r recarregar · esc fechar",
-  market: "↑↓ mover · ←→ página · enter instalar · / buscar · s ordem · o abrir repo · r recarregar · esc voltar",
-  packages: "↑↓ escolher · enter revisar · esc voltar",
-  review: "y instalar · o abrir repo · esc cancelar",
+  list: "↑↓ move · u update · U update all · x remove · d compare · o open repo · b built-in · m marketplace · r reload · esc close",
+  market: "↑↓ move · ←→ page · enter install · / search · s sort · o open repo · r reload · esc back",
+  packages: "↑↓ choose · enter review · esc back",
+  review: "y install · o open repo · esc cancel",
 };
 
 const io = {
@@ -41,6 +41,7 @@ const saveRecords = (list) => setShared(RECORDS, list);
 const cacheDir = () => `${appHome()}/.am-mods-cache`;
 const repoPage = (source) => (/^[\w.-]+\/[\w.-]+$/.test(source) ? `https://github.com/${source}` : null);
 const short = (sha) => (sha ? sha.slice(0, 7) : "?");
+const firstLine = (text) => String(text ?? "").trim().split("\n")[0];
 
 export default class ModManager extends View {
   init(_props, cx) {
@@ -52,6 +53,7 @@ export default class ModManager extends View {
     this.drift = {};
     this.mods = [];
     this.at = 0;
+    this.builtInOpen = false;
     this.updates = {};
     this.message = null;
     this.busy = null;
@@ -60,7 +62,7 @@ export default class ModManager extends View {
     this.review = null;
     this.searching = false;
     this.handle = cx.focus_handle();
-    this.input = InputState.new({ placeholder: "buscar mods (Enter busca, Esc cancela)" });
+    this.input = InputState.new({ placeholder: "search mods (Enter searches, Esc cancels)" });
     this.input.on("submit", (_e, cx) => {
       this.searching = false;
       this.market.query = this.input.value();
@@ -90,9 +92,14 @@ export default class ModManager extends View {
     if (this.review) await exec("rm", ["-rf", this.review.fetched.dir]);
   }
 
+  async reloadMods() {
+    this.mods = await core.listMods(io, { appHome: appHome(), records: records() });
+    this.clampAt();
+  }
+
   async refresh(cx) {
     try {
-      this.mods = await core.listMods(io, { appHome: appHome(), records: records() });
+      await this.reloadMods();
       // The official index (herdr.dev/mods): which repo each installed mod came from, and its
       // blurb. Ten minutes of cache, so opening the panel is not a fetch every time.
       if (!this.catalog || Date.now() - this.catalogAt > 600000) {
@@ -101,12 +108,12 @@ export default class ModManager extends View {
           this.catalog = await core.fetchCatalog(io, anonymous, this.catalogSource);
           this.catalogError = null;
         } catch (e) {
-          this.catalogError = `catálogo indisponível: ${String(e?.message ?? e)}`;
+          this.catalogError = `catalog unavailable: ${String(e?.message ?? e)}`;
         }
         this.catalogAt = Date.now();
       }
     } catch (e) {
-      this.message = `não consegui listar os mods: ${e?.message ?? e}`;
+      this.message = `could not list the mods: ${e?.message ?? e}`;
     }
     cx.notify();
     this.verify(cx);
@@ -157,13 +164,13 @@ export default class ModManager extends View {
   }
 
   async startReview(cx, source) {
-    await this.work(cx, `baixando ${source}…`, async () => {
+    await this.work(cx, `downloading ${source}…`, async () => {
       // A repo the catalog lists installs at the catalog's headCommit, not whatever HEAD is now.
       const fetched = await core.fetchSource(io, source, cacheDir(), core.catalogCommit(this.catalog, source));
       const packages = core.findPackages(fetched.files);
       if (!packages.length) {
         await exec("rm", ["-rf", fetched.dir]);
-        throw new Error(`${source} não tem nenhuma pasta mods/<nome>/main.js`);
+        throw new Error(`${source} has no mods/<name>/main.js folder`);
       }
       // Pocket Link belongs to automagik-pocket: refuse it before anything is planned or written.
       if (packages.some((p) => p.mods.some(core.isPocketLink))) throw new Error(core.POCKET_LINK_REFUSAL);
@@ -192,36 +199,51 @@ export default class ModManager extends View {
 
   async install(cx) {
     const r = this.review;
-    await this.work(cx, `instalando ${r.pkg.name}…`, async () => {
+    await this.work(cx, `installing ${r.pkg.name}…`, async () => {
       const rec = await core.applyInstall(io, {
         appHome: appHome(), plan: r.plan, source: r.source, prefix: r.pkg.prefix, sha: r.fetched.sha, record: r.record,
       });
       saveRecords([...records().filter((x) => !(x.source === rec.source && x.prefix === rec.prefix)), rec]);
       const failures = await core.checkMods(io, appHome(), rec.mods);
-      const verb = r.record ? "atualizado" : "instalado";
+      const verb = r.record ? "updated" : "installed";
       this.message = failures.length
-        ? `${r.pkg.name} ${verb}, mas o herdr-app check falhou em ${failures.map((f) => f.mod).join(", ")}: ${failures[0].error.split("\n")[0]}`
-        : `${r.pkg.name} ${verb} (${rec.mods.join(", ")})${rec.layouts.length ? `; layouts: ${rec.layouts.join(", ")} (troque com ctrl-shift-l)` : ""}`;
+        ? `${r.pkg.name} ${verb}, but herdr-app check failed for ${failures.map((f) => f.mod).join(", ")}: ${failures[0].error.split("\n")[0]}`
+        : `${r.pkg.name} ${verb} (${rec.mods.join(", ")})${rec.layouts.length ? `; layouts: ${rec.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
       notify({ title: `mod ${verb}`, body: this.message, level: failures.length ? "warning" : "success" });
       this.updates[rec.source] = null;
       await this.finishReview();
       this.mode = "list";
-      this.mods = await core.listMods(io, { appHome: appHome(), records: records() });
+      await this.reloadMods();
+    });
+  }
+
+  // The pack's mods come and go together, through the pack's own updater (checksum-verified
+  // release, the replaced folders kept for `automagik-herdr update --rollback`), never a clone here.
+  async updatePack(cx) {
+    await this.work(cx, `updating ${core.PACK_TITLE}…`, async () => {
+      const cli = `${appHome()}/${core.PACK_CLI}`;
+      if ((await exec("test", ["-f", cli])).code !== 0) throw new Error(`${core.PACK_CLI} is missing (am-sidebar off or removed): run install.sh again`);
+      const r = await exec("sh", ["-c", 'HERDR_APP_HOME=$1 exec sh "$2" update', "sh", appHome(), cli]);
+      if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || "automagik-herdr update failed");
+      this.message = firstLine(r.stdout);
+      notify({ title: `${core.PACK_TITLE} update`, body: this.message, level: "success" });
+      for (const m of this.mods) if (m.kind === "pack") delete this.checks[m.name];
+      await this.reloadMods();
+      this.verify(cx);
     });
   }
 
   async remove(cx, mod) {
-    await this.work(cx, `removendo ${mod.name}…`, async () => {
+    await this.work(cx, `removing ${mod.name}…`, async () => {
       if (mod.record) {
         await core.uninstall(io, { appHome: appHome(), record: mod.record });
         saveRecords(records().filter((x) => x !== mod.record && !(x.source === mod.record.source && x.prefix === mod.record.prefix)));
-        this.message = `removido: ${mod.record.mods.join(", ")}`;
+        this.message = `removed: ${mod.record.mods.join(", ")}`;
       } else {
         await core.removeLocal(io, { appHome: appHome(), name: mod.name, symlink: mod.symlink, path: mod.path });
-        this.message = mod.symlink ? `link ${mod.name} removido (a pasta de origem ficou)` : `removido: ${mod.name}`;
+        this.message = mod.symlink ? `link ${mod.name} removed (the folder it points to stays)` : `removed: ${mod.name}`;
       }
-      this.mods = await core.listMods(io, { appHome: appHome(), records: records() });
-      this.at = Math.min(this.at, Math.max(0, this.mods.length - 1));
+      await this.reloadMods();
     });
   }
 
@@ -230,11 +252,44 @@ export default class ModManager extends View {
   async reviewUpdates(cx, pending) {
     this.pendingUpdates = pending.slice(1);
     await this.startReview(cx, pending[0].source);
-    if (this.pendingUpdates.length) this.message = `${this.pendingUpdates.length} outra(s) na fila depois desta`;
+    if (this.pendingUpdates.length) this.message = `${this.pendingUpdates.length} more queued after this one`;
+  }
+
+  // The rows the table draws (core.groupMods): group headings and mods. The cursor (`at`) moves
+  // over the selectable ones only: every mod, and the built-in heading that folds them.
+  grouped() {
+    return core.groupMods(this.mods, { builtInOpen: this.builtInOpen });
+  }
+
+  clampAt() {
+    const rows = this.grouped().rows;
+    if (rows[this.at]?.selectable) return;
+    let before = Math.min(this.at, rows.length - 1);
+    while (before >= 0 && !rows[before].selectable) before -= 1;
+    this.at = before >= 0 ? before : Math.max(0, rows.findIndex((r) => r.selectable));
+  }
+
+  step(dir) {
+    const rows = this.grouped().rows;
+    for (let i = this.at + dir; i >= 0 && i < rows.length; i += dir) if (rows[i].selectable) return void (this.at = i);
+  }
+
+  selectedRow() {
+    return this.grouped().rows[this.at] ?? null;
   }
 
   selectedMod() {
-    return this.mods[this.at] ?? null;
+    return this.selectedRow()?.mod ?? null;
+  }
+
+  toggleBuiltIn() {
+    const row = this.selectedRow();
+    this.builtInOpen = !this.builtInOpen;
+    // Folding while on a built-in mod puts the cursor on the heading that now holds it.
+    const rows = this.grouped().rows;
+    const at = row?.mod ? rows.findIndex((r) => r.mod === row.mod) : rows.findIndex((r) => r.group?.key === row?.group?.key);
+    this.at = at >= 0 ? at : rows.findIndex((r) => r.group?.key === "herdr");
+    this.clampAt();
   }
 
   onKey(e, cx) {
@@ -253,7 +308,7 @@ export default class ModManager extends View {
     if (this.confirm) {
       const c = this.confirm;
       if (k === "y") { this.confirm = null; cx.spawn(async (cx) => c.run(cx)); }
-      else if (k === "n" || k === "escape") { this.confirm = null; this.message = "cancelado"; }
+      else if (k === "n" || k === "escape") { this.confirm = null; this.message = "cancelled"; }
       else return;
       cx.stop_propagation();
       cx.notify();
@@ -267,36 +322,44 @@ export default class ModManager extends View {
 
   listKey(k, ch, cx) {
     const mod = this.selectedMod();
-    if (k === "down" || k === "j") this.at = Math.min(this.mods.length - 1, this.at + 1);
-    else if (k === "up" || k === "k") this.at = Math.max(0, this.at - 1);
+    if (k === "down" || k === "j") this.step(1);
+    else if (k === "up" || k === "k") this.step(-1);
     else if (k === "escape" || k === "q") this.dismiss();
     else if (k === "m") { this.mode = "market"; this.message = null; if (!this.market.fetchedPages) cx.spawn(async (cx) => this.loadMarket(cx, true)); }
     else if (ch === "r") cx.spawn(async (cx) => this.refresh(cx));
+    else if (ch === "b" || (k === "enter" && this.selectedRow()?.group?.key === "herdr")) this.toggleBuiltIn();
     else if (ch === "U") {
       const pending = records().filter((r) => this.updates[r.source]);
-      if (!pending.length) this.message = "tudo em dia";
-      else this.confirm = { text: `revisar ${pending.length} atualização(ões), uma a uma: ${pending.map((r) => r.mods.join("+")).join(", ")}? (y/n)`, run: (cx) => this.reviewUpdates(cx, pending) };
+      if (!pending.length) this.message = "everything is up to date (the pack's mods update with u)";
+      else this.confirm = { text: `review ${pending.length} update(s), one at a time: ${pending.map((r) => r.mods.join("+")).join(", ")}? (y/n)`, run: (cx) => this.reviewUpdates(cx, pending) };
     } else if (!mod) return false;
     else if (mod.name === core.POCKET_LINK && ch !== "o") {
       // Read-only row: Pocket Link's pairing key lives in its own folder, and only its repo's
       // installer may move or replace it.
       this.message = core.POCKET_LINK_REFUSAL;
     } else if (ch === "u") {
-      if (mod.kind !== "installed") this.message = mod.kind === "herdr" ? "mods do Herdr se atualizam com o app" : "só mods instalados por aqui têm origem para atualizar";
-      else if (!mod.enabled) this.message = `${mod.name} está desligado: ligue antes de atualizar`;
+      if (mod.kind === "pack") {
+        const count = this.mods.filter((m) => m.kind === "pack").length;
+        this.confirm = { text: `update ${core.PACK_TITLE} (all ${count} of its mods) with automagik-herdr update? (y/n)`, run: (cx) => this.updatePack(cx) };
+      } else if (mod.kind !== "installed") this.message = mod.kind === "herdr" ? "built-in mods update with Herdr" : "only mods installed from the marketplace have a source to update from";
+      else if (!mod.enabled) this.message = `${mod.name} is off: switch it on before updating`;
       else cx.spawn(async (cx) => this.startReview(cx, mod.record.source));
+    } else if (ch === "d") {
+      if (mod.kind === "pack") this.message = `${core.PACK_TITLE} checks its own files: run install.sh again, or u to update`;
+      else this.checkDrift(mod, cx);
     } else if (ch === "x") {
-      if (mod.kind === "herdr") this.message = "mods do Herdr não são removidos; para mudar um, use mod.clone";
+      if (mod.kind === "herdr") this.message = "built-in mods are not removed; to change one, use mod.clone";
       else {
-        const what = mod.record ? `${mod.record.mods.join(", ")} e os atalhos que ele adicionou` : mod.symlink ? `o link ${mod.name} (a pasta de origem fica)` : `a pasta mods/${mod.name}`;
-        this.confirm = { text: `remover ${what}? (y/n)`, run: (cx) => this.remove(cx, mod) };
+        const what = mod.record ? `${mod.record.mods.join(", ")} and the keys it added` : mod.symlink ? `the link ${mod.name} (the folder it points to stays)` : `the folder mods/${mod.name}`;
+        this.confirm = { text: `remove ${what}? (y/n)`, run: (cx) => this.remove(cx, mod) };
       }
     } else if (ch === "o") {
       const url = mod.name === core.POCKET_LINK
         ? "https://github.com/automagik-dev/automagik-pocket"
-        : mod.record && repoPage(mod.record.source);
+        : mod.kind === "pack" ? `https://github.com/${core.PACK_REPO}`
+          : (mod.record && repoPage(mod.record.source)) || (this.origin(mod) && repoPage(this.origin(mod).fullName));
       if (url) exec("open", [url]);
-      else this.message = "sem repositório conhecido para este mod";
+      else this.message = "no known repository for this mod";
     } else return false;
   }
 
@@ -328,7 +391,7 @@ export default class ModManager extends View {
     if (k === "escape" || k === "q") { cx.spawn(async () => this.finishReview()); this.mode = "market"; }
     else if (k === "down" || k === "j") r.at = Math.min(r.packages.length - 1, r.at + 1);
     else if (k === "up" || k === "k") r.at = Math.max(0, r.at - 1);
-    else if (k === "enter") cx.spawn(async (cx) => this.work(cx, "conferindo…", () => this.planFor(r.packages[r.at])));
+    else if (k === "enter") cx.spawn(async (cx) => this.work(cx, "checking…", () => this.planFor(r.packages[r.at])));
     else return false;
   }
 
@@ -338,10 +401,10 @@ export default class ModManager extends View {
       const back = r.record ? "list" : "market";
       cx.spawn(async () => this.finishReview());
       this.mode = back;
-      this.message = "cancelado";
+      this.message = "cancelled";
     } else if (k === "o") { const url = repoPage(r.source); if (url) exec("open", [url]); }
     else if (k === "y") {
-      if (r.plan.clashes.length) this.message = `não instala: já existe ${r.plan.clashes.join(", ")}. Remova ou renomeie o seu antes.`;
+      if (r.plan.clashes.length) this.message = `not installed: ${r.plan.clashes.join(", ")} already there. Remove or rename yours first.`;
       else cx.spawn(async (cx) => this.install(cx));
     } else return false;
   }
@@ -369,12 +432,12 @@ export default class ModManager extends View {
   checkDrift(mod, cx) {
     const entry = this.origin(mod);
     if (!entry) {
-      this.message = `${mod.name} não está no catálogo de herdr.dev/mods`;
+      this.message = `${mod.name} is not in the catalog`;
       cx.notify();
       return;
     }
     cx.spawn(async (cx) => {
-      this.message = `comparando ${mod.name} com ${entry.fullName}…`;
+      this.message = `comparing ${mod.name} with ${entry.fullName}…`;
       cx.notify();
       let fetched = null;
       try {
@@ -382,8 +445,8 @@ export default class ModManager extends View {
         const result = await core.drift(io, { appHome: appHome(), dir: fetched.dir, entry, name: mod.name, localPath: mod.path });
         this.drift[mod.name] = result;
         this.message = result.clean
-          ? `${mod.name} igual a ${entry.fullName}@${short(entry.headCommit)}`
-          : `${mod.name} difere de ${entry.fullName}@${short(entry.headCommit)}: ${result.changed} alterado(s), ${result.added} novo(s), ${result.removed} removido(s) de ${result.mine} arquivo(s)`;
+          ? `${mod.name} matches ${entry.fullName}@${short(entry.headCommit)}`
+          : `${mod.name} differs from ${entry.fullName}@${short(entry.headCommit)}: ${result.changed} changed, ${result.added} new, ${result.removed} removed of ${result.mine} file(s)`;
       } catch (e) {
         this.message = String(e?.message ?? e);
       } finally {
@@ -417,29 +480,26 @@ export default class ModManager extends View {
     });
   }
 
-  // A table: what a mod is, where it came from, and the switch that moves it out of the app's
-  // sight (`mods-disabled/`) without deleting anything. Herdr's own get no switch: they can't
-  // be moved, only cloned.
+  // A table in groups (the pack, yours, Herdr's built-in folded to one row): what a mod is, where
+  // it came from, and the switch that moves it out of the app's sight (`mods-disabled/`) without
+  // deleting anything. Built-in mods get no switch: they can't be moved, only cloned.
   listView(t) {
-    const kinds = { installed: "instalado", clone: "clone", local: "local", herdr: "Herdr" };
-    const kindOf = (m) => (m.kind === "local" && this.origin(m) ? "catálogo" : kinds[m.kind]);
-    const day = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : "—");
-    const version = (m) =>
-      m.record ? `commit ${short(m.record.sha)}`
-        : m.clone ? `← ${m.clone.name}${m.clone.version ? ` v${m.clone.version}` : ""}`
-          : this.origin(m) ? `upstream ${short(this.origin(m).headCommit)}`
-            : "—";
-    const source = (m) => {
-      const entry = this.origin(m);
-      return m.record ? `${m.record.source}${m.record.prefix ? `/${m.record.prefix}` : ""}`
-        : entry ? `${entry.fullName}${entry.path ? `/${entry.path}` : ""}${entry.stars ? ` ★${entry.stars}` : ""}`
-          : m.manifest?.owner ? `${m.manifest.owner} (installer)`
-            : m.kind === "herdr" ? "with Herdr" : "—";
-    };
-    const installed = (m) => day(m.record?.at ? Date.parse(m.record.at) : m.manifest?.at ? Date.parse(m.manifest.at) : null);
+    const { rows, counts } = this.grouped();
     const col = (w, el) => div().w(w).flex_none().truncate().child(el);
     const head = (label, w) => div().w(w).flex_none().truncate().text_size(10.5).text_color(t.dim).child(label);
-    const items = this.mods.map((m, i) => {
+    const items = rows.map((r, i) => {
+      if (r.group) {
+        const g = r.group;
+        const label = g.key === "herdr"
+          ? `${g.folded ? "▸" : "▾"} ${g.title} · ${g.mods.length} mods${g.folded ? " (enter or b shows them)" : ""}`
+          : `${g.title} · ${g.mods.length}`;
+        return h_flex().id(`group-${g.key}`).h(24).px(10).items_end().flex_none().rounded(6)
+          .when(i === this.at, (el) => el.bg(t.selected))
+          .when(r.selectable, (el) => el.cursor_pointer().on_click((_e, cx) => { this.at = i; this.toggleBuiltIn(); cx.notify(); }))
+          .child(div().text_size(11.5).font_semibold().text_color(t.muted).child(label));
+      }
+      const m = r.mod;
+      const d = core.describeMod(m, this.origin(m));
       const update = m.record && this.updates[m.record.source];
       return this.row(`mod-${m.name}`, i === this.at, t, [
         // Only a mod that may move gets a switch: Herdr's own come with the app, and Pocket Link's
@@ -452,60 +512,56 @@ export default class ModManager extends View {
             .on_click((_e, cx) => this.toggle(m, cx))
             .child(div().size(13).rounded(7).bg(t.background)),
         col(150, div().truncate().when(!m.enabled || this.checks[m.name]?.ok === false, (el) => el.text_color(this.checks[m.name]?.ok === false ? t.blocked : t.muted)).child(m.name)),
-        col(70, div().text_color(m.error ? t.blocked : !m.enabled ? t.dim : m.kind === "herdr" ? t.dim : t.accent)
-          .child(m.enabled ? kindOf(m) : "off")),
+        col(110, div().text_color(m.error ? t.blocked : !m.enabled ? t.dim : m.kind === "herdr" ? t.dim : t.accent).child(d.label)),
         col(56, div().text_color(this.checks[m.name]?.ok === false ? t.blocked : this.checks[m.name]?.ok ? t.done : t.dim)
-          .child(m.kind === "herdr" || !m.enabled ? "—" : this.checks[m.name] ? (this.checks[m.name].ok ? "ok" : "erro") : "…")),
-        col(140, div().text_color(t.muted).child(version(m))),
-        col(190, div().text_color(update ? t.blocked : t.dim)
-          .child(`${source(m)}${update ? ` · ↑ ${short(update)}` : ""}`)),
-        col(80, div().text_color(t.dim).child(installed(m))),
-        col(80, div().text_color(t.dim).child(day(m.changed))),
-        div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim)
-          .child(m.path),
+          .child(m.kind === "herdr" || !m.enabled ? "—" : this.checks[m.name] ? (this.checks[m.name].ok ? "ok" : "error") : "…")),
+        col(120, div().text_color(t.muted).child(d.version)),
+        div().flex_1().min_w(0).truncate().text_color(update ? t.blocked : t.dim).child(`${d.source}${update ? ` · ↑ ${short(update)}` : ""}`),
+        col(80, div().text_color(t.dim).child(d.installed)),
+        col(80, div().text_color(t.dim).child(core.day(m.changed))),
       ]).on_click((_e, cx) => { this.at = i; cx.notify(); });
     });
     const sel = this.selectedMod();
+    const d = sel ? core.describeMod(sel, this.origin(sel)) : null;
+    const entry = d?.origin;
     const detail = sel?.name === core.POCKET_LINK
-      ? [`path: ${sel.path}`, "só leitura: o mod, o LaunchAgent e a chave de pareamento pertencem a automagik-dev/automagik-pocket",
-        "instale, atualize ou remova pelo instalador de lá (o abre no navegador)"]
-      : !sel ? []
-      : this.checks[sel.name]?.ok === false ? [`path: ${sel.path}`, `herdr-app check falhou: ${this.checks[sel.name].error}`,
-        "o app mantém a última versão boa; o erro também aparece em herdr-app status"]
-        : sel.record ? [`path: ${sel.path}`, `origem: ${source(sel)}`, `commit: ${sel.record.sha?.slice(0, 7) ?? "?"}`,
+      ? [`path: ${sel.path}`, "read-only: the mod, its LaunchAgent and the pairing key belong to automagik-dev/automagik-pocket",
+        "install, update or remove it with that installer (o opens it in the browser)"]
+      : !sel ? (this.selectedRow()?.group?.key === "herdr" ? ["mods that come with Herdr: read-only (mod.clone to change one); enter or b shows or hides them"] : [])
+      : this.checks[sel.name]?.ok === false ? [`path: ${sel.path}`, `herdr-app check failed: ${this.checks[sel.name].error}`,
+        "the app keeps the last good version; the error also shows in herdr-app status"]
+        : sel.kind === "pack" ? [`path: ${sel.path}`, `${core.PACK_TITLE} ${d.version} · installed ${d.installed} · u updates the pack`,
+          ...(sel.enabled ? [] : [`switched off: the folder is in ${core.OFF_DIR}/`])]
+        : sel.record ? [`path: ${sel.path}`, `source: ${d.source}`, `commit: ${sel.record.sha?.slice(0, 7) ?? "?"}`,
           `mods: ${sel.record.mods.join(", ")}`,
           sel.record.layouts?.length ? `layouts: ${sel.record.layouts.join(", ")}` : null,
-          sel.record.keys?.length ? `atalhos: ${sel.record.keys.map((k) => `${k.key} → ${k.action}`).join(", ")}` : null,
-          `instalado em ${day(Date.parse(sel.record.at))}`].filter(Boolean)
-          : sel.kind === "herdr" ? [`path: ${sel.path}`, "mod que vem com o Herdr: só leitura (mod.clone para mudar)"]
+          sel.record.keys?.length ? `keys: ${sel.record.keys.map((k) => `${k.key} → ${k.action}`).join(", ")}` : null,
+          `installed ${d.installed}`].filter(Boolean)
+          : sel.kind === "herdr" ? [`path: ${sel.path}`, "comes with Herdr: read-only (mod.clone to change it)"]
             : [`path: ${sel.path}`,
-              this.origin(sel) ? `${this.origin(sel).name} · ${this.origin(sel).fullName}${this.origin(sel).path ? `/${this.origin(sel).path}` : ""} ★${this.origin(sel).stars} · atualizado ${this.origin(sel).pushedAt?.slice(0, 10) ?? "?"} (o abre no navegador)` : null,
-              this.origin(sel)?.blurb ?? null,
-              this.drift[sel.name] ? (this.drift[sel.name].clean ? "igual ao upstream" : `difere do upstream: ${this.drift[sel.name].changed} alterado(s), ${this.drift[sel.name].added} novo(s), ${this.drift[sel.name].removed} removido(s)`) : (this.origin(sel) ? "d compara com o upstream" : null),
-              sel.clone ? `clone de ${sel.clone.name}${sel.clone.version ? ` v${sel.clone.version}` : ""}` : "sem origem registrada",
-              sel.manifest?.owner ? `instalado por ${sel.manifest.owner} em ${installed(sel)}` : null,
-              `alterado em ${day(sel.changed)}`,
-              sel.symlink ? "link para uma pasta sua: x só remove o link" : null].filter(Boolean);
-    const count = (f) => this.mods.filter(f).length;
-    const herdr = count((m) => m.kind === "herdr");
-    const errors = count((m) => this.checks[m.name]?.ok === false);
-    const pending = count((m) => m.enabled && m.kind !== "herdr" && !this.checks[m.name]);
+              entry ? `${entry.name} · ${entry.fullName}${entry.path ? `/${entry.path}` : ""} ★${entry.stars} · updated ${entry.pushedAt?.slice(0, 10) ?? "?"} (o opens it in the browser)` : null,
+              entry?.blurb ?? null,
+              this.drift[sel.name] ? (this.drift[sel.name].clean ? "matches upstream" : `differs from upstream: ${this.drift[sel.name].changed} changed, ${this.drift[sel.name].added} new, ${this.drift[sel.name].removed} removed`) : (entry ? "d compares it with upstream" : null),
+              sel.clone ? `clone of ${sel.clone.name}${sel.clone.version ? ` v${sel.clone.version}` : ""}` : entry ? null : "no recorded source",
+              sel.manifest?.owner ? `installed by ${sel.manifest.owner} on ${d.installed}` : null,
+              `changed ${core.day(sel.changed)}`,
+              sel.symlink ? "a link to a folder of yours: x removes only the link" : null].filter(Boolean);
+    const errors = this.mods.filter((m) => this.checks[m.name]?.ok === false).length;
+    const pending = this.mods.filter((m) => m.enabled && m.kind !== "herdr" && !this.checks[m.name]).length;
     const title = [
-      `${count((m) => m.enabled && m.kind !== "herdr")} seus`,
-      `${herdr} do Herdr`,
-      `${count((m) => !m.enabled)} desligados`,
+      ...counts,
       this.catalogError ?? null,
-      errors ? `${errors} com erro` : null,
-      pending ? `checando ${pending}` : null,
+      errors ? `${errors} with errors` : null,
+      pending ? `checking ${pending}` : null,
     ].filter(Boolean).join(" · ");
     return [
       this.header(t, "Mods", title),
       h_flex().h(22).px(10).gap(10).flex_none().items_center().border_b(1).border_color(t.border)
-        .child(head("ON", 30)).child(head("NAME", 150)).child(head("KIND", 70)).child(head("CHECK", 56))
-        .child(head("VERSION", 140)).child(head("SOURCE", 190)).child(head("INSTALLED", 80))
-        .child(head("CHANGED", 80)).child(head("PATH", 0)),
+        .child(head("ON", 30)).child(head("NAME", 150)).child(head("KIND", 110)).child(head("CHECK", 56))
+        .child(head("VERSION", 120)).child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim).child("SOURCE"))
+        .child(head("INSTALLED", 80)).child(head("CHANGED", 80)),
       v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(items),
-      v_flex().gap(2).text_size(12).text_color(t.muted).children(detail.map((d) => div().child(d))),
+      v_flex().gap(2).text_size(12).text_color(t.muted).children(detail.map((line) => div().child(line))),
     ];
   }
 
@@ -518,7 +574,7 @@ export default class ModManager extends View {
       return;
     }
     if (mod.kind === "herdr") {
-      this.message = "mods do Herdr vêm com o app; não dá para desligar (mod.clone para mudar)";
+      this.message = "built-in mods come with Herdr and can't be switched off (mod.clone to change one)";
       cx.notify();
       return;
     }
@@ -526,10 +582,9 @@ export default class ModManager extends View {
       try {
         await core.setEnabled(io, { appHome: appHome(), name: mod.name, enabled: !mod.enabled });
         this.message = mod.enabled
-          ? `${mod.name} desligado · a pasta foi para ${core.OFF_DIR}/`
-          : `${mod.name} ligado`;
-        this.mods = await core.listMods(io, { appHome: appHome(), records: records() });
-        this.at = Math.min(this.at, Math.max(0, this.mods.length - 1));
+          ? `${mod.name} off · its folder moved to ${core.OFF_DIR}/`
+          : `${mod.name} on`;
+        await this.reloadMods();
       } catch (e) {
         this.message = String(e?.message ?? e);
       }
@@ -550,25 +605,25 @@ export default class ModManager extends View {
       div().w(56).flex_none().text_color(t.muted).child(`★ ${it.stars}`),
       div().flex_1().min_w(0).truncate().text_color(t.dim).child(it.description),
     ]).on_click((_e, cx) => { m.at = i; cx.notify(); }));
-    const status = m.loading && !pageItems.length ? "carregando…" : m.error ? m.error : !m.total ? "nenhum mod encontrado" : null;
+    const status = m.loading && !pageItems.length ? "loading…" : m.error ? m.error : !m.total ? "no mods found" : null;
     return [
-      this.header(t, "Marketplace", `topic:herdr-mod${m.query ? ` ${m.query}` : ""} · ${m.sort === "stars" ? "mais estrelas" : "atualizados"} · ${m.total} repos`),
+      this.header(t, "Marketplace", `topic:herdr-mod${m.query ? ` ${m.query}` : ""} · ${m.sort === "stars" ? "most stars" : "recently updated"} · ${m.total} repos`),
       this.searching
         ? h_flex().h(34).px(10).items_center().rounded(8).border_1().border_color(t.accent).bg(t.background)
           .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground))
         : div(),
       v_flex().flex_1().min_h(0).children(status ? [div().px(10).text_color(m.error ? t.blocked : t.dim).child(status)] : items),
-      div().text_size(12).text_color(t.dim).child(`página ${m.page + 1} de ${pages}${m.loading ? " · carregando…" : ""}`),
+      div().text_size(12).text_color(t.dim).child(`page ${m.page + 1} of ${pages}${m.loading ? " · loading…" : ""}`),
     ];
   }
 
   packagesView(t) {
     const r = this.review;
     return [
-      this.header(t, r.source, `${r.packages.length} pacotes neste repo · commit ${short(r.fetched.sha)}`),
+      this.header(t, r.source, `${r.packages.length} packages in this repo · commit ${short(r.fetched.sha)}`),
       v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(r.packages.map((p, i) => this.row(`pkg-${p.prefix}`, i === r.at, t, [
-        div().w(200).flex_none().truncate().text_color(t.foreground).child(p.prefix || "(raiz)"),
-        div().flex_1().min_w(0).truncate().text_color(t.dim).child(`mods: ${p.mods.join(", ")}${p.layouts.length ? ` · layouts: ${p.layouts.length}` : ""}${p.recipe ? "" : " · sem RECIPE.md"}`),
+        div().w(200).flex_none().truncate().text_color(t.foreground).child(p.prefix || "(root)"),
+        div().flex_1().min_w(0).truncate().text_color(t.dim).child(`mods: ${p.mods.join(", ")}${p.layouts.length ? ` · layouts: ${p.layouts.length}` : ""}${p.recipe ? "" : " · no RECIPE.md"}`),
       ]))),
     ];
   }
@@ -578,24 +633,24 @@ export default class ModManager extends View {
     const line = (text, color) => div().text_color(color ?? t.muted).child(text);
     const section = (title, lines) => v_flex().gap(2).child(div().font_semibold().text_color(t.foreground).child(title)).children(lines);
     const blocks = [
-      section("O que entra", [
+      section("What comes in", [
         line(`mods: ${plan.mods.map((m) => `mods/${m}`).join(", ")}`),
-        plan.layouts.length ? line(`layouts: ${plan.layouts.join(", ")} (não troca o seu layout)`) : null,
-        line(`${pkg.files.length} arquivo(s) · commit ${short(fetched.sha)}${record ? ` (instalado: ${short(record.sha)})` : ""}${pkg.recipe ? "" : " · sem RECIPE.md"}`),
+        plan.layouts.length ? line(`layouts: ${plan.layouts.join(", ")} (your layout stays)`) : null,
+        line(`${pkg.files.length} file(s) · commit ${short(fetched.sha)}${record ? ` (installed: ${short(record.sha)})` : ""}${pkg.recipe ? "" : " · no RECIPE.md"}`),
       ].filter(Boolean)),
-      section("O que o código faz", plan.risks.length
+      section("What the code does", plan.risks.length
         ? plan.risks.map((r) => line(`• ${r.label}: ${r.paths.map((p) => p.split("/").slice(-2).join("/")).join(", ")}`, t.blocked))
-        : [line("não roda programas, não acessa a rede e não lê nem grava arquivos", t.done)]),
-      section("Atalhos", [
+        : [line("runs no programs, reaches no network, reads and writes no files", t.done)]),
+      section("Keys", [
         ...plan.keyAdds.map((k) => line(`+ ${k.key} → ${k.action} (${k.section})`)),
-        ...plan.keyConflicts.map((k) => line(`= ${k.key} continua ${k.current}; o mod queria ${k.action}`, t.blocked)),
-        ...(plan.keyAdds.length || plan.keyConflicts.length ? [] : [line("nenhum")]),
+        ...plan.keyConflicts.map((k) => line(`= ${k.key} stays ${k.current}; the mod wanted ${k.action}`, t.blocked)),
+        ...(plan.keyAdds.length || plan.keyConflicts.length ? [] : [line("none")]),
       ]),
     ];
-    if (plan.clashes.length) blocks.push(section("Bloqueado", [line(`já existe ${plan.clashes.join(", ")} que não foi instalado por aqui; nada é sobrescrito`, t.blocked)]));
+    if (plan.clashes.length) blocks.push(section("Blocked", [line(`${plan.clashes.join(", ")} already there and not installed from here; nothing is overwritten`, t.blocked)]));
     return [
-      this.header(t, `${record ? "Atualizar" : "Instalar"} ${pkg.name}`, source),
-      div().text_size(12).text_color(t.dim).child("Mods não são revisados pelo Herdr. Confira o repositório (o) antes de instalar um mod que roda programas ou acessa a rede."),
+      this.header(t, `${record ? "Update" : "Install"} ${pkg.name}`, source),
+      div().text_size(12).text_color(t.dim).child("Herdr does not review mods. Look at the repository (o) before installing a mod that runs programs or reaches the network."),
       v_flex().flex_1().min_h(0).gap(12).overflow_y_scrollbar().children(blocks),
     ];
   }

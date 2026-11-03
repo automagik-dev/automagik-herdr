@@ -130,7 +130,7 @@ test("applyInstall refuses a package that ships a link (a .state pointing outsid
     const s = installed(scratch(t));
     rmSync(join(s.base, "mods", "demo", name), { recursive: true, force: true });
     symlinkSync(target, join(s.base, "mods", "demo", name));
-    await assert.rejects(core.applyInstall(ioOf(), { appHome: s.appHome, plan: s.plan, source: "x", prefix: "", sha: "0", record: s.record }), /link ou arquivo especial/, name);
+    await assert.rejects(core.applyInstall(ioOf(), { appHome: s.appHome, plan: s.plan, source: "x", prefix: "", sha: "0", record: s.record }), /link or special file/, name);
     assert.equal(readFileSync(join(s.live, "main.js"), "utf8"), "// old\n");
     assert.equal(readlinkSync(join(s.live, ".state")), s.elsewhere);
     assert.equal(readFileSync(join(s.elsewhere, "key"), "utf8"), "secret\n", "nothing written through the link");
@@ -188,8 +188,8 @@ test("names differing only in case: Pocket-Link, Demo and Main.json never touch 
   const args = { appHome: s.appHome, source: "x", prefix: "", sha: "0", record: null };
   const bare = { clashes: [], layouts: [], base: s.base, keyAdds: [], keyConflicts: [], risks: [] };
   await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["Pocket-Link"] } }), /automagik-pocket/);
-  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["Demo"] } }), /nome recusado: Demo/);
-  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["demo"] } }), /já existe: mods\/demo/);
+  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["Demo"] } }), /name refused: Demo/);
+  await assert.rejects(core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["demo"] } }), /already there: mods\/demo/);
   // A layout that clashes (on macOS's disk) after a mod was placed: the undo removes only that mod.
   await core.applyInstall(ioOf(), { ...args, plan: { ...bare, mods: ["fresh"], layouts: ["Main.json"] } }).catch(() => {});
   const caseless = existsSync(join(s.appHome, "layouts", "MAIN.JSON"));
