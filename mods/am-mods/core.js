@@ -15,7 +15,7 @@ export const MOD_NAME = /^[a-z0-9][a-z0-9-]*$/;
 const LAYOUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
 const lower = (names) => new Set([...names].map((n) => String(n).toLowerCase()));
 export const POCKET_LINK_REFUSAL =
-  "Pocket Link pertence a automagik-dev/automagik-pocket: instale ou remova pelo instalador de lá. Esta linha é só leitura.";
+  "Pocket Link belongs to automagik-dev/automagik-pocket: install or remove it with that installer. This row is read-only.";
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const backupDir = (appHome) => `${appHome}/automagik-herdr/backup`;
@@ -85,19 +85,19 @@ export function findPackages(files) {
 // What AGENTS.md asks to tell the person before adding a mod: whether it runs programs, reaches
 // the network or touches files. A pattern match on the source, so it can only over-report.
 const RISKS = [
-  ["roda programas", /\bexec\s*\(|\bhc\s*\(|process\.run/],
-  ["acessa a rede", /\bfetch\s*\(|WebSocket/],
-  ["lê arquivos", /readTextFile\s*\(|watchFolder\s*\(|fs\.(readFile|readdir|stat)/],
-  ["escreve arquivos", /writeTextFile\s*\(|fs\.(writeFile|mkdir|rm|unlink|rename)/],
+  ["runs programs", /\bexec\s*\(|\bhc\s*\(|process\.run/],
+  ["reaches the network", /\bfetch\s*\(|WebSocket/],
+  ["reads files", /readTextFile\s*\(|watchFolder\s*\(|fs\.(readFile|readdir|stat)/],
+  ["writes files", /writeTextFile\s*\(|fs\.(writeFile|mkdir|rm|unlink|rename)/],
 ];
 
 // An alias hides the plain call from a pattern match (`import { exec as sh }`, `const { exec: sh }`),
 // so the scan also reads every aliased binding and reports the risk its real name carries.
 const RISK_OF = {
-  exec: "roda programas", hc: "roda programas", "process.run": "roda programas",
-  fetch: "acessa a rede", WebSocket: "acessa a rede",
-  readTextFile: "lê arquivos", watchFolder: "lê arquivos",
-  writeTextFile: "escreve arquivos",
+  exec: "runs programs", hc: "runs programs", "process.run": "runs programs",
+  fetch: "reaches the network", WebSocket: "reaches the network",
+  readTextFile: "reads files", watchFolder: "reads files",
+  writeTextFile: "writes files",
 };
 export function aliasedRisks(text) {
   const out = [];
@@ -217,10 +217,10 @@ async function writeKeys(io, appHome, change) {
 // and only then are the record's old folders moved aside (never deleted) and the staged ones
 // renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
-  if (plan.clashes.length) throw new Error(`já existe: ${plan.clashes.join(", ")}`);
+  if (plan.clashes.length) throw new Error(`already there: ${plan.clashes.join(", ")}`);
   if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
   const badName = plan.mods.find((m) => !MOD_NAME.test(m)) ?? plan.layouts.find((l) => !LAYOUT_NAME.test(l));
-  if (badName) throw new Error(`nome recusado: ${badName} (pastas de mod em minúsculas, a-z 0-9 -)`);
+  if (badName) throw new Error(`name refused: ${badName} (mod folders are lowercase, a-z 0-9 -)`);
   await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
   const staged = [];
   try {
@@ -232,7 +232,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
       // outside, a dangling dotfile) would be written through or installed as is. Refused, as
       // update.mjs refuses one in a release tarball.
       const odd = (await run(io, "find", [stage, "!", "-type", "f", "!", "-type", "d"])).split("\n").filter(Boolean);
-      if (odd.length) throw new Error(`${m}: o pacote traz um link ou arquivo especial (${odd[0].slice(stage.length + 1)}): recusado`);
+      if (odd.length) throw new Error(`${m}: the package carries a link or special file (${odd[0].slice(stage.length + 1)}): refused`);
       const live = `${appHome}/mods/${m}`;
       if ((record?.mods ?? []).includes(m) && (await present(io, live))) await carryPrivate(io, live, stage);
     }
@@ -255,7 +255,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
       // Only into a free name: `mv` onto an existing folder (any case) would land inside it, and
       // the undo below must reverse only what this run created.
       const dest = `${appHome}/mods/${m}`;
-      if (await present(io, dest)) throw new Error(`já existe: mods/${m}`);
+      if (await present(io, dest)) throw new Error(`already there: mods/${m}`);
       await run(io, "mv", [stage, dest]);
       placed.push([dest, stage]);
     }
@@ -265,7 +265,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
     }
     for (const l of plan.layouts) {
       const to = `${appHome}/layouts/${l}`;
-      if (await present(io, to)) throw new Error(`já existe: layouts/${l}`);
+      if (await present(io, to)) throw new Error(`already there: layouts/${l}`);
       laid.push(to);
       await run(io, "cp", [`${plan.base}/layouts/${l}`, to]);
     }
@@ -337,8 +337,40 @@ export async function removeLocal(io, { appHome, name, symlink, path }) {
 export const OFF_DIR = "mods-disabled";
 const onOff = (on) => (on ? "mods" : OFF_DIR);
 
+// The pack installer's ownership record (install.sh, am-sidebar/update.mjs): which folders in
+// mods/ the Automagik Herdr pack put there, at which release and when. Read here as plain text,
+// never imported from am-sidebar (it may be switched off); test/am-mods-list.test.mjs keeps this
+// parser equal to am-sidebar/release.js parseMarker for the fields it reads.
+export const PACK_MARKER = "automagik-herdr/installed-by-install.sh";
+export const PACK_TITLE = "Automagik Herdr";
+export const PACK_SOURCE = "automagik-herdr";
+export const PACK_REPO = "automagik-dev/automagik-herdr";
+/** The sidebar folder carries the pack's VERSION and the `automagik-herdr` command. */
+export const PACK_CLI = "mods/am-sidebar/bin/automagik-herdr";
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+export function parsePackMarker(text) {
+  if (typeof text !== "string") return null;
+  const get = (key) => (new RegExp(`^${key}=(.*)$`, "m").exec(text)?.[1] ?? "").trim();
+  // A v1 marker (v0.2.x, no `mods=`) installed only the sidebar under its old name.
+  const mods = /^mods=/m.test(text) ? get("mods").split(",").map((s) => s.trim()).filter(Boolean) : ["spaces-agents"];
+  return { version: get("version") || null, mods, installed: ISO_TIME.test(get("installed")) ? get("installed") : null };
+}
+
 export async function listMods(io, { appHome, records }) {
   const shipped = Object.keys(parseKeys(await io.readText(`${appHome}/installed.json`)));
+  // The pack's own folders: a marker from before `installed=` (v0.5.1 and older) dates the
+  // install by the marker file itself; a release folder with no `version=` by the sidebar's VERSION.
+  let marker = null;
+  try { marker = parsePackMarker(await io.readText(`${appHome}/${PACK_MARKER}`)); } catch {}
+  let pack = null;
+  if (marker) {
+    let at = marker.installed ? Date.parse(marker.installed) : null;
+    if (!at) try { at = Number((await run(io, "stat", ["-f", "%m", `${appHome}/${PACK_MARKER}`])).trim()) * 1000 || null; } catch {}
+    let version = marker.version;
+    if (!version) try { version = String((await io.readText(`${appHome}/mods/am-sidebar/VERSION`)) ?? "").trim() || null; } catch {}
+    pack = { mods: new Set(marker.mods), version, installed: at };
+  }
   // A folder that isn't there yet is not an error: the first mod turned off creates it.
   const entries = async (dir, on) => {
     try {
@@ -371,11 +403,15 @@ export async function listMods(io, { appHome, records }) {
     let changed = null;
     try { changed = Number((await run(io, "stat", ["-f", "%m", path])).trim()) * 1000 || null; } catch {}
     const record = owner.get(name) ?? null;
-    const kind = record ? "installed" : on && shipped.includes(name) ? "herdr" : meta.cloned_from ? "clone" : "local";
+    // Pack first: the marker lists only folders the pack installer put in mods/ (a person's
+    // folder with a pack name is left alone by it, so never listed), switched off or not.
+    const ofPack = Boolean(pack?.mods.has(name));
+    const kind = ofPack ? "pack" : record ? "installed" : on && shipped.includes(name) ? "herdr" : meta.cloned_from ? "clone" : "local";
     mods.push({
       name,
       enabled: on,
       kind,
+      pack: ofPack ? { version: pack.version, installed: pack.installed } : null,
       symlink: links.has(path),
       path: `${onOff(on)}/${name}`,
       clone: meta.cloned_from ?? null,
@@ -388,6 +424,59 @@ export async function listMods(io, { appHome, records }) {
   return mods.sort(
     (a, b) => (a.kind === "herdr") - (b.kind === "herdr") || Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name),
   );
+}
+
+// What one row of the table says, from a listMods entry and its catalog entry (`origin`, matched
+// by the catalog's modNames, or null). Pure, so the panel and the tests read the same columns.
+export const KIND_LABELS = Object.freeze({
+  pack: PACK_TITLE, installed: "marketplace", catalog: "catalog", clone: "clone", local: "local", herdr: "built-in",
+});
+export const day = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : "—");
+const sha7 = (sha) => (sha ? String(sha).slice(0, 7) : null);
+
+export function describeMod(mod, origin = null) {
+  // A pack mod is the pack's, whatever the catalog lists under its name.
+  const entry = mod.kind === "pack" || mod.kind === "herdr" ? null : origin;
+  const kind = mod.kind === "local" && entry ? "catalog" : mod.kind;
+  const version = kind === "pack" ? (mod.pack?.version ?? "—")
+    : mod.record ? (sha7(mod.record.sha) ? `commit ${sha7(mod.record.sha)}` : "—")
+      : mod.clone ? `from ${mod.clone.name}${mod.clone.version ? ` v${mod.clone.version}` : ""}`
+        : entry && sha7(entry.headCommit) ? `upstream ${sha7(entry.headCommit)}`
+          : "—";
+  const source = kind === "pack" ? PACK_SOURCE
+    : mod.record ? `${mod.record.source}${mod.record.prefix ? `/${mod.record.prefix}` : ""}`
+      : entry ? `${entry.fullName}${entry.path ? `/${entry.path}` : ""}${entry.stars ? ` ★${entry.stars}` : ""}`
+        : mod.manifest?.owner ? `${mod.manifest.owner} (installer)`
+          : kind === "herdr" ? "Herdr" : "—";
+  const at = kind === "pack" ? mod.pack?.installed
+    : mod.record?.at ? Date.parse(mod.record.at) : mod.manifest?.at ? Date.parse(mod.manifest.at) : null;
+  return { kind, label: mod.enabled ? KIND_LABELS[kind] : "off", version, source, installed: day(at || null), origin: entry };
+}
+
+// The table in three groups: the pack's mods (one release, one row each), the person's own
+// (marketplace, catalog, clones, local folders) and Herdr's built-in ones, which fold into one
+// row unless `builtInOpen`. `rows` is what the panel draws, top to bottom: a group's heading
+// (`{ group }`, selectable only for built-in, where enter folds it) then its mods (`{ mod }`).
+export function groupMods(mods, { builtInOpen = false } = {}) {
+  const pack = mods.filter((m) => m.kind === "pack");
+  const herdr = mods.filter((m) => m.kind === "herdr");
+  const yours = mods.filter((m) => m.kind !== "pack" && m.kind !== "herdr");
+  const version = pack.find((m) => m.pack?.version)?.pack.version ?? null;
+  const groups = [
+    { key: "pack", title: version ? `${PACK_TITLE} ${version}` : PACK_TITLE, mods: pack, folded: false },
+    { key: "yours", title: "Yours", mods: yours, folded: false },
+    { key: "herdr", title: "Herdr built-in", mods: herdr, folded: !builtInOpen },
+  ].filter((g) => g.mods.length);
+  const rows = [];
+  for (const g of groups) {
+    rows.push({ group: g, selectable: g.key === "herdr" });
+    if (!g.folded) for (const m of g.mods) rows.push({ mod: m, selectable: true });
+  }
+  const off = mods.filter((m) => !m.enabled).length;
+  // The header counts what is drawn: one count per group shown, then the mods switched off.
+  const named = { pack: PACK_TITLE, yours: "yours", herdr: "built-in" };
+  const counts = [...groups.map((g) => `${g.mods.length} ${named[g.key]}`), ...(off ? [`${off} off`] : [])];
+  return { groups, rows, counts };
 }
 
 // Moves a mod between the two folders; kept off, it is out of the app's sight until moved back.
@@ -421,7 +510,7 @@ export async function searchMarket(io, { query = "", sort = "stars", page = 1, p
     const res = await anonymous(url);
     if (res.status !== 200) {
       const msg = (() => { try { return JSON.parse(res.text).message; } catch { return res.text.slice(0, 120); } })();
-      throw new Error(`GitHub respondeu ${res.status}: ${msg}${ghError ? ` (gh: ${ghError})` : ""}`);
+      throw new Error(`GitHub answered ${res.status}: ${msg}${ghError ? ` (gh: ${ghError})` : ""}`);
     }
     body = JSON.parse(res.text);
   }

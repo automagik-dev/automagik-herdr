@@ -109,7 +109,7 @@ The installer:
 - points the `automagik-herdr` link at `am-sidebar`'s command;
 - moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
   rewrote. A Claude session already running in one of those projects keeps the old hook and gets
-  no briefing until it is restarted or `/hooks` is run in it. A project the installer doesn't
+  no briefing until it is restarted: `automagik-herdr restart <bot>` (or the bot row's Restart). A project the installer doesn't
   know about keeps the old hook: `automagik-herdr start` or `attach` its bot, or open it as a
   space in Herdr and run the installer again.
 
@@ -170,7 +170,10 @@ a place in a team, and keeps that team in front of every agent and of you.
 The pack replaces Herdr's `spaces` sidebar with one that draws each project's team under its
 space: the main bot as a card, categories as headers, captains with their members folded
 under them, planned bots dimmed with their wave. Each bot shows its character, its role and
-model, its agent's icon and its status. Right-click a bot to edit, start or attach it.
+model, its agent's icon and its status. Right-click a bot to edit, start, restart or attach it:
+Restart runs `automagik-herdr restart` for it, and Restart on… restarts it on another installed
+agent (a new conversation; the bot's definition keeps its agent). A restart refused because the
+bot is mid-turn offers "Restart anyway".
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
@@ -195,6 +198,7 @@ automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
+automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
 automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
 automagik-herdr whois <terminal> | whois --bot <bot>
@@ -215,6 +219,25 @@ automagik-herdr update [--check | --rollback]
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
   in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
   pane as its parent. A running bot is not started twice.
+- `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
+  space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
+  new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
+  its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
+  leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
+  running. It resumes the conversation: Claude by the session id on the pane (`agent.session`,
+  carried to the new pane), else the workers ledger's last session row for that terminal, else
+  `--continue` in the bot's folder, which is refused while another bot's Claude runs in that
+  folder (it could resume theirs; `--fresh` starts a new one); `codex resume --last`;
+  `--continue` for pi, omp, kimi, agy and hermes. Any other agent starts fresh, and says so.
+  `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
+  conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
+  A bot that isn't running is started. It is refused while the bot is working (it would cut the
+  turn in half) or has helpers, such as workers, that hc would end with its pane; `--force`
+  restarts anyway. The old pane is found in the attach ledger; once the new pane has stayed up,
+  the ledger moves the bot to it (the old binding detached, by `start`, reason `moved`; the new
+  terminal attached, by `start`), and a replacement that didn't make it writes no rows. A bot
+  restarting itself writes and prints everything before the kill that ends its own pane. It
+  prints the new terminal.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
   project is refused, and so are a pane another bot plays and a bot another pane plays; the
   refusal names the holder. `attach --move` moves a bot from its pane to this one.
@@ -517,7 +540,7 @@ rollback to a pack without the entry point moves the hooks back onto that folder
 `briefing.mjs`. It prints nothing outside a bot's pane (by the attach ledger), finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
-already running may need `/hooks` once to load the hook.
+already running may need a restart to load the hook: `automagik-herdr restart <bot>` (or the bot row's Restart).
 
 ### Requirements
 
@@ -564,7 +587,7 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
 `launchArgs.js`, `models.js`, `workers.js`, `attach.js`, `formModel.js`, `release.js`,
-`updateCheck.js`, `workerTab.js`, `migrate.js`), so the tests
+`updateCheck.js`, `workerTab.js`, `migrate.js`, `restart.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are

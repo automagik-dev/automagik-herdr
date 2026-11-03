@@ -2,7 +2,7 @@
 
 The `+` menu (the tab bar's `+`, and a space row's, in place of Herdr's stock one): start a
 terminal or an installed coding agent in the shown space (or a space row's
-`+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu`; it asks
+`+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu` 0.1.7; it asks
 herdr-core which agents are actually installed instead of offering a fixed list.
 
 ## What you see
