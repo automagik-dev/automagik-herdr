@@ -78,6 +78,12 @@ export function toFramePixels(point, frame) {
   };
 }
 
+/** Whether two window bounds (points) are the same, to half a point. */
+export function sameBounds(a, b) {
+  if (!a || !b) return false;
+  return ['x', 'y', 'width', 'height'].every((k) => Math.abs(a[k] - b[k]) <= 0.5);
+}
+
 const isNumber = (s) => /^[-+]?\d+(\.\d+)?$/.test(s);
 
 /**
@@ -108,6 +114,9 @@ export function parseArgs(argv) {
     const value = inline ?? argv[++i];
     if (value === undefined || !isNumber(value)) throw new Error(`--${name} needs a number`);
     opts[name] = Number(value);
+    if (name === 'nth' && !(Number.isInteger(opts.nth) && opts.nth >= 1)) {
+      throw new Error('--nth needs a whole number of 1 or more');
+    }
   }
   const [cmd, ...rest] = words;
   return { cmd, text: rest.join(' '), opts };

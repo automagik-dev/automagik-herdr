@@ -13,6 +13,7 @@ import {
   findLine,
   parseArgs,
   pickWindow,
+  sameBounds,
   sortLines,
   toFramePixels,
   toPoints,
@@ -34,8 +35,17 @@ Usage:
 Coordinates are screen points. Matching is case-insensitive. find, click and expect exit 1
 when nothing matches. Needs herdr-app, cua-driver (with a running daemon) and swiftc.`;
 
-const run = (cmd, args) =>
-  execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 });
+/** Run a program; a missing one says so by name instead of `spawnSync x ENOENT`. */
+function run(cmd, args) {
+  try {
+    return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw Object.assign(new Error(`${err.path ?? cmd} not found (install it or put it on PATH)`), { missing: true });
+    }
+    throw err;
+  }
+}
 
 const driver = (tool, args) => JSON.parse(run('cua-driver', ['call', tool, JSON.stringify(args)]));
 
@@ -52,11 +62,21 @@ function ocrbox() {
   const args = ['-O', '-o', part, src, '-framework', 'Vision', '-framework', 'AppKit'];
   process.stderr.write('herdr-ax: compiling ocrbox.swift (once)\n');
   try {
-    run('swiftc', args);
-  } catch {
-    run('xcrun', ['swiftc', ...args]);
+    try {
+      run('swiftc', args);
+    } catch (err) {
+      if (!err.missing) throw err; // a real compile error: keep its message
+      run('xcrun', ['swiftc', ...args]);
+    }
+    renameSync(part, bin);
+  } catch (err) {
+    rmSync(part, { force: true });
+    if (err.missing) {
+      throw new Error('swiftc not found: install Xcode or the Command Line Tools (xcode-select --install)');
+    }
+    err.message = `compiling ocrbox.swift failed: ${err.message}`;
+    throw err;
   }
-  renameSync(part, bin);
   return bin;
 }
 
@@ -112,6 +132,13 @@ async function main(argv) {
     // A capture lives in its session, and each `cua-driver call` is its own unless named.
     const session = `herdr-ax-${process.pid}`;
     const frame = driver('get_window_state', { ...target, include_accessibility_tree: false, session });
+    // The point was read against list_windows' bounds; a window moved since then is refused.
+    if (!sameBounds(win.bounds, frame.window_bounds)) {
+      const s = (b) => `${b?.x},${b?.y} ${b?.width}x${b?.height}`;
+      throw new Error(
+        `the window moved or resized while reading (${s(win.bounds)} -> ${s(frame.window_bounds)}); run again`,
+      );
+    }
     const pixel = toFramePixels(at, frame);
     const w = frame.screenshot_width;
     const h = frame.screenshot_height;
@@ -151,8 +178,8 @@ function notFound(text, nth) {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (err) => {
-    // cua-driver prints a refusal ({"code": …}) on stdout.
-    const detail = [err.stdout, err.stderr].map((s) => s?.toString().trim()).filter(Boolean).join('\n');
+    // execFileSync puts stderr in the message already; cua-driver prints a refusal on stdout.
+    const detail = err.stdout?.toString().trim();
     process.stderr.write(`herdr-ax: ${err.message}${detail ? `\n${detail}` : ''}\n`);
     process.exit(2);
   },
