@@ -19,9 +19,10 @@ const addressOf = (t) => t?.address ?? t?.id ?? null;
 // Decision 3: an agent in front, by the program table or by the foreground process. The
 // table can say shell while an agent runs (herdr-core lists the pane by its shell when the
 // agent's report is missing or stale), so a false there never hides an agent in front: the
-// row's own `foreground.argv`, else the command line the view read with `hc get` (`argvOf`).
-const agentInFront = (t, argvOf) => rowIsAgent(t) === true || agentInForeground(t)
-  || agentInForeground({ foreground: { argv: argvOf(addressOf(t)) } });
+// row's own `foreground.argv` when it has one, else the command line the view read with
+// `hc get` (`readArgv`, for this pane only).
+const agentInFront = (t, readArgv) => rowIsAgent(t) === true
+  || agentInForeground(Array.isArray(t.foreground?.argv) ? t : { foreground: { argv: readArgv(t) } });
 
 /**
  * The live map: bot id -> its live pane, from `terminals()` rows. A terminal counts while it
@@ -29,12 +30,12 @@ const agentInFront = (t, argvOf) => rowIsAgent(t) === true || agentInForeground(
  * agent in front. On any machine: the view shows remote bots too (launch.js' liveTerminalOf
  * is this computer's only, for Start and Attach). Several holders: the newest by
  * `created_ms` counts, flagged `duplicate`. `argv`: the pane's foreground command line when
- * the row carries it (`foreground.argv`), else what `argvOf(address)` gives (the command line
- * the view read with `hc get`), else null. `parent`: the hc parent of that terminal (null:
+ * the row carries it (`foreground.argv`), else what `argvOf(address, created_ms)` gives (the
+ * command line the view read with `hc get` for that very pane: see argvReader), else null. `parent`: the hc parent of that terminal (null:
  * none), where its click opens a tab.
  */
 export function liveFrom(terminals, known = null, argvOf = () => null) {
-  const readArgv = (a) => { const v = argvOf(a); return Array.isArray(v) ? v : null; };
+  const readArgv = (t) => { const v = argvOf(addressOf(t), t.created_ms ?? null); return Array.isArray(v) ? v : null; };
   const holders = new Map();
   for (const t of terminals ?? []) {
     const id = t?.labels?.[BOT_LABEL];
@@ -47,7 +48,7 @@ export function liveFrom(terminals, known = null, argvOf = () => null) {
     live[id] = {
       terminal: addressOf(pick), duplicate: rows.length > 1, parent: pick.parent ?? null, status: pick.status ?? null,
       status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
-      argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : readArgv(addressOf(pick)),
+      argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : readArgv(pick),
     };
   }
   return live;
@@ -334,6 +335,18 @@ export function argvAfter(prev, get, created) {
   return prev && prev.created === entry.created ? prev : entry;
 }
 
+/**
+ * liveFrom's `argvOf` over the view's reads (address -> argvAfter entry): the command line
+ * read for that pane only, so a terminal reborn at an old address (another `created_ms`)
+ * isn't counted by the read of the one before it.
+ */
+export function argvReader(cache) {
+  return (address, created) => {
+    const e = cache?.get(address);
+    return e && e.created === (created ?? null) && Array.isArray(e.argv) ? e.argv : null;
+  };
+}
+
 /** The ids of every bot the projects define: a terminal labelled with one is drawn as that bot. */
 export function knownBots(projects) {
   return new Set((projects ?? []).flatMap((p) => p.file?.bots?.map((b) => b.id) ?? []));
@@ -435,4 +448,13 @@ export function heldTerminalOf(botId, terminals, panes = []) {
     return sb > sa || (sb === sa && cb > ca) ? b : a;
   });
   return addressOf(pick);
+}
+
+/**
+ * A held bot row's click, decided at click time from fresh `terminals` and `panes`: focus or
+ * peek its live terminal (clickActionOf), or null when it holds none any more (do nothing).
+ */
+export function heldClickOf(botId, terminals, panes) {
+  const held = heldTerminalOf(botId, terminals, panes);
+  return held ? clickActionOf(held, panes) : null;
 }

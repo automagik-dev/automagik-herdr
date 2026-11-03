@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, spaceRowOrder, clickActionOf, heldTerminalOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -422,7 +422,7 @@ export default class Spaces extends View {
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
-    const live = liveFrom(this.all, known, (a) => this.argvOf.get(a)?.argv ?? null);
+    const live = liveFrom(this.all, known, argvReader(this.argvOf));
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
@@ -651,11 +651,11 @@ export default class Spaces extends View {
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
-    // a peek, rather than nothing. panes() is read at click time, not on every render.
+    // a peek, rather than nothing; read again at click time (panes() too), nothing if it is gone.
     const held = live || planned ? null : heldTerminalOf(b.id, this.all);
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
-      : held ? () => focusOrPeek(heldTerminalOf(b.id, terminals(), panes()) ?? held)
+      : held ? () => { const a = heldClickOf(b.id, terminals(), panes()); if (a) run(a.command, a.args); }
         : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
       machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk, argvEntry, argvAfter,
+  secondLine, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -435,4 +435,37 @@ test("argvToAsk: panes whose reads fail join the rotation; a quit agent is re-re
   assert.ok(argvToAsk([...rows, fresh], known, cached, 3, start).ask.includes("t5"));
   for (const a of ["box/t1", "box/t2", "box/t3"]) cached.set(a, argvAfter(cached.get(a), null, rows.find((k) => k.address === a).created_ms));
   assert.equal(argvToAsk([...rows, fresh], known, cached, 3, start).ask[0], "t5", "first once all three have failed");
+});
+
+test("argvReader: a read counts only for the pane it was made of; a reused address doesn't count a shell", () => {
+  const shell = { key: "shell", agent: false };
+  const cache = new Map([["t1", argvEntry({ foreground: { argv: ["claude"] } }, 10)]]);
+  const read = argvReader(cache);
+  assert.deepEqual(read("t1", 10), ["claude"]);
+  assert.equal(read("t1", 11), null, "another pane at t1");
+  assert.equal(read("t9", 10), null);
+  assert.equal(argvReader(new Map([["t1", { argv: null, created: 10, settled: false }]]))("t1", 10), null);
+  // t1 reborn as a shell (created_ms 11) with the old claude read still cached: not live.
+  const reborn = [T("t1", { labels: { bot: "b-a" }, created_ms: 11, program: shell })];
+  assert.equal(liveFrom(reborn, null, read)["b-a"], undefined);
+  const same = [T("t1", { labels: { bot: "b-a" }, created_ms: 10, program: shell })];
+  assert.deepEqual(liveFrom(same, null, read)["b-a"].argv, ["claude"]);
+});
+
+test("liveFrom: the cached read is used only when the row has no foreground.argv", () => {
+  const shell = { key: "shell", agent: false };
+  const claude = () => ["claude"];
+  // The row says a shell is in front now: an older cached claude read doesn't override it.
+  const atShell = [T("t1", { labels: { bot: "b-a" }, program: shell, foreground: { argv: ["-zsh"] } })];
+  assert.equal(liveFrom(atShell, null, claude)["b-a"], undefined);
+  const noArgv = [T("t1", { labels: { bot: "b-a" }, program: shell })];
+  assert.ok(liveFrom(noArgv, null, claude)["b-a"]);
+});
+
+test("heldClickOf: decided at click time; nothing when the bot holds no live terminal any more", () => {
+  const rows = [T("t1", { labels: { bot: "b-a" }, created_ms: 1 })];
+  assert.deepEqual(heldClickOf("b-a", rows, [{ pane: "p1", terminal: "t1" }]), { command: "agent.focus", args: { terminal: "t1" } });
+  assert.deepEqual(heldClickOf("b-a", rows, []), { command: "terminal.peek", args: { terminal: "t1" } });
+  assert.equal(heldClickOf("b-a", [{ ...rows[0], state: "exited" }], []), null, "gone since the render");
+  assert.equal(heldClickOf("b-a", [], null), null);
 });
