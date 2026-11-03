@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  paneLabels, roleOf, labelWords, relabelWords, detachWords, relabelPlan, labelMoves, startArgs, SQUAD_MARK,
+  paneLabels, roleOf, labelWords, relabelWords, detachWords, relabelPlan, startArgs, SQUAD_MARK,
   relabel, relabelWarning, leadPane, attachWords,
 } from "../mods/am-sidebar/launchArgs.js";
 import { parseBots, effectiveCategory } from "../mods/am-sidebar/model.js";
@@ -69,9 +69,6 @@ test("labelWords sets what differs; detachWords takes off bot, role, category an
   // A squad set after the copy (the helper's) differs from the mark: kept; the mark goes.
   assert.deepEqual(detachWords({ bot: ID.dev, squad: "infra", [SQUAD_MARK]: "memory" }), ["bot=", `${SQUAD_MARK}=`]);
   assert.deepEqual(detachWords(), ["bot="]);
-  // Attach: an old holder loses what Detach takes off.
-  assert.deepEqual(labelMoves(["t1", "t2"], "t2", ID.dev, (t) => (t === "t1" ? { bot: ID.dev, role: "dev" } : {})),
-    [["label", "t1", "bot=", "role="], ["label", "t2", `bot=${ID.dev}`]]);
 });
 
 test("relabelPlan + relabelWords: rank, lead and category edits, and a lead's captain status", () => {

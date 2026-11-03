@@ -7,7 +7,7 @@
 import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
 import { shownModel, defaultModelFrom } from "./models.js";
-import { TASK_LABEL } from "./workers.js";
+import { workerBranch, workerTaskId } from "./workers.js";
 
 /** Idle this long is asleep (Automagik's own threshold). */
 export const ASLEEP_MS = 10 * 60 * 1000;
@@ -26,6 +26,7 @@ const agentInFront = (t) => rowIsAgent(t) ?? agentInForeground(t);
  * is this computer's only, for Start and Attach). Several holders: the newest by
  * `created_ms` counts, flagged `duplicate`. `argv`: the pane's foreground command line when
  * the row carries it (`foreground.argv`), else null (the view reads it with `hc get`).
+ * `parent`: the hc parent of that terminal (null: none), where its click opens a tab.
  */
 export function liveFrom(terminals, known = null) {
   const holders = new Map();
@@ -38,7 +39,7 @@ export function liveFrom(terminals, known = null) {
   for (const [id, rows] of holders) {
     const pick = rows.reduce((a, b) => ((b.created_ms ?? -1) > (a.created_ms ?? -1) ? b : a));
     live[id] = {
-      terminal: addressOf(pick), duplicate: rows.length > 1, status: pick.status ?? null,
+      terminal: addressOf(pick), duplicate: rows.length > 1, parent: pick.parent ?? null, status: pick.status ?? null,
       status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
       argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : null,
     };
@@ -89,7 +90,9 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
     const row = { terminal, name: t.name || t.template || t.program?.name || terminal, agent: t.program?.key ?? null,
       program: t.program ?? null, status: t.status ?? null, depth,
       model: t.labels?.["worker.model"] || null, effort: t.labels?.["worker.effort"] || null,
-      template: t.labels?.["worker.template"] || null, task: t.labels?.[TASK_LABEL] || null };
+      template: t.labels?.["worker.template"] || null,
+      // The branch label, else the task label of a worker started before the task contract.
+      branch: workerBranch(t.labels), task: workerTaskId(t.labels) };
     return [row, ...helpersOf(terminals, terminal, known, depth + 1, seen)];
   });
 }
@@ -122,7 +125,7 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
       const members = planned ? [] : file.bots.filter((b) => !placed.has(b.id) && b !== main && leads.get(b.id)?.lead === bot.id).map(node);
       const n = {
         bot, planned, pose: poseOf(l, now), members,
-        live: l ? { terminal: l.terminal, duplicate: l.duplicate } : null,
+        live: l ? { terminal: l.terminal, duplicate: l.duplicate, parent: l.parent ?? null } : null,
         status: l?.status ?? null, program: l?.program ?? null, argv: l?.argv ?? null,
         helpers: l ? helpersOf(terminals, l.terminal, known) : [],
       };

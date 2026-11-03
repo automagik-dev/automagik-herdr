@@ -2,7 +2,8 @@
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
 // change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run,
-// templates (state.templates: [{ name, command }]).
+// server status (state.core), kill (the terminal finishes), templates (state.templates:
+// [{ name, command }]).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -30,7 +31,13 @@ switch (words[0]) {
   }
   case "get": {
     const t = find(words[1]);
-    if (!t) fail(`no terminal ${words[1]}`);
+    // Like the real one: exit 3 and a not_found error on stderr.
+    if (!t) fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal "${words[1]}"` } }), 3);
+    // exitAfterGets: answered live that many times, then the program exits (a failed resume).
+    if (typeof t.exitAfterGets === "number") {
+      if (t.exitAfterGets <= 0) { t.state = "finished"; delete t.exitAfterGets; } else t.exitAfterGets -= 1;
+      save();
+    }
     out(t);
     break;
   }
@@ -56,7 +63,7 @@ switch (words[0]) {
   }
   case "run": {
     const labels = {};
-    let name = null, cwd = null, parent = null;
+    let name = null, cwd = null, parent = null, outlive = false;
     let i = 1;
     // Options, then argv: after `--`, or from the first word that isn't an option (a template).
     for (; i < words.length && words[i] !== "--" && words[i].startsWith("--"); i += 1) {
@@ -64,18 +71,41 @@ switch (words[0]) {
       else if (words[i] === "--name") name = words[++i];
       else if (words[i] === "--cwd") cwd = words[++i];
       else if (words[i] === "--parent") parent = words[++i];
+      else if (words[i] === "--outlive-parent") outlive = true;
     }
     const argv = words.slice(words[i] === "--" ? i + 1 : i);
     // `env K=V … program …`: the program is the first word after the assignments.
     const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
     const address = `t${state.next ?? 100}`;
     state.next = (state.next ?? 100) + 1;
-    state.terminals.push({ address, name, cwd, labels, parent, state: "live", created_ms: Date.now(),
-      pid: 9000 + Number(address.slice(1)), foreground: { argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" } });
+    // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
+    // "flaky" (its agent is in front for one hc get, then it exits).
+    const shell = state.runAs === "shell";
+    state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: state.runAs === "exit" ? "finished" : "live", created_ms: Date.now(),
+      pid: 9000 + Number(address.slice(1)), foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" },
+      ...(state.runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
     out({ address });
+    break;
+  }
+  case "kill": {
+    const t = find(words[1]);
+    if (!t) fail(`no terminal ${words[1]}`);
+    if (state.failKill === words[1]) fail(`kill refused on ${words[1]}`);
+    t.state = "finished";
+    save();
+    out({ address: t.address, state: t.state });
+    // Killing the caller's own terminal ends the caller (this fake runs exec'd by the wrapper,
+    // so its parent is the program that called hc).
+    if (process.env.HC_TERMINAL_ID && [t.address, t.name].includes(process.env.HC_TERMINAL_ID)) process.kill(process.ppid, "SIGKILL");
+    break;
+  }
+  case "server": {
+    // `hc server status`: the core's permanent id (state.core, else a fixed one).
+    if (words[1] !== "status") fail(`fake hc: no server ${words[1]}`, 2);
+    out({ core: state.core ?? { id: "fakecore0000", name: "fake" }, live: state.terminals.filter((t) => t.state === "live").length });
     break;
   }
   case "templates": {
