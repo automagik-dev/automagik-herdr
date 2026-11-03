@@ -379,7 +379,7 @@ test("worker refuses outside a bot's pane: no HC_TERMINAL_ID, a pane with no bot
   assert.match(plain.err, /t2 isn't a bot's pane/);
   const stray = s.cli(["worker", "x", "--branch", "feat/x"], { from: "t3" });
   assert.equal(stray.code, 1);
-  assert.match(stray.err, /plays bot b-zzzzzzzzzz, which .* doesn't define/);
+  assert.match(stray.err, /plays bot b-zzzzzzzzzz, which no project here defines \(looked in .*proj\)/);
   assert.equal(s.runs().length, 0);
   assert.equal(existsSync(join(s.project, ".claude/worktrees")), false, "no worktree made");
   for (const args of [["worker", "--branch", "a"], ["worker", "x"], ["worker", "x", "--branch", "a", "--worktree", "b"], ["worker", "x", "--worktree", "b", "--base", "main"]]) {
@@ -692,15 +692,82 @@ test("worker: task worktrees are excluded from the main checkout; master is the 
   assert.match(clash.err, /Branch Feat-A uses the same folder as branch feat\/a/);
 });
 
-test("worker: --project must be the calling pane's project; a missing hook script names the usage link", (t) => {
+test("worker: --project must define the calling pane's bot; a missing hook script names the usage link", (t) => {
   const s = scene(t, { briefing: false });
   const other = join(s.root, "plain");
   mkdirSync(other);
   const r = s.cli(["worker", "x", "--branch", "feat/x", "--project", other]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /--project .*plain isn't the project of t1/);
+  assert.match(r.err, /--project .*plain doesn't define bot b-cccccccccc, which t1 plays .*it's defined in .*proj\./);
   assert.equal(s.cli(["worker", "x", "--branch", "feat/x", "--project", s.project, "--agent", "claude"]).code, 0);
   const w = s.cli(["worker", "y", "--branch", "feat/y", "--agent", "claude"]);
   assert.match(w.err, /The feat\/y worker's Claude session won't be linked to usage/);
   assert.doesNotMatch(w.err, /gets no/);
+});
+
+// ---- the calling bot's project: the one whose bots file defines it ----
+
+/** A second git project beside the scene's, with its own bots file. */
+function otherProject(s, name, file) {
+  const dir = join(s.root, name);
+  mkdirSync(join(dir, ".herdr"), { recursive: true });
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "commit", "-q", "--allow-empty", "-m", "start");
+  writeFileSync(join(dir, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
+  return dir;
+}
+/** Moves a scene terminal: its foreground now works in `cwd` (its launch cwd stays). */
+function moveForeground(s, address, cwd, labels = {}) {
+  const st = s.hcState();
+  const t = st.terminals.find((x) => x.address === address);
+  t.foreground.cwd = cwd;
+  Object.assign(t.labels, labels);
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+}
+const withoutDev = () => team({ bots: team().bots.filter((b) => b.id !== ID.dev) });
+const devOnly = () => team({ bots: team().bots.filter((b) => b.id === ID.dev) });
+
+test("worker: a pane launched in A that works in B, whose bots file alone defines it, starts in B; --project A is refused", (t) => {
+  const s = scene(t, { file: withoutDev() }); // A: s.project, launch cwd of t1, no Dev
+  const b = otherProject(s, "b", devOnly());
+  moveForeground(s, "t1", b);
+  const r = s.cli(["worker", "fix it", "--branch", "feat/x", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().worktree, join(b, ".claude/worktrees/feat-x"));
+  const cwd = s.runs()[0][s.runs()[0].indexOf("--cwd") + 1];
+  assert.equal(cwd, join(b, ".claude/worktrees/feat-x"), "hc run starts the worker in B's worktree");
+  assert.equal(existsSync(join(s.project, ".claude/worktrees")), false, "nothing made in A");
+  const named = s.cli(["worker", "y", "--branch", "feat/y", "--project", b]);
+  assert.equal(named.code, 0, named.err);
+  const wrong = s.cli(["worker", "z", "--branch", "feat/z", "--project", s.project]);
+  assert.equal(wrong.code, 1);
+  assert.match(wrong.err, new RegExp(`--project ${s.project} doesn't define bot ${ID.dev}, which t1 plays .*it's defined in ${b}\\.`));
+  assert.equal(s.runs().length, 2, "the refused call ran nothing");
+});
+
+test("worker: the pane's Herdr space names its project when the agent's folder doesn't", (t) => {
+  const s = scene(t, { file: withoutDev() });
+  const b = otherProject(s, "b", devOnly());
+  // t1 works outside any project; t2, in its space, works in B.
+  moveForeground(s, "t1", s.root, { "herdr.space": "w9" });
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t2"), { cwd: b, labels: { "herdr.space": "w9" } });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["worker", "fix it", "--branch", "feat/x", "--json"], { cwd: s.root });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().worktree, join(b, ".claude/worktrees/feat-x"));
+});
+
+test("worker: two projects defining the calling bot are refused with both listed; --project picks one", (t) => {
+  const s = scene(t); // A defines Dev
+  const b = otherProject(s, "b", devOnly()); // so does B
+  moveForeground(s, "t1", b);
+  const r = s.cli(["worker", "fix it", "--branch", "feat/x"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, new RegExp(`t1 plays bot ${ID.dev}, which 2 projects define: ${b}, ${s.project}\\. Pick its project with --project`));
+  assert.equal(s.runs().length, 0);
+  assert.equal(existsSync(join(s.project, ".claude/worktrees")) || existsSync(join(b, ".claude/worktrees")), false, "no worktree made");
+  const picked = s.cli(["worker", "fix it", "--branch", "feat/x", "--project", s.project, "--json"]);
+  assert.equal(picked.code, 0, picked.err);
+  assert.equal(picked.json().worktree, join(s.project, ".claude/worktrees/feat-x"));
 });

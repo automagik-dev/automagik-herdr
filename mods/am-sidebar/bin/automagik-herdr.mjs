@@ -27,13 +27,13 @@ import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, shownModel, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, LEDGER_FILE, ROLES, TASK_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE, baseCandidates,
-  branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan,
+  branchSlug, ledgerLine, ledgerPath, optionLike, parseWorktrees, readLedger, startRow, TEMPLATE_SHAPE, templateAgent, workerArgs, workerPlan,
   workerRole, worktreeFolder, writesWorktree } from "../workers.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
-import { plan as tidyPlan, planText } from "../tidy.js";
+import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState } from "./state.mjs";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
@@ -961,7 +961,61 @@ async function cmdBrief(opts, [ref]) {
 
 // ---- workers: a bot's one worker per task ----
 
-/** The bot whose pane runs this command: { me (hc get), bot, project }. Anyone else is refused. */
+/**
+ * The folders that may hold the calling pane's project, most telling first: its foreground's
+ * folder (where the agent works now), the folders of the other terminals in its Herdr space
+ * (one space = one project; the sidebar's own rule, from hc alone so no window is needed),
+ * its launch folder, this command's folder, the project its last seat row (start/attach) for
+ * this bot names, then the remembered projects. Hints only: callingBot keeps the ones whose
+ * bots file defines the bot.
+ */
+async function botProjectHints(me, address, botId) {
+  const hints = [me.foreground?.cwd];
+  const space = me.labels?.[SPACE_LABEL];
+  if (space) {
+    try {
+      const peers = rowsOf(await hcJson(["ls", "--label", `${SPACE_LABEL}=${space}`]));
+      hints.push(...peers.filter((r) => local(r?.address) && r.address !== address && r.state === "live").map((r) => r.cwd));
+    } catch { /* hc ls failing: the space gives no hint */ }
+  }
+  hints.push(me.cwd, process.cwd());
+  let seat = null;
+  try {
+    for (const row of readLedger(readText(ledgerPath(appHome())))) {
+      if (row.event === "start" && row.kind === "seat" && row.terminal === address && row.botId === botId) seat = row;
+    }
+  } catch { /* no ledger: no hint */ }
+  hints.push(seat?.worktree);
+  return [...hints.filter((h) => typeof h === "string" && h.startsWith("/")), ...rememberedKeys()];
+}
+
+/**
+ * The projects among `folders` whose bots file defines `botId`, in the folders' order, each
+ * once: [{ key, project, bot }]. A folder gone, outside any project or with a bots file that
+ * doesn't parse is skipped (another project's broken file never blocks this bot).
+ */
+async function projectsDefining(botId, folders) {
+  const seen = new Set();
+  const found = [];
+  for (const folder of folders) {
+    let key;
+    try { key = await keyOf(folder); } catch { continue; }
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    let project;
+    try { project = loadProject(key); } catch { continue; }
+    const bot = project.file.bots.find((b) => b.id === botId);
+    if (bot) found.push({ key, project, bot });
+  }
+  return { found, looked: [...seen] };
+}
+
+/**
+ * The bot whose pane runs this command: { me (hc get), bot, project }. Anyone else is refused.
+ * The bot is the pane's `bot` label (a detached pane plays none); its project is the one whose
+ * bots file defines it: `--project` when that one does, else the one project among the hints
+ * (botProjectHints) that does. Two projects defining it are refused, never chosen between.
+ */
 async function callingBot(opts) {
   const self = process.env.HC_TERMINAL_ID;
   if (!self) throw new CliError("Only a bot starts workers, from its own pane: HC_TERMINAL_ID isn't set here, so this isn't a bot's pane.");
@@ -970,16 +1024,34 @@ async function callingBot(opts) {
   const address = me.address ?? self;
   const botId = me.labels?.[BOT_LABEL];
   if (!botId) throw new CliError(`${address} isn't a bot's pane (it has no ${BOT_LABEL} label). Only a bot starts workers.`);
-  const key = await keyOf(me.cwd ?? me.foreground?.cwd ?? process.cwd());
-  if (opts.project !== undefined) {
-    const named = await namedKeyOf(opts.project);
-    if (named !== key) throw new CliError(`--project ${named} isn't the project of ${address}, ${key}. A bot starts workers only in its own project.`);
+  const named = opts.project !== undefined ? await namedKeyOf(opts.project) : null;
+  // The named project as namedKeyOf keys it (never a parent's); its bots file must parse.
+  let hit = null;
+  if (named) {
+    const project = loadProject(named);
+    const bot = project.file.bots.find((b) => b.id === botId);
+    if (bot) hit = { key: named, project, bot };
   }
-  const project = loadProject(key);
-  const bot = project.file.bots.find((b) => b.id === botId);
-  if (!bot) throw new CliError(`${address} plays bot ${botId}, which ${under(key, BOTS_PATH)} doesn't define. A bot starts workers only in its own project.`);
-  if (bot.planned) throw new CliError(`${bot.name} is planned; a planned bot starts no workers.`);
-  return { me: { ...me, address }, bot, project };
+  if (!hit) {
+    const { found, looked } = await projectsDefining(botId, await botProjectHints(me, address, botId));
+    const defining = found.filter((f) => f.key !== named);
+    if (named) {
+      const which = defining.length ? `it's defined in ${defining.map((f) => f.key).join(" and ")}` : "no project here defines it";
+      throw new CliError(`--project ${named} doesn't define bot ${botId}, which ${address} plays (${under(named, BOTS_PATH)}); ${which}. `
+        + "A bot starts workers only in its own project.");
+    }
+    if (defining.length > 1) {
+      throw new CliError(`${address} plays bot ${botId}, which ${defining.length} projects define: ${defining.map((f) => f.key).join(", ")}. `
+        + "Pick its project with --project <folder>.");
+    }
+    if (!defining.length) {
+      throw new CliError(`${address} plays bot ${botId}, which no project here defines (looked in ${looked.join(", ") || "none"}). `
+        + "A bot starts workers only in its own project.");
+    }
+    hit = defining[0];
+  }
+  if (hit.bot.planned) throw new CliError(`${hit.bot.name} is planned; a planned bot starts no workers.`);
+  return { me: { ...me, address }, bot: hit.bot, project: hit.project };
 }
 
 const realDir = (p) => { try { return realpathSync(p); } catch { return null; } };
