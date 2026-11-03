@@ -173,6 +173,35 @@ export function placeTrees(orderedSpaceIds, trees) {
   return { at, rest: trees.map(projectId).filter((id) => !placed.has(id)) };
 }
 
+/**
+ * Where each placed project's tree is (`at` from placeTrees) as an index into the same space
+ * list: the place withSpaceless puts the project back at once its last space closes.
+ */
+export function placesOf(orderedSpaceIds, at) {
+  const out = new Map();
+  orderedSpaceIds.forEach((sid, i) => { if (at.has(sid)) out.set(at.get(sid), i); });
+  return out;
+}
+
+/**
+ * One sidebar list with its spaceless projects in it (A8): each where its space last was
+ * (`last`: Map<project id, index> from placesOf), else right after the open spaces. Returns
+ * the drawing order as { space: id } and { project: id } items.
+ */
+export function withSpaceless(orderedSpaceIds, spaceless, last = new Map()) {
+  const n = orderedSpaceIds.length;
+  // Two at one place keep their remembered order, then the order they came in.
+  const pending = spaceless.map((id, i) => ({ id, i, was: last.get(id) ?? Infinity, at: Math.min(last.get(id) ?? n, n) }))
+    .sort((a, b) => a.at - b.at || (a.was === b.was ? 0 : a.was < b.was ? -1 : 1) || a.i - b.i);
+  const out = [];
+  let k = 0;
+  for (let s = 0; s <= n; s += 1) {
+    while (k < pending.length && pending[k].at === s) out.push({ project: pending[k++].id });
+    if (s < n) out.push({ space: orderedSpaceIds[s] });
+  }
+  return out;
+}
+
 /** The fold id of a bot row, or of a project's category. */
 export const botFold = (botId) => `b:${botId}`;
 export const categoryFold = (tree, categoryId) => `c:${projectId(tree)}:${categoryId}`;

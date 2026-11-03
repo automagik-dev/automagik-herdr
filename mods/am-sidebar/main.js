@@ -23,11 +23,11 @@ import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./up
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
 import { parseMarker } from "./release.js";
 import { meterScope } from "./meterFleet.js";
-import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
+import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -227,6 +227,9 @@ export default class Spaces extends View {
     this.open = new Map();
     this.hoverRow = null;
     this.trees = [];
+    // Per project id, from the last draw that showed its space: its index in its sidebar
+    // list, where its rows stay once that space closes.
+    this.places = new Map();
     this.botOf = new Map(); // terminal address -> bot id
     this.pets = new Set();
     this.petsWanted = new Map(); // file -> { look, pose, dark }
@@ -677,12 +680,39 @@ export default class Spaces extends View {
     return h_flex().items_stretch().children(this.guides(r.guides, t)).child(styled);
   }
 
-  // A project with no open space (A8): its tree at the end, under a plain header.
+  // A project with no open space (A8): its tree where its space was, under a plain header
+  // with Start on the main bot (Start opens a space on the project).
   projectHeader(tree, t) {
+    const b = this.startable(tree);
     return h_flex().id(`project-${projectId(tree)}`).h(28).mt(6).px(8).gap(8).items_center().text_size(12).text_color(t.dim)
       .child(svg("mods/workspace-chrome/folder.svg").size(13).flex_none())
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(base(tree.key)))
-      .when(Boolean(tree.machine), (el) => el.child(div().flex_none().text_size(10).child(tree.machine)));
+      .when(Boolean(tree.machine), (el) => el.child(div().flex_none().text_size(10).child(tree.machine)))
+      .when(Boolean(b), (el) => el.child(div().id(`project-start-${projectId(tree)}`).flex_none().px(7).py(1).rounded(999)
+        .border_1().border_color(t.border).text_size(11).text_color(t.muted).cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => this.startFromRow(b.id, cx)).child("Start")));
+  }
+
+  // The same project while the sidebar is narrow: its main bot; a click starts it.
+  compactProject(tree, t, dark) {
+    const b = this.startable(tree), main = tree.main;
+    return h_flex().id(`project-${projectId(tree)}`).h(26).flex_none().justify_center().items_center().hover((s) => s.bg(t.hover))
+      .tooltip(main ? `${main.bot.name} · ${base(tree.key)}` : base(tree.key))
+      .when(Boolean(b), (el) => el.cursor_pointer().on_click((_e, cx) => this.startFromRow(b.id, cx)))
+      .child(main ? this.pet(main.bot, main.pose, 18, dark) : svg("mods/workspace-chrome/folder.svg").size(13).flex_none());
+  }
+
+  // The bot a spaceless project's Start starts: its main bot, on this computer, not live.
+  startable(tree) {
+    const n = tree.main;
+    return !tree.machine && n && !n.planned && !n.live ? n.bot : null;
+  }
+
+  startFromRow(bot, cx) {
+    cx.spawn(async (cx) => {
+      try { await this.botCommand("start", { bot }, cx); } catch (e) { notify({ title: "Bots", body: String(e?.message ?? e), level: "error" }); }
+    });
   }
 
   checkNew(cx) {
@@ -792,7 +822,8 @@ export default class Spaces extends View {
     const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
     const project = this.bots.find(has) ?? (await discoverProjects()).find(has);
     if (!project) return notify({ title, body: `No project on this computer defines ${bot}.`, level: "warning" });
-    const r = c === "start" ? await startBot(project.key, bot) : await attachBot(project.key, bot, terminal);
+    // Start opens a space on the project when none is open (sleepOf: to wait for it).
+    const r = c === "start" ? await startBot(project.key, bot, { sleep: sleepOf(cx) }) : await attachBot(project.key, bot, terminal);
     if (r.refused) notify({ title, body: r.refused, level: "warning", timeout: 12000 });
     this.refreshBots(cx);
   }
@@ -992,13 +1023,20 @@ export default class Spaces extends View {
   grouped(t, collapsed) {
     const rows = this.ordered();
     // A8: each project's bot tree after the first space row of it, in this order; a project
-    // with no space shown, at the end under a plain header. None while the sidebar is narrow.
+    // with no space shown stays where its space last was in its machine's list (else right
+    // after the open spaces) under a plain header; one compact row while the sidebar is narrow.
     const dark = isDark(t.chrome);
     const { at, rest } = placeTrees(rows.map((r) => r.w.id), this.trees);
     const byId = new Map(this.trees.map((tr) => [projectId(tr), tr]));
     const treeRows = (tree) => spaceRowOrder({ tree, open: this.open }).map((d) => d.row);
-    const tail = collapsed ? [] : rest.flatMap((id) => [this.projectHeader(byId.get(id), t),
-      ...this.botBlock(byId.get(id), t, dark, treeRows(byId.get(id)))]);
+    const spaceless = (tree) => (collapsed ? [this.compactProject(tree, t, dark)]
+      : [this.projectHeader(tree, t), ...this.botBlock(tree, t, dark, treeRows(tree))]);
+    const list = (mine, m) => {
+      const ids = mine.map((r) => r.w.id), rowOf = new Map(mine.map((r) => [r.w.id, r]));
+      for (const [id, i] of placesOf(ids, at)) this.places.set(id, i);
+      const orphans = rest.filter((id) => (byId.get(id).machine ?? null) === m);
+      return withSpaceless(ids, orphans, this.places).flatMap((x) => (x.space ? draw(rowOf.get(x.space)) : spaceless(byId.get(x.project))));
+    };
     // A space's row, then (expanded) its rows in R3 order (spaceRowOrder): the bot tree placed
     // there, then its plain agents with their sub-agents. Built in that order, so this.order
     // (agent cycling) follows the drawn order.
@@ -1023,8 +1061,9 @@ export default class Spaces extends View {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : [...rows.flatMap(draw), ...tail];
     const machineNames = [null, ...remote];
+    const tail = rest.filter((id) => !machineNames.includes(byId.get(id).machine ?? null)).flatMap((id) => spaceless(byId.get(id)));
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : [...list(rows, null), ...tail];
     return [...machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const machine = this.machines.find(k => k.name === m);
@@ -1048,7 +1087,7 @@ export default class Spaces extends View {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/workspace-chrome/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
-      return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
+      return [head, ...(folded ? [] : [...(mine.length ? [] : [loading(m) ? loadingRow(m) : empty]), ...list(mine, m)])];
     }), ...tail];
   }
 

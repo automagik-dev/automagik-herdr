@@ -238,6 +238,8 @@ automagik-herdr update [--check | --rollback]
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
   in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
   pane as its parent. A running bot is not started twice.
+  The pane opens in the space showing the project; with none open, `start` opens one on the
+  project folder (`--space`/`--tab` pick the place instead).
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports

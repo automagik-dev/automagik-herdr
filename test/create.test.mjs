@@ -262,6 +262,28 @@ test("Bot settings (pick) with bots: the bots with Edit / Start, no New bot line
   assert.ok(nodes.has(`pick-${MAIN.id}`) && nodes.has(`edit-${OMP.id}`) && nodes.has(`start-${OMP.id}`));
 });
 
+test("Start in Bot settings with no space on the project: one space opened, waited for on the form's timer, the bot sent there", async () => {
+  // Start runs the CLI with the place the sidebar picked; this scratch app home has no CLI, so
+  // only that call is checked (the CLI's own start is tested in cli.test.mjs).
+  state.calls = [];
+  // Herdr shows the space a little after space.new.
+  state.runFault = (name) => {
+    if (name === "space.new") setTimeout(() => { state.spaces = [{ id: "s5", folder: project, machine: null, active: true, tabs: [{ id: "t5", active: true }] }]; }, 30);
+  };
+  seed([MAIN]);
+  // Its space closed: the project is found as a remembered one.
+  state.shared.set("am.sidebar.projects", [{ key: project, machine: null }]);
+  try {
+    const { cx, draw, click } = await open({ form: "pick" });
+    cx.timer = { after(ms, fn) { setTimeout(() => fn(cx), ms); } };
+    draw();
+    await click(`start-${MAIN.id}`);
+  } finally { state.runFault = null; state.shared.delete("am.sidebar.projects"); }
+  assert.equal(state.runs.filter(([name]) => name === "space.new").length, 1);
+  const cli = state.calls.find((c) => c.kind === "exec" && c.args.includes("start")).args;
+  assert.deepEqual(cli.slice(cli.indexOf("--space"), cli.indexOf("--space") + 4), ["--space", "s5", "--tab", "t5"]);
+});
+
 test("Attach with no bot keeps its message (the New bot line is the pick list's alone)", async () => {
   state.spaces = [{ id: "s1", folder: project, machine: null }];
   seed([]);
