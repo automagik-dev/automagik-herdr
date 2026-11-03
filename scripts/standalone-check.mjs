@@ -21,7 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -55,14 +55,19 @@ const INSTALLER = /data\/am-mods|catalog\.json|\bownership\b|mod-manager/;
 export const REVIEWED = {
   "am-footer": [
     { dep: "exec node", soft: "runs only after the pocket-link probe found Pocket Link (main.js:104-111)" },
+    { dep: "file ~/.local/state", soft: "Pocket Link's status folder, in that node script (main.js:16)" },
   ],
-  "am-sidebar": [
-    { dep: "net configured endpoint", drop: "update.mjs downloads the GitHub URLs that release.js names" },
+  "am-automations": [
+    { dep: "file ~/Projects/myapp", drop: "the repo field's placeholder text, never read" },
   ],
 };
 
-/** A line that is only a comment (`//`, `/*`, ` * `): its words are prose, not references. */
-const commentLine = (line) => /^\s*(\/\/|\/\*|\*)/.test(line);
+/** A line that is only a comment (`//`, `/*`, ` * `; `#` in a shell script): prose, not references. */
+const commentLine = (line, shell) => (shell ? /^\s*#/ : /^\s*(\/\/|\/\*|\*)/).test(line);
+/** A call that starts a program: Herdr's exec, an injected io.exec, or node:child_process (not `re.exec`). */
+const EXEC = String.raw`(?:(?<![\w$.])|\bio\.)(?:exec|execFile|execFileSync|spawn|spawnSync)\(\s*`;
+/** Programs a shell script may start that come from outside the system. */
+const SHELL_PROGRAMS = /(?:^|[\s;|&(`])(node|bun|hc|herdr-core|usagemeter|curl|wget|gh|security)(?=[\s;|&)`]|$)/g;
 
 /**
  * What one mod reaches outside its own folder, from its source text.
@@ -72,12 +77,15 @@ const commentLine = (line) => /^\s*(\/\/|\/\*|\*)/.test(line);
  */
 export function scanMod(self, files) {
   const refs = [];
-  const add = (kind, target, at, soft = false) => refs.push({ kind, target, at, soft });
+  // `touch`: listed for the reader (a system program, a file in the app home), not a dependency.
+  const add = (kind, target, at, soft = false, touch = false) => refs.push({ kind, target, at, soft, touch });
   for (const [file, text] of Object.entries(files)) {
     const lines = text.split("\n");
-    const hasHost = /https?:\/\/(?!www\.w3\.org)[A-Za-z0-9]/.test(text);
-    lines.forEach((line, i) => {
-      if (commentLine(line)) return;
+    const shell = file.endsWith(".sh");
+    lines.forEach((full, i) => {
+      if (commentLine(full, shell)) return;
+      // A shell script's echo/printf is a message to the person: its words start nothing.
+      const line = shell ? full.replace(/(?:^|[;&|]\s*)(?:echo|printf)\s.*$/, "") : full;
       const at = `${file}:${i + 1}`;
       const mod = (name, soft = false) => {
         if (name !== self && !BUILTIN_MODS.has(name)) add("mod", name, at, soft);
@@ -102,19 +110,43 @@ export function scanMod(self, files) {
       }
       // herdr-core: the `hc(...)` call Herdr's module exports, or the program itself.
       if (/(?<![\w.$])hc\(\s*\[/.test(line)) add("hc", "hc", at);
-      // Programs executed: through Herdr's exec, an injected io.exec, or node:child_process.
-      for (const m of line.matchAll(/\b(?:exec|execFile|execFileSync|spawn|spawnSync)\(\s*["'`]([A-Za-z0-9._-]+)["'`]/g)) {
+      // Programs executed. Every one is listed: one from outside the system is a dependency, a
+      // system program, a `sh -c` script or a program named at run time is listed under "runs".
+      for (const m of line.matchAll(new RegExp(`${EXEC}["'\`]([A-Za-z0-9._-]+)["'\`](\\s*,\\s*\\[\\s*["'\`]-c["'\`])?`, "g"))) {
         const prog = m[1];
         if (prog === "hc" || prog === "herdr-core") add("hc", prog, at);
         else if (!SYSTEM_PROGRAMS.has(prog)) add("exec", prog, at);
+        else add("run", m[2] && prog === "sh" ? "sh -c" : prog, at, false, true);
+      }
+      for (const m of line.matchAll(new RegExp(`${EXEC}([A-Za-z_$][\\w$.]*)\\s*[,)]`, "g"))) {
+        add("run", `program from ${m[1]}`, at, false, true);
+      }
+      if (shell) {
+        for (const m of line.matchAll(SHELL_PROGRAMS)) {
+          if (m[1] === "hc" || m[1] === "herdr-core") add("hc", m[1], at);
+          else add("exec", m[1], at);
+        }
       }
       if (/\busagemeter\b/.test(line)) add("exec", "usagemeter", at);
-      // Network hosts, by literal URL; a fetch of a computed URL in a file with no literal host is
-      // an endpoint the person configures (a private server, until shown otherwise).
+      // Network: every literal host, and every fetch of a URL computed at run time (where it
+      // points cannot be read from the source: a configured server until a reader shows otherwise).
       for (const m of line.matchAll(/https?:\/\/([A-Za-z0-9.-]+)/g)) {
         if (!NOT_HOSTS.has(m[1])) add("net", m[1], at);
       }
-      if (!hasHost && /\bfetch\(\s*[^"'\s)]/.test(line)) add("net", "configured endpoint", at);
+      if (/\bfetch\(\s*[^"'\s)]/.test(line)) add("net", "computed URL", at);
+      // Files outside the mod folder: under the person's home (a dependency: another tool's state)
+      // or elsewhere in the app home (listed under "runs").
+      // `home()`/`homedir()` is the person's home; a plain `home` may be either, so only its
+      // dot-folders (~/.config, ~/.codex …) count.
+      const homeFiles = shell
+        ? [...line.matchAll(/(?:\$HOME|\$\{HOME\}|~)(\/[\w.-][\w.\/-]*)/g)]
+        : [...line.matchAll(/["'`]~(\/[\w.-][^"'`]*)/g), ...line.matchAll(/\$\{home(?:dir)?\(\)\}(\/[^"'`$]*)/g),
+          ...line.matchAll(/\$\{home\}(\/\.[^"'`$]*)/g),
+          ...line.matchAll(/join\(\s*home(?:dir)?\(\)\s*,\s*["'`]([^"'`]+)/g), ...line.matchAll(/join\(\s*home\s*,\s*["'`](\.[^"'`]+)/g)];
+      for (const m of homeFiles) add("file", `~${m[1].startsWith("/") ? "" : "/"}${m[1].replace(/[.,]+$/, "")}`, at);
+      for (const m of line.matchAll(/\$\{appHome(?:\(\))?\}\/([^"'`\s]*)/g)) {
+        if (!m[1].startsWith("mods")) add("file", `<app home>/${m[1]}`, at, false, true);
+      }
       // Installer state: the pack installer's catalog and ownership record.
       const inst = INSTALLER.exec(line);
       if (inst) add("installer", inst[0], at);
@@ -124,9 +156,8 @@ export function scanMod(self, files) {
 }
 
 /** One line per distinct dependency: `mod am-new-menu (main.js:164)`. */
-const label = (r) => r.kind === "mod" || r.kind === "node" || r.kind === "net" || r.kind === "exec" || r.kind === "installer"
-  ? `${r.kind === "installer" ? "installer state" : r.kind} ${r.target}`
-  : r.target;
+const label = (r) => r.kind === "hc" || r.kind === "run" ? r.target
+  : `${r.kind === "installer" ? "installer state" : r.kind} ${r.target}`;
 
 /**
  * The distinct dependencies of a scan, hard and optional, each with its first location. A mod the
@@ -139,34 +170,34 @@ export function summarize(input, reviewed = []) {
   const refs = input
     .map((r) => ({ ...r, soft: r.soft || (r.kind === "mod" && probed.has(r.target)) || Boolean(verdicts.get(label(r))?.soft) }))
     .filter((r) => !verdicts.get(label(r))?.drop);
-  const hard = new Map(), soft = new Map();
-  for (const r of refs) {
-    const key = label(r);
-    if (!r.soft) hard.has(key) || hard.set(key, r.at);
-  }
-  for (const r of refs) {
-    const key = label(r);
-    if (r.soft && !hard.has(key)) soft.has(key) || soft.set(key, r.at);
-  }
+  const hard = new Map(), soft = new Map(), touches = new Map();
+  const put = (m, r) => m.has(label(r)) || m.set(label(r), r.at);
+  for (const r of refs) if (r.touch) put(touches, r);
+  for (const r of refs) if (!r.touch && !r.soft) put(hard, r);
+  for (const r of refs) if (!r.touch && r.soft && !hard.has(label(r))) put(soft, r);
   const list = (m) => [...m].map(([dep, at]) => ({ dep, at }));
-  return { hard: list(hard), optional: list(soft) };
+  return { hard: list(hard), optional: list(soft), touches: list(touches) };
 }
 
-/** `standalone` when the check did not fail and nothing hard is reached; otherwise what it needs. */
+/**
+ * What the mod needs; `standalone` only when nothing hard is reached AND herdr-app check really ran
+ * and passed. With the check skipped, a clean scan is `standalone (unchecked)`.
+ */
 export function verdictOf(check, hard) {
   const needs = hard.map((h) => h.dep);
   if (check.status === "fail") needs.unshift("a passing check");
-  return needs.length ? `needs ${needs.join(", ")}` : "standalone";
+  if (needs.length) return `needs ${needs.join(", ")}`;
+  return check.status === "pass" ? "standalone" : "standalone (unchecked)";
 }
 
-/** The mod's .js/.mjs files, relative to its folder. */
+/** The mod's .js/.mjs/.sh files, relative to its folder. */
 function sources(dir) {
   const out = {};
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) walk(p);
-      else if (/\.(m?js)$/.test(e.name)) out[relative(dir, p)] = readFileSync(p, "utf8");
+      else if (/\.(m?js|sh)$/.test(e.name)) out[relative(dir, p)] = readFileSync(p, "utf8");
     }
   };
   walk(dir);
@@ -198,15 +229,31 @@ function checkAlone(app, name, runDir) {
   return { status: "fail", detail: first.replaceAll(home, "<home>") };
 }
 
-/** The folder scratch homes go under; the real app home is refused. */
-export function scratchBase(env = process.env) {
-  const base = resolve(env.HERDR_APP_HOME || tmpdir());
-  const real = resolve(homedir(), ".config/herdr-app");
-  const same = (a, b) => {
-    try { return realpathSync(a) === realpathSync(b); } catch { return a === b; }
-  };
-  if (same(base, real) || base === resolve(homedir())) {
-    throw new Error(`refusing to use ${base}: set HERDR_APP_HOME to a scratch folder, never the real app home`);
+/** A path with its existing part resolved through symlinks (the rest need not exist yet). */
+function real(p) {
+  const rest = [];
+  let at = resolve(p);
+  for (;;) {
+    try { return join(realpathSync(at), ...rest.reverse()); } catch {}
+    const up = dirname(at);
+    if (up === at) return resolve(p);
+    rest.push(basename(at));
+    at = up;
+  }
+}
+
+/** Whether `p` is `dir` or anything inside it. */
+const within = (p, dir) => p === dir || p.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+
+/**
+ * The folder scratch homes go under. Refused: the home folder itself, and the real app home or
+ * anything inside it (HERDR_APP_HOME=~/.config/herdr-app/mods would copy mods into the live ones).
+ */
+export function scratchBase(env = process.env, home = homedir()) {
+  const base = real(env.HERDR_APP_HOME || tmpdir());
+  const appHome = real(join(home, ".config/herdr-app"));
+  if (base === real(home) || within(base, appHome)) {
+    throw new Error(`refusing to use ${base}: set HERDR_APP_HOME to a scratch folder, never the real app home or your home folder`);
   }
   return base;
 }
@@ -225,8 +272,8 @@ export function run({ check = true, keep = false, env = process.env } = {}) {
   try {
     const rows = names.map((name) => {
       const c = app ? checkAlone(app, name, runDir) : { status: "skipped", detail: skipped };
-      const { hard, optional } = summarize(scanMod(name, sources(join(MODS, name))), REVIEWED[name]);
-      return { mod: name, check: c, hard, optional, verdict: verdictOf(c, hard) };
+      const { hard, optional, touches } = summarize(scanMod(name, sources(join(MODS, name))), REVIEWED[name]);
+      return { mod: name, check: c, hard, optional, runs: touches, verdict: verdictOf(c, hard) };
     });
     return { herdrApp: app?.version ?? null, skipped: app ? null : skipped, rows };
   } finally {
@@ -241,13 +288,13 @@ export function table({ herdrApp, skipped, rows }) {
   const out = [
     herdrApp ? `checked with ${herdrApp}, each mod alone in an empty app home` : `herdr-app check ${skipped}`,
     "",
-    "| mod | check | hard deps | optional (probed) | verdict |",
-    "| --- | --- | --- | --- | --- |",
+    "| mod | check | hard deps | optional (probed) | runs (system programs, app-home files) | verdict |",
+    "| --- | --- | --- | --- | --- | --- |",
   ];
   for (const r of rows) {
     const check = r.check.status === "fail" ? `FAIL: ${r.check.detail}` : r.check.status === "skipped" ? "skipped" : "pass";
     const deps = (l) => (l.length ? l.map((d) => `${d.dep} (${d.at})`).join("<br>") : "—");
-    out.push(`| ${r.mod} | ${cell(check)} | ${cell(deps(r.hard))} | ${cell(deps(r.optional))} | ${cell(r.verdict)} |`);
+    out.push(`| ${r.mod} | ${cell(check)} | ${cell(deps(r.hard))} | ${cell(deps(r.optional))} | ${cell(deps(r.runs))} | ${cell(r.verdict)} |`);
   }
   return out.join("\n");
 }

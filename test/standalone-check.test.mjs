@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,7 +14,7 @@ const SCRIPT = new URL("../scripts/standalone-check.mjs", import.meta.url).pathn
 const MODS = new URL("../mods/", import.meta.url).pathname;
 const AM = readdirSync(MODS).filter((n) => n.startsWith("am-") && statSync(join(MODS, n)).isDirectory()).sort();
 
-const deps = (self, text, reviewed) => summarize(scanMod(self, { "main.js": text }), reviewed);
+const deps = (self, text, reviewed, file = "main.js") => summarize(scanMod(self, { [file]: text }), reviewed);
 
 test("scan: another mod, opened as an overlay, a tab, by mod.open or by path, is a hard dependency", () => {
   const { hard } = deps("am-x", [
@@ -66,12 +66,45 @@ test("scan: hc, programs other than the system's, usagemeter, hosts and installe
     'const URL = "https://api.github.com/repos"; const ns = "http://www.w3.org/2000/svg";',
     'const p = `${appHome}/data/am-mods/catalog.json`;',
   ].join("\n"));
-  assert.deepEqual(hard.map((d) => d.dep), ["hc", "exec herdr-automations", "exec usagemeter", "net api.github.com", "installer state data/am-mods"]);
+  assert.deepEqual(hard.map((d) => d.dep), ["hc", "exec herdr-automations", "exec usagemeter", "file ~/.local/bin/usagemeter", "net api.github.com", "installer state data/am-mods"]);
 });
 
-test("scan: a fetch of a computed URL, in a file naming no host, is a configured endpoint", () => {
-  assert.deepEqual(deps("am-x", "const res = await fetch(`${root}${path}`);").hard.map((d) => d.dep), ["net configured endpoint"]);
-  assert.deepEqual(deps("am-x", 'const U = "https://x.dev/a";\nawait fetch(U);').hard.map((d) => d.dep), ["net x.dev"]);
+test("scan: a fetch of a computed URL is reported, also in a file that names a host", () => {
+  assert.deepEqual(deps("am-x", "const res = await fetch(`${root}${path}`);").hard.map((d) => d.dep), ["net computed URL"]);
+  assert.deepEqual(deps("am-x", 'const U = "https://x.dev/a";\nawait fetch(U);').hard.map((d) => d.dep), ["net x.dev", "net computed URL"]);
+});
+
+test("scan: every program run is listed; system ones, sh -c and run-time names under runs", () => {
+  const { hard, touches } = deps("am-x", [
+    'await exec("sh", ["-c", script, "sh", dir]);',
+    'await exec("git", ["status"]); await exec("wc", ["-c", p]);',
+    'const r = await exec(this.bin, args); await io.exec(cmd, args, opts);',
+    'const m = /^(a)$/.exec(p); const n = RE.exec("x");',
+  ].join("\n"));
+  assert.deepEqual(hard, []);
+  assert.deepEqual(touches.map((d) => d.dep), ["sh -c", "git", "wc", "program from this.bin", "program from cmd"]);
+});
+
+test("scan: a shell script's programs, hosts and home paths count; its comments and messages do not", () => {
+  const { hard } = deps("am-x", [
+    "# node and curl https://comment.dev, ~/.nope",
+    'command -v node >/dev/null && exec node "$@"',
+    'for d in "$HOME/.nvm/versions"; do :; done',
+    'echo "none in ~/.bun/bin: curl -fsSL https://bun.sh/install | bash" >&2',
+    'hc read "$t"',
+  ].join("\n"), [], "bin/run.sh");
+  assert.deepEqual(hard.map((d) => d.dep), ["exec node", "file ~/.nvm/versions", "hc"]);
+});
+
+test("scan: files under the person's home are dependencies; other app-home files are listed under runs", () => {
+  const { hard, touches } = deps("am-x", [
+    'const KEY = "~/.config/tool/key"; const t = p.startsWith("~/");',
+    'const a = `${home()}/.codex/auth.json`; const b = `${home}/.claude`; const c = `${home}/layouts`;',
+    'const d = join(homedir(), "notes.txt"); const e = join(home, ".local/state");',
+    'readTextFile(`${appHome()}/cliproxy.json`); readTextFile(`${appHome()}/mods/am-x/x.json`);',
+  ].join("\n"));
+  assert.deepEqual(hard.map((d) => d.dep), ["file ~/.config/tool/key", "file ~/.codex/auth.json", "file ~/.claude", "file ~/notes.txt", "file ~/.local/state"]);
+  assert.deepEqual(touches.map((d) => d.dep), ["file <app home>/cliproxy.json"]);
 });
 
 test("scan: comment lines are prose, not references", () => {
@@ -83,9 +116,9 @@ test("scan: comment lines are prose, not references", () => {
   assert.deepEqual(hard, []);
 });
 
-test("verdict: standalone only with no hard dependency and no failed check", () => {
+test("verdict: standalone only with no hard dependency and a check that ran and passed", () => {
   assert.equal(verdictOf({ status: "pass" }, []), "standalone");
-  assert.equal(verdictOf({ status: "skipped" }, []), "standalone");
+  assert.equal(verdictOf({ status: "skipped" }, []), "standalone (unchecked)");
   assert.equal(verdictOf({ status: "fail" }, []), "needs a passing check");
   assert.equal(verdictOf({ status: "pass" }, [{ dep: "mod am-new-menu" }, { dep: "hc" }]), "needs mod am-new-menu, hc");
 });
@@ -99,20 +132,30 @@ test("REVIEWED: every entry names a mod and still matches what its scan finds", 
       for (const e of readdirSync(d, { withFileTypes: true })) {
         const r = rel ? `${rel}/${e.name}` : e.name;
         if (e.isDirectory()) walk(join(d, e.name), r);
-        else if (/\.m?js$/.test(e.name)) files[r] = readFileSync(join(d, e.name), "utf8");
+        else if (/\.(m?js|sh)$/.test(e.name)) files[r] = readFileSync(join(d, e.name), "utf8");
       }
     };
     walk(join(MODS, mod));
-    const { hard, optional } = summarize(scanMod(mod, files));
-    const found = [...hard, ...optional].map((d) => d.dep);
+    const { hard, optional, touches } = summarize(scanMod(mod, files));
+    const found = [...hard, ...optional, ...touches].map((d) => d.dep);
     for (const e of entries) assert.ok(found.includes(e.dep), `${mod}: reviewed "${e.dep}" is no longer found`);
   }
 });
 
-test("scratch base: the real app home and the home folder are refused", () => {
+test("scratch base: the home folder, the real app home and anything inside it are refused", (t) => {
   assert.throws(() => scratchBase({ HERDR_APP_HOME: join(homedir(), ".config/herdr-app") }), /refusing/);
+  assert.throws(() => scratchBase({ HERDR_APP_HOME: join(homedir(), ".config/herdr-app/mods") }), /refusing/);
   assert.throws(() => scratchBase({ HERDR_APP_HOME: homedir() }), /refusing/);
-  assert.equal(scratchBase({ HERDR_APP_HOME: "/tmp/x" }), "/tmp/x");
+  // A stand-in home: a folder inside its app home, one not created yet, and a link into it.
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "standalone-home-")));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, ".config/herdr-app/mods"), { recursive: true });
+  symlinkSync(join(home, ".config/herdr-app/mods"), join(home, "link"));
+  for (const p of [".config/herdr-app/mods", ".config/herdr-app/new/deeper", "link", "link/x", "."]) {
+    assert.throws(() => scratchBase({ HERDR_APP_HOME: join(home, p) }, home), /refusing/, p);
+  }
+  assert.equal(scratchBase({ HERDR_APP_HOME: join(home, ".config/herdr-app-scratch") }, home), join(home, ".config/herdr-app-scratch"));
+  assert.equal(scratchBase({ HERDR_APP_HOME: join(home, "scratch") }, home), join(home, "scratch"));
 });
 
 test("the script: one row per am-* mod, in a scratch app home it leaves empty", (t) => {
@@ -129,6 +172,7 @@ test("the script: one row per am-* mod, in a scratch app home it leaves empty", 
   if (herdrApp === null) {
     t.diagnostic(`herdr-app is not installed: ${skipped}`);
     for (const row of rows) assert.equal(row.check.status, "skipped");
+    for (const row of rows) assert.ok(row.verdict !== "standalone", `${row.mod}: unchecked is never plain standalone`);
   } else {
     for (const row of rows) assert.ok(["pass", "fail"].includes(row.check.status), row.mod);
   }
