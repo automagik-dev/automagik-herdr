@@ -1,0 +1,58 @@
+Automagik Herdr pack (am-sidebar)
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This pack holds code derived from two Apache-2.0 works, listed below with their
+attributions. Every file derived from them says so at its top and says that it was
+changed; the repository history shows each change.
+
+==============================================================================
+Herdr
+==============================================================================
+
+The sidebar (main.js, mod.json) is derived from Herdr's shipped `spaces` mod,
+version 0.1.7 (Herdr, dev.herdr.app), by way of the owner's clone of it
+(mod.json `cloned_from`), licensed under the Apache License, Version 2.0
+(see LICENSE-herdr, copied from Herdr.app/Contents/Resources/LICENSE).
+Both files are changed by this pack.
+
+==============================================================================
+Automagik
+==============================================================================
+
+characters.js is derived from Automagik's apps/bots-dsh/src/client/characters.js
+and inks.js, licensed under the Apache License, Version 2.0 (see
+LICENSE-automagik). Changed by this pack. Automagik's NOTICE reads:
+
+  Automagik
+  Copyright 2026 Namastex Labs and the Automagik contributors
+
+  This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+  Each app in apps/ carries its own NOTICE with the third-party code it holds:
+
+    - apps/bots-dsh: the Bot team, built on DS Bot (https://github.com/Fei2411/DeepSeek-Bot,
+      Apache-2.0, see apps/bots-dsh/VENDORED.md), with a few lines that follow DeepSeek
+      Harness (MIT).
+
+==============================================================================
+DS Bot
+==============================================================================
+
+Automagik's character drawing, from which characters.js derives, comes from
+DS Bot (https://github.com/Fei2411/DeepSeek-Bot), licensed under the Apache
+License, Version 2.0. apps/bots-dsh/NOTICE in Automagik reads:
+
+  DS Bot
+  Copyright 2026 Fei2411 and the DS Bot contributors
+
+  This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+No code from DeepSeek Harness is in this pack.
+
+==============================================================================
+Unicode
+==============================================================================
+
+emoji-data.js (the space icon dialog) is generated from Unicode's character
+database (Python's `unicodedata`): the emoji and their names. It is not copied
+from any font or table.

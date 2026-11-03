@@ -1,0 +1,112 @@
+automagik-herdr
+Copyright 2026 Automagik
+
+The pack and its own mods are Apache-2.0 (see LICENSE). Mods derived from other works keep their
+provenance here and, for the bot mod, in its own NOTICE.
+
+Derived from Herdr's shipped mods (Herdr, Apache-2.0; the app's LICENSE is copied as
+mods/*/LICENSE where a mod derives from one; before v0.5.0 the folders were named spaces-agents,
+sidebar-chrome, md-menu, auto-tabs, new-menu-tui, mod-manager and automations, in this order):
+  mods/am-sidebar       from Herdr's `spaces` 0.1.7 — modified throughout; see its own NOTICE,
+                        LICENSE-automagik and LICENSE-herdr (the bot view, characters, form,
+                        Start/Attach, briefing and the space icon dialog are this pack's). Its layout is the root
+                        layouts/automagik.json, so Herdr does not dock a second sidebar.
+  mods/am-footer        from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg, bot.svg and layers.svg (Lucide, ISC; bot.svg as Herdr ships it in frame/welcome)
+  mods/am-markdown      from Herdr's `menu` 0.1.10, with the Markdown renderer merged in from
+                        ohneda/herdr-markdown-browser (MIT; notice below) — changed: main.js,
+                        mod.json; added: marks.js, open.js, LICENSE-upstream
+  mods/am-tabs          from Herdr's shipped `tabs` (the app's copy, 2026-11-01) — changed: main.js,
+                        mod.json; added: names.js
+  mods/am-new-menu      from Herdr's `new-menu` 0.1.7 — changed: main.js, mod.json; added: target.js,
+                        agents.js
+
+Vendored from other people's repositories (each ships under Apache-2.0 as a derived work; the
+upstream MIT copyright and permission notice are verbatim in mods/<mod>/LICENSE-upstream and
+repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is the upstream one):
+  mods/am-mods          from jacksonpires/herdr-app-mod-manager — changed: main.js, core.js,
+                        mod.json; added: RECIPE.md
+  mods/am-automations   from DnzzL/herdr-automations — changed: main.js (fork header; agent list
+                        in agents.js), mod.json (title "Automagik Automations"); added: RECIPE.md,
+                        agents.js (retired agents hidden). Code otherwise upstream.
+
+  jacksonpires/herdr-app-mod-manager:
+
+  MIT License
+
+  Copyright (c) 2026 speardragon
+  Copyright (c) 2026 Jackson Pires
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+  DnzzL/herdr-automations:
+
+  MIT License
+
+  Copyright (c) 2026 Thomas Legrand
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+  am-markdown — the Markdown preview, from ohneda/herdr-markdown-browser:
+
+  MIT License
+
+  Copyright (c) 2026 Yuichi Ohneda
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+mods/am-quota is this pack's own code, written against CLIProxyAPI's management API. The idea — a
+panel that reads each account's quota and switches the local credential — comes from
+0xRowdy/herdr-cliproxy, which publishes no licence: nothing of it is vendored, copied or
+redistributed here, and no non-trivial line of it is reused (measured by line-diff). Credit for the
+idea, not the code. Ask upstream for a licence before any reuse.
+
+Emoji data in mods/am-sidebar/emoji-data.js (the space icon dialog) is generated from Unicode's character database
+(Python's `unicodedata`), not copied from any font or table.

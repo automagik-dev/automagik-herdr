@@ -3,15 +3,28 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.2.0 or later) instead of the latest
-#   ... | bash -s -- --uninstall      put the pack that was there before back
+#   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
+#   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
+#   ... | bash -s -- --uninstall      put back what was there before
+#   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
-# downloads the release's pack and SHA256SUMS, checks the hash, and installs the pack through
-# the pack's own update.mjs (the same entry checks and kept copy as `automagik-herdr update`).
-# It adds the pack's `automagik` layout when the app home has none, and links the `automagik-herdr`
-# command into ~/.local/bin. Safe to run again. It never touches a project's .herdr/bots.json
-# or Herdr's settings. Apache-2.0.
+# downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
+# mod and layouts/automagik.json), checks the hash before anything is written, and installs every
+# pack mod through the pack's own update.mjs: each folder staged, then swapped in, the replaced
+# ones kept together in <app home>/automagik-herdr/.prev. Its ownership record (the marker)
+# lists every folder it put in mods/; only those are ever replaced. Any other folder is left
+# alone, or with --adopt moved to automagik-herdr/backup/ first. Pocket Link is never touched.
+# It merges the pack's free keys, points the mod manager at the catalog, adds the `automagik`
+# layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
+# the `automagik-herdr` command into ~/.local/bin. It installs the pinned usagemeter release (the
+# token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
+# over a newer one; a failure there is only a warning. Safe to run again: a rerun of the installed
+# release downloads it all the same, checks every installed pack file against it, reinstalls a
+# missing or damaged folder the record lists (the damaged copy kept in backup/), puts back a
+# missing automagik layout and runs `herdr-app check` again. It says "up to date" only when every
+# file matches, and says whether the mods were checked too (not without herdr-app). It never
+# touches a project's .herdr/bots.json or Herdr's settings. Apache-2.0.
 #
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
@@ -19,7 +32,8 @@
 # For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/latest/download/<file>
 # and <url>/download/v<version>/<file>) or a page of this repository on github.com; with a
 # file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty) and AUTOMAGIK_HERDR_APPS (default
-# /Applications). HERDR_APP_HOME as Herdr reads it.
+# /Applications). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
+# releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
 
 main() {
   set -eu
@@ -32,24 +46,35 @@ main() {
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
   MODS=$APP_HOME/mods
-  PACK=$MODS/spaces-agents
+  PACK=$MODS/am-sidebar
+  # The sidebar's folder before the rename (release.js OLD_PACK_NAME): what a v0.2-v0.4.x install has.
+  OLD=spaces-agents
   STATE=$APP_HOME/automagik-herdr
   MARK=$STATE/installed-by-install.sh
-  BEFORE=$STATE/spaces-agents.before-install
+  BEFORE=$STATE/$OLD.before-install
   LAYOUT=$APP_HOME/layouts/automagik.json
+  REF=$STATE/automagik.json
   HINT=no
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
   CASK=penso/tap/herdr-gpui
+  # usagemeter (Group 6c): release.js USAGEMETER.version, kept equal by a test. One shared path.
+  METER_VERSION=0.2.0
+  METER_RELEASES=https://github.com/automagik-dev/usagemeter/releases
+  METER=$BIN_DIR/usagemeter
+  METER_OK=1
 
   YES=0
+  ADOPT=0
   UNINSTALL=0
   WANT=
   while [ $# -gt 0 ]; do
     case $1 in
       --yes|-y) YES=1 ;;
       --uninstall) UNINSTALL=1 ;;
+      --adopt) ADOPT=1 ;;
+      --no-usagemeter) METER_OK=0 ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -71,7 +96,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS} ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter ;;
     esac
   fi
 
@@ -86,17 +111,31 @@ usage() {
   cat <<'EOF'
 Automagik Herdr installer
 
-  install.sh [--yes] [--version <v>]   install or update the pack and the automagik-herdr command
-  install.sh --uninstall [--yes]       put back the pack that was there before; remove the command
+  install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter]
+                                       install or update the pack and the automagik-herdr command
+  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.2.0 or later.
+Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
+--adopt replaces a pack-named mod this installer did not install, after moving it to
+<app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
+--no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone: install skips it, and
+--uninstall keeps it even when this installer put it there.
 EOF
 }
 
 say() { printf '%s\n' "$*"; }
-fail() { printf 'automagik-herdr install: %s\n' "$*" >&2; exit 1; }
+# The briefing hooks' notice update.mjs gave (its `notice: ` lines), held in $TMP/notice for the
+# end of the run: printed once, there or before any failure after it, so it is never lost.
+held_notice() {
+  { [ -n "${TMP:-}" ] && [ -s "$TMP/notice" ]; } || return 0
+  say ""
+  cat "$TMP/notice"
+  say ""
+  : >"$TMP/notice"
+}
+fail() { held_notice; printf 'automagik-herdr install: %s\n' "$*" >&2; exit 1; }
 
 # A yes/no question. Stdin is the downloaded script under `curl | bash`, so the answer comes
 # from the terminal; with none (an agent, CI) the answer is no unless --yes was given.
@@ -110,9 +149,36 @@ ask() {
   return 1
 }
 
-# A line of the marker: `before=` is "kept" when a pack was there at the first install
-# (copied to $BEFORE) or "none"; `layout=added` when this script added $LAYOUT.
+# A line of the marker (the ownership record, release.js parseMarker): v2 has `version=`,
+# `mods=<comma list>`, `layout=added|kept`, `before=kept|none` and `adopted=<mod>:<path>,…`;
+# v0.2's v1 has no `mods=` (it installed $OLD only, its first pack copied to $BEFORE).
 mark_get() { sed -n "s/^$1=//p" "$MARK" 2>/dev/null | head -n 1; }
+
+# Whether $LINK is a link to the pack's own command in this app home (the sidebar folder's
+# bin/automagik-herdr wrapper, which v0.3.5-v0.4.x link, or bin/automagik-herdr.mjs, under its old
+# or its am-* name), the only kind this script replaces or removes: a link the person pointed
+# anywhere else stays theirs.
+link_ours() {
+  [ -L "$LINK" ] || return 1
+  to=$(readlink "$LINK" 2>/dev/null) || return 1
+  case $to in
+    "$MODS/$OLD/bin/automagik-herdr"|"$MODS/$OLD/bin/automagik-herdr.mjs") return 0 ;;
+    "$PACK/bin/automagik-herdr"|"$PACK/bin/automagik-herdr.mjs") return 0 ;;
+  esac
+  return 1
+}
+
+# The command the link points at, in the sidebar folder the ownership record lists (am-sidebar,
+# else $OLD, a rollback's): its bin/automagik-herdr wrapper when the pack ships one (it finds a node
+# where PATH has none), else bin/automagik-herdr.mjs; empty when the record lists neither folder.
+cli_target() {
+  case ",$(mark_get mods)," in
+    *,"${PACK##*/}",*) dir=$PACK/bin ;;
+    *,"$OLD",*) dir=$MODS/$OLD/bin ;;
+    *) return 0 ;;
+  esac
+  if [ -f "$dir/automagik-herdr" ]; then echo "$dir/automagik-herdr"; else echo "$dir/automagik-herdr.mjs"; fi
+}
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
 # is unavailable.
@@ -131,10 +197,10 @@ offer_switch() {
   [ "$shown" != automagik ] || return 0
   # A layout that already shows the pack (the person's own, like main-agents): nothing to do.
   if [ -n "$shown" ] && [ -f "$APP_HOME/layouts/$shown.json" ] \
-    && grep -q '"mod"[[:space:]]*:[[:space:]]*"spaces-agents"' "$APP_HOME/layouts/$shown.json"; then
+    && grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$APP_HOME/layouts/$shown.json"; then
     return 0
   fi
-  if [ -z "$shown" ] || [ ! -f "$PACK/layouts/automagik.json" ] || ! cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
+  if [ -z "$shown" ] || [ ! -f "$REF" ] || ! cmp -s "$LAYOUT" "$REF"; then
     HINT=yes
     return 0
   fi
@@ -148,6 +214,28 @@ offer_switch() {
   HINT=yes
 }
 
+# A layout of the person's own that shows the sidebar (one adapted for a sidebar-only release)
+# doesn't gain the rest of the pack by itself, and this script never edits it: for each such
+# layout, say which pack surfaces it lacks and where to copy them from.
+layout_notes() {
+  [ -f "$REF" ] || return 0
+  for f in "$APP_HOME"/layouts/*.json; do
+    if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
+    grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$f" || continue
+    lacks=
+    for s in 'am-footer:the footer rail (am-footer)' 'am-tabs:the tab bar (am-tabs)' \
+      'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the quota panel (am-quota)'; do
+      # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
+      # "am-quota-panel" or a mention elsewhere doesn't count.
+      grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
+    done
+    [ -n "$lacks" ] || continue
+    name=${f##*/}
+    say "Your layout ${name%.json} ($f) shows the Automagik sidebar, but not the rest of the pack: $lacks."
+    say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"am-markdown\") from the pack's layout, $REF, into it; or use the automagik layout instead."
+  done
+}
+
 switch_hint() {
   [ "$HINT" = yes ] || return 0
   say "To show the Automagik sidebar, switch Herdr to the automagik layout; the sidebar appears after this:"
@@ -156,32 +244,186 @@ switch_hint() {
 
 uninstall() {
   [ -f "$MARK" ] || { say "Nothing to uninstall: this installer did not install the pack in $MODS."; exit 0; }
-  [ ! -L "$PACK" ] || fail "$PACK is a symlink, not a pack this script installed: nothing was changed. Remove the link, then run --uninstall again."
-  before=$(mark_get before)
+  mods=$(mark_get mods)
+  adopted=$(mark_get adopted)
+  ref=$REF
+  if ! grep -q '^mods=' "$MARK"; then
+    # v1 (v0.2.x): $OLD only, the layout's reference inside it, its first pack in $BEFORE.
+    mods=$OLD
+    ref=$MODS/$OLD/layouts/automagik.json
+    if [ "$(mark_get before)" = kept ] && [ -d "$BEFORE" ]; then adopted=$OLD:v1; fi
+  fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
-  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$PACK/layouts/automagik.json" ] && cmp -s "$LAYOUT" "$PACK/layouts/automagik.json"; then
+  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi
-  mkdir -p "$STATE"
-  if [ -d "$BEFORE" ]; then
-    # The pack from before the first install; the installed one is kept as the rollback copy.
-    if [ -e "$PACK" ] && [ ! -L "$PACK" ]; then rm -rf "$STATE/spaces-agents.prev"; mv "$PACK" "$STATE/spaces-agents.prev"; fi
-    mv "$BEFORE" "$PACK"
-    say "Put back the pack that was there before the first install ($PACK); the installed one is kept in $STATE/spaces-agents.prev."
-  elif [ "$before" != none ] && [ -f "$STATE/spaces-agents.prev/main.js" ]; then
-    command -v node >/dev/null 2>&1 || fail "uninstalling needs node (the pack's update.mjs puts the old pack back)."
-    out=$(node "$PACK/update.mjs" rollback --mods "$MODS" </dev/null) || fail "could not put the old pack back: $out"
-    say "Put back the kept pack ($PACK); the installed one is kept in $STATE/spaces-agents.prev."
-  elif [ -d "$PACK" ] && [ ! -L "$PACK" ]; then
-    rm -rf "$STATE/spaces-agents.prev"
-    mv "$PACK" "$STATE/spaces-agents.prev"
-    say "Moved the pack out of $MODS (nothing was there before); it is kept in $STATE/spaces-agents.prev."
+  # The record's folders leave mods/ together as the kept set (never deleted); only names the
+  # pack can own, never Pocket Link, never a link.
+  # Fresh names (mktemp): an earlier run's leftover is never taken for this run's and deleted.
+  next=$(mktemp -d "$STATE/.prev-next.XXXXXX")
+  moved=
+  # The record's values are split on commas only, never glob-expanded (set -f).
+  set -f
+  IFS=,
+  for m in $mods; do
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    if [ -L "$MODS/$m" ]; then say "Left $MODS/$m: it is a link, not a folder this script installed."; continue; fi
+    [ -d "$MODS/$m" ] || continue
+    mv "$MODS/$m" "$next/$m"
+    moved=${moved:+$moved,}$m
+  done
+  # A folder already kept (one a rollback moved out, with its state) stays kept beside them.
+  if [ -n "$moved" ] && [ -f "$STATE/.prev/.pack" ]; then
+    for m in $(sed -n 's/^mods=//p' "$STATE/.prev/.pack" | head -n 1); do
+      case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+      if [ -d "$STATE/.prev/$m" ] && [ ! -L "$STATE/.prev/$m" ] && [ ! -e "$next/$m" ]; then
+        mv "$STATE/.prev/$m" "$next/$m"
+        moved=$moved,$m
+      fi
+    done
   fi
-  if [ -L "$LINK" ]; then rm -f "$LINK"; say "Removed $LINK."; fi
+  unset IFS
+  set +f
+  if [ -n "$moved" ]; then
+    printf 'version=%s\nmods=%s\nbefore=none\n' "$(mark_get version)" "$moved" >"$next/.pack"
+    # The old set is set aside first and removed last: a failure never loses the folders just moved.
+    old=$(mktemp -d "$STATE/.prev-old.XXXXXX")
+    if [ -e "$STATE/.prev" ]; then mv "$STATE/.prev" "$old/set"; fi
+    mv "$next" "$STATE/.prev"
+    rm -rf "$old" 2>/dev/null || say "Could not remove the older kept set; it is in $old."
+    say "Moved the pack out of $MODS ($moved); it is kept in $STATE/.prev."
+  else
+    rm -rf "$next"
+  fi
+  # What the person had before: each adopted folder comes back, unless something is in its place.
+  # Only backup/<name> (release.js parseMarker's rule), or v0.2's before-install copy.
+  set -f
+  IFS=,
+  for e in $adopted; do
+    m=${e%%:*}
+    p=${e#*:}
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    case $e in
+      "$OLD:v1") p=${BEFORE#"$STATE"/} ;;
+      *:backup/*) n=${p#backup/}
+        case $n in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac ;;
+      *) continue ;;
+    esac
+    if [ -d "$STATE/$p" ] && [ ! -L "$STATE/$p" ] && [ ! -e "$MODS/$m" ]; then
+      mv "$STATE/$p" "$MODS/$m"
+      say "Put back $MODS/$m, the one that was there before the install."
+    fi
+  done
+  unset IFS
+  set +f
+  if link_ours; then rm -f "$LINK"; say "Removed $LINK."
+  elif [ -L "$LINK" ]; then say "Left $LINK: it points at $(readlink "$LINK"), not this install."; fi
+  uninstall_meter
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
+}
+
+# ---- usagemeter (Group 6c) ----
+# The version a usagemeter binary reports (`usagemeter --version` prints `usagemeter X.Y.Z`, a dev
+# build maybe `usagemeter X.Y.Z-dev` or `X.Y.Z+build`), or nothing. Compare its X.Y.Z (${v%%[-+]*}).
+meter_version() {
+  "$1" --version </dev/null 2>/dev/null \
+    | sed -n 's/^usagemeter \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\([-+][0-9A-Za-z.+-]*\)\{0,1\}\)$/\1/p' | head -n 1
+}
+# Whether version $1 >= $2, field by field as numbers (0.10.0 >= 0.9.0).
+version_ge() {
+  awk -v a="$1" -v b="$2" 'BEGIN { split(a, x, "."); split(b, y, ".")
+    for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+    exit 0 }' </dev/null
+}
+# The marker's usagemeter= line: set to $1, or dropped when $1 is empty (a v2 marker only).
+mark_meter() {
+  grep -q '^mods=' "$MARK" 2>/dev/null || return 0
+  m=$(mktemp "$STATE/.marker.XXXXXX") || return 1
+  if { sed '/^usagemeter=/d' "$MARK" && if [ -n "$1" ]; then printf 'usagemeter=%s\n' "$1"; fi; } >"$m" && mv "$m" "$MARK"; then return 0; fi
+  rm -f "$m"
+  return 1
+}
+# Puts the pinned release at $METER: the binary for this OS and CPU, checked against the release's
+# SHA256SUMS, written to a temp file beside it, chmod 755, renamed into place. Never over a newer
+# usagemeter (Pocket Link installs the same one; a pre-release counts by its X.Y.Z, so 0.3.0-dev
+# stays), one that reports no version, a link or a folder. Returns 1 with $why on a failure; the
+# caller only warns. Runs in a || list, where set -e is off: every step checks itself.
+install_meter() {
+  why=
+  have=
+  if [ -L "$METER" ] || { [ -e "$METER" ] && [ ! -f "$METER" ]; }; then
+    say "usagemeter: left $METER, a link or a folder, as it is."
+    mark_meter ""
+    return 0
+  fi
+  if [ -f "$METER" ]; then
+    have=$(meter_version "$METER")
+    if [ -z "$have" ]; then
+      say "Warning: $METER reports no usagemeter version; left it as it is (remove it to get usagemeter $METER_VERSION)."
+      mark_meter ""
+      return 0
+    fi
+    if [ "$have" = "$METER_VERSION" ]; then say "usagemeter $have: already installed ($METER)."; return 0; fi
+    # Not older by its X.Y.Z: a newer release, or a dev build of this one or a newer one.
+    if version_ge "${have%%[-+]*}" "$METER_VERSION"; then
+      say "usagemeter $have is installed ($METER), not older than $METER_VERSION: not replacing it."
+      mark_meter ""
+      return 0
+    fi
+  fi
+  case $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) in
+    Darwin-arm64) asset=usagemeter-darwin-arm64 ;;
+    Darwin-x86_64) asset=usagemeter-darwin-x86_64 ;;
+    Linux-x86_64|Linux-amd64) asset=usagemeter-linux-x86_64 ;;
+    Linux-aarch64|Linux-arm64) asset=usagemeter-linux-aarch64 ;;
+    *) why="no usagemeter build for $(uname -s 2>/dev/null) $(uname -m 2>/dev/null)"; return 1 ;;
+  esac
+  ubase=$METER_RELEASES/download/v$METER_VERSION
+  udir=$TMP/usagemeter
+  mkdir -p "$udir" || { why="could not make $udir"; return 1; }
+  say "Downloading usagemeter $METER_VERSION..."
+  curl -fsSL --path-as-is "$ubase/SHA256SUMS" -o "$udir/SHA256SUMS" </dev/null 2>/dev/null \
+    || { why="could not download $ubase/SHA256SUMS"; return 1; }
+  curl -fsSL --path-as-is "$ubase/$asset" -o "$udir/$asset" </dev/null 2>/dev/null \
+    || { why="could not download $ubase/$asset"; return 1; }
+  usum=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$asset\$/\1/p" "$udir/SHA256SUMS" | head -n 1 | tr 'A-F' 'a-f')
+  [ -n "$usum" ] || { why="$ubase/SHA256SUMS does not list $asset"; return 1; }
+  if command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$udir/$asset" </dev/null); else got=$(sha256sum "$udir/$asset" </dev/null); fi
+  got=${got%% *}
+  [ "$got" = "$usum" ] || { why="$asset does not match SHA256SUMS (sha256 $got, expected $usum): nothing was installed"; return 1; }
+  mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
+  part=$(mktemp "$BIN_DIR/.usagemeter.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
+  if cp "$udir/$asset" "$part" && chmod 755 "$part" && mv -f "$part" "$METER"; then
+    say "Installed usagemeter $METER_VERSION ($METER, checksum ok)."
+    mark_meter "$METER_VERSION" || say "usagemeter: the ownership record could not note it; --uninstall will leave it."
+    return 0
+  fi
+  rm -f "$part"
+  why="could not write $METER"
+  return 1
+}
+meter_step() {
+  if [ "$METER_OK" = 0 ]; then say "usagemeter: skipped (--no-usagemeter)."; return 0; fi
+  install_meter || say "Warning: usagemeter was not installed: $why. The pack is installed; run this again later to retry."
+}
+# --uninstall: the binary goes only when the marker says this installer put it there, it still
+# reports that version (a newer one is Pocket Link's or the person's), Pocket Link is not here, and
+# --no-usagemeter was not given.
+uninstall_meter() {
+  um=$(mark_get usagemeter)
+  [ -n "$um" ] || return 0
+  if [ "$METER_OK" = 0 ]; then
+    say "Left $METER (--no-usagemeter)."
+  elif [ ! -f "$METER" ] || [ -L "$METER" ] || [ "$(meter_version "$METER")" != "$um" ]; then
+    say "Left $METER: it is not the usagemeter $um this installer put there."
+  elif [ -e "$MODS/pocket-link" ]; then
+    say "Left $METER: Pocket Link ($MODS/pocket-link) runs it too."
+  else
+    rm -f "$METER" && say "Removed $METER (usagemeter $um). Its store is kept."
+  fi
 }
 
 node_ok() {
@@ -189,12 +431,6 @@ node_ok() {
   node -e 'const [a, b] = process.versions.node.split(".").map(Number); const [x, y] = process.argv[1].split(".").map(Number); process.exit(a > x || (a === x && b >= y) ? 0 : 1)' "$NODE_MIN" </dev/null 2>/dev/null
 }
 herdr_ok() { [ -d "$APPS/Herdr.app" ] || command -v herdr-app >/dev/null 2>&1; }
-
-# What $LINK points at: the pack's bin/automagik-herdr (it runs the .mjs through bin/run.sh, which
-# finds node 22.7+ or bun even where PATH has no node), or the .mjs itself in a pack from before it.
-cli_target() {
-  if [ -f "$PACK/bin/automagik-herdr" ]; then echo "$PACK/bin/automagik-herdr"; else echo "$PACK/bin/automagik-herdr.mjs"; fi
-}
 
 install() {
   # ---- a. macOS ----
@@ -234,91 +470,107 @@ install() {
   say "Herdr: ok."
 
   # ---- d. the pack ----
+  # Nothing is written into the app home before the tarball matches SHA256SUMS.
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
   if [ -n "$WANT" ]; then base=$RELEASES/download/v$WANT; else base=$RELEASES/latest/download; fi
   curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
-  # The release names its tarball automagik-herdr-<version>.tgz; SHA256SUMS lists it.
-  TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
-  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-<version>.tgz."
-  VERSION=${TGZ#automagik-herdr-}
+  # The release names its tarball automagik-herdr-pack-<version>.tgz; SHA256SUMS lists it.
+  TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-pack-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
+  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a sidebar-only release before v0.5.0?)."
+  VERSION=${TGZ#automagik-herdr-pack-}
   VERSION=${VERSION%.tgz}
-  [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-$WANT.tgz."
+  [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-pack-$WANT.tgz."
 
-  installed=$(cat "$PACK/VERSION" 2>/dev/null || echo none)
-  target=$(cli_target)
-  if [ "$installed" = "$VERSION" ] && [ -f "$MARK" ] && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
-    say "Automagik Herdr $VERSION is already up to date ($PACK, $LINK)."
-    offer_switch
-    switch_hint
-    exit 0
-  fi
+  installed=$(mark_get version)
+  [ -n "$installed" ] || installed=none
+  # This release already installed: its tarball is downloaded all the same, and every installed
+  # file is checked against it (update.mjs repair) before anything is called up to date.
+  same=no
+  if [ "$ADOPT" = 0 ] && [ "$installed" = "$VERSION" ] && grep -q '^mods=' "$MARK" 2>/dev/null; then same=yes; fi
 
-  mkdir -p "$STATE"
-  rm -rf "$BEFORE.tmp"
-  copied=no
-  laid=$(mark_get layout)
-  # What --uninstall puts back: "kept" (the pack there at the first install, copied once to
-  # $BEFORE and never overwritten) or "none". Later runs keep what the first one found.
-  if [ -f "$MARK" ]; then first=$(mark_get before); elif [ -e "$PACK" ] && [ ! -L "$PACK" ]; then first=kept; else first=none; fi
-
-  if [ "$installed" != "$VERSION" ]; then
-    say "Downloading Automagik Herdr $VERSION..."
-    curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
-    if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
-    sum=${sum%% *}
-    want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
-    [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
-    say "Checksum: ok."
-    # Only the installer's two files come out here, to run them; update.mjs then lists every
-    # entry, extracts beside mods/, checks again, keeps the old pack and swaps the new one in.
-    mkdir "$TMP/x"
-    tar -xzf "$TMP/$TGZ" -C "$TMP/x" spaces-agents/update.mjs spaces-agents/release.js </dev/null 2>/dev/null \
-      || fail "$TGZ holds no spaces-agents/update.mjs: nothing was installed."
-    for f in update.mjs release.js; do
-      { [ -f "$TMP/x/spaces-agents/$f" ] && [ ! -L "$TMP/x/spaces-agents/$f" ]; } || fail "$TGZ: spaces-agents/$f is not a plain file: nothing was installed."
-    done
-    if [ ! -f "$MARK" ] && [ "$first" = kept ] && [ ! -e "$BEFORE" ]; then
-      { cp -RP "$PACK" "$BEFORE.tmp" && mv "$BEFORE.tmp" "$BEFORE"; } \
-        || { rm -rf "$BEFORE.tmp"; fail "could not keep a copy of $PACK: nothing was installed."; }
-      copied=yes
-    fi
-    if ! out=$(node "$TMP/x/spaces-agents/update.mjs" install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>&1); then
+  if [ "$same" = yes ]; then say "Checking the installed Automagik Herdr $VERSION against the release..."
+  else say "Downloading Automagik Herdr $VERSION..."; fi
+  curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
+  if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
+  sum=${sum%% *}
+  want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
+  [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
+  say "Checksum: ok."
+  # Only the installer's files come out here, to run them; update.mjs then lists every entry,
+  # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
+  # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders, and
+  # migrateHooks.mjs (with briefingText.mjs, model.js and its models.js) the briefing hooks onto a
+  # fixed path.
+  mkdir "$TMP/x"
+  side=${PACK##*/}
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/update.mjs" "$side/release.js" "$side/migrate.js" \
+    "$side/migrateHome.mjs" "$side/migrateHooks.mjs" "$side/briefingText.mjs" "$side/model.js" "$side/models.js" \
+    </dev/null 2>/dev/null || fail "$TGZ lacks $side's updater files: nothing was installed."
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js; do
+    { [ -f "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ]; } || fail "$TGZ: $side/$f is not a plain file: nothing was installed."
+  done
+  rc=0
+  changed=yes
+  if [ "$same" = yes ]; then
+    out=$(node "$TMP/x/$side/update.mjs" repair --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>"$TMP/log") || rc=$?
+    if [ "$rc" = 2 ]; then
+      # A release whose updater has no `repair` command (cut before #44): it is installed again.
+      say "This release's updater cannot check the installed files; installing $VERSION again."
+      same=no
+      rc=0
+    elif [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
-      if [ "$copied" = yes ]; then rm -rf "$BEFORE"; fi
-      fail "nothing was installed: ${why:-$out}"
+      fail "could not check the installed pack: ${why:-$out $(cat "$TMP/log")}"
+    else
+      sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
+      sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
+      case $out in *'"changed":false'*) changed=no ;; esac
+      if [ "$changed" = yes ]; then say "Repaired the pack $VERSION in $MODS: what differed from the release is listed above."; fi
     fi
-    say "Installed the pack $VERSION in $PACK."
-    if [ "$installed" != none ]; then say "The pack it replaced ($installed) is kept in $STATE/spaces-agents.prev: 'automagik-herdr update --rollback' swaps it back."; fi
-    if [ "$copied" = yes ]; then say "The pack from before the first install is kept in $BEFORE: 'install.sh --uninstall' puts it back."; fi
-    # The marker is written only here, by a run that installed the pack, beside the
-    # before-install copy: a pack already at this version (placed by hand) gets no marker,
-    # so --uninstall leaves it in mods/.
-    printf 'version=%s\nbefore=%s\n' "$VERSION" "$first" >"$MARK"
-    if [ "$laid" = added ]; then printf 'layout=added\n' >>"$MARK"; fi
-  elif [ ! -f "$MARK" ]; then
-    say "The pack in $PACK is already $VERSION and was not installed by this script: it is left as it is, and --uninstall won't move it."
   fi
-
-  # ---- the automagik layout: added when the app home has none, then the switch offered ----
-  if [ -f "$PACK/layouts/automagik.json" ] && [ ! -e "$LAYOUT" ]; then
-    mkdir -p "$APP_HOME/layouts"
-    cp "$PACK/layouts/automagik.json" "$LAYOUT"
-    if [ -f "$MARK" ] && [ "$(mark_get layout)" != added ]; then printf 'layout=added\n' >>"$MARK"; fi
-    say "Added the automagik layout ($LAYOUT): Herdr's main layout with the Automagik sidebar."
+  if [ "$same" = no ]; then
+    set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
+    if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
+    out=$(node "$TMP/x/$side/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
+    if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
+      why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
+      fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"
+    fi
+    sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
+    # The briefing hooks' notice (update.mjs): kept for the end of the run, where it is read.
+    sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
+    say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
+    if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
+      say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
+    fi
   fi
+  meter_step
   offer_switch
+  layout_notes
 
   # ---- e. the command ----
-  # A link to the older target (the .mjs, whose `#!/usr/bin/env node` needs node on PATH) is
-  # repointed at the wrapper like any other link; a regular file stays.
-  target=$(cli_target)
-  chmod +x "$target"
   mkdir -p "$BIN_DIR"
-  if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
+  target=$(cli_target)
+  # Never a link to nothing: a pack whose sidebar ships no command stops here, and our link, if
+  # it now points at nothing (into the replaced folder), goes rather than dangle.
+  if [ -n "$target" ] && { [ ! -f "$target" ] || [ -L "$target" ]; }; then
+    gone=
+    if link_ours && [ ! -e "$LINK" ]; then rm -f "$LINK" && gone=" Removed $LINK, which pointed at nothing now."; fi
+    fail "the pack is installed, but ${target%/*} has neither automagik-herdr nor automagik-herdr.mjs, so automagik-herdr is not linked.$gone"
+  fi
+  if [ -n "$target" ]; then chmod +x "$target"; fi
+  if [ -n "$target" ] && [ "$(readlink "$LINK" 2>/dev/null || true)" = "$target" ]; then
+    :
+  elif [ -z "$target" ]; then
+    say "Left $LINK as it is: $PACK is not this installer's (--adopt replaces it)."
+  elif [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
     say "Left $LINK alone: it is a file, not a link. Remove it and run this again to link automagik-herdr."
+  elif [ -L "$LINK" ] && ! link_ours; then
+    say "Left $LINK alone: it points at $(readlink "$LINK"), not this install. Remove it and run this again to link automagik-herdr."
   else
     ln -sfn "$target" "$LINK"
     say "Linked $LINK."
+    changed=yes
   fi
   case ":${PATH}:" in
     *":$BIN_DIR:"*) ;;
@@ -326,6 +578,24 @@ install() {
   esac
 
   # ---- f. next ----
+  # The hooks notice after everything else the run printed and before its last lines, so it is read.
+  held_notice
+  # A failed check or an unfinished step is never "Done" nor "up to date".
+  if [ "$rc" = 4 ]; then switch_hint; fail "the pack is installed, but a step after it did not finish (the warning above says what, and where the folders are)."; fi
+  if [ "$rc" = 3 ] && [ "$same" = yes ]; then
+    switch_hint
+    fail "herdr-app check failed for a mod (above): its output says what to fix. The files match release $VERSION."
+  fi
+  if [ "$rc" = 3 ]; then switch_hint; fail "herdr-app check failed for a mod (above); the pack is installed, and 'automagik-herdr update --rollback' swaps the kept set back."; fi
+  if [ "$same" = yes ] && [ "$changed" = no ]; then
+    case $out in
+      *'"checked":true'*) verified="every file matches the release and every mod passed herdr-app check" ;;
+      *) verified="every file matches the release; herdr-app not found, so no mod was checked" ;;
+    esac
+    say "Automagik Herdr $VERSION is already up to date ($MODS, $LINK): $verified."
+    switch_hint
+    return 0
+  fi
   say "Done: Automagik Herdr $VERSION. Open Herdr (or reload its mods), or in a project folder run:"
   say "  automagik-herdr create --kind=main --name=<name> --agent=claude && automagik-herdr start <name>"
   switch_hint

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { INKS, CHARACTER_NAMES, POSES, characterSvg, characterFile, inkOf, mix, isDark } from "../mods/spaces-agents/characters.js";
-import { CHARACTERS, COLOURS, OMNI_LOOK } from "../mods/spaces-agents/model.js";
+import { INKS, CHARACTER_NAMES, POSES, characterSvg, characterFile, inkOf, mix, isDark } from "../mods/am-sidebar/characters.js";
+import { CHARACTERS, COLOURS, OMNI_LOOK } from "../mods/am-sidebar/model.js";
 
 test("the drawn characters are the 21 model.js offers, and every offered colour has an ink", () => {
   assert.deepEqual(CHARACTER_NAMES, CHARACTERS);

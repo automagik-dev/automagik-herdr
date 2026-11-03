@@ -3,9 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   paneLabels, roleOf, labelWords, relabelWords, detachWords, relabelPlan, labelMoves, startArgs, SQUAD_MARK,
-  relabel, leadPane, attachWords,
-} from "../mods/spaces-agents/launchArgs.js";
-import { parseBots, effectiveCategory } from "../mods/spaces-agents/model.js";
+  relabel, relabelWarning, leadPane, attachWords,
+} from "../mods/am-sidebar/launchArgs.js";
+import { parseBots, effectiveCategory } from "../mods/am-sidebar/model.js";
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", test: "b-dddddddddd", plan: "b-eeeeeeeeee", pm: "b-ffffffffff" };
 const bot = (id, kind, extra = {}) => ({ id, name: id.slice(2, 5), kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "", agent: "claude", ...extra });
@@ -134,7 +134,7 @@ test("leadPane: the live one with an agent in front, newest by created_ms, from 
   assert.deepEqual(attachWords(file(), ID.dev, { bot: ID.dev }, rows), ["role=dev", "category=eng", "squad=c", `${SQUAD_MARK}=c`]);
 });
 
-test("relabel(plan, io): labels each live pane; a failed label or read is listed, the rest go on", async () => {
+test("relabel(plan, io): labels each live pane; a failed label is failed, a failed lookup unchecked", async () => {
   const before = file();
   const edited = JSON.parse(JSON.stringify(FILE));
   edited.bots.find((b) => b.id === ID.test).rank = "tester";
@@ -150,7 +150,11 @@ test("relabel(plan, io): labels each live pane; a failed label or read is listed
     },
     label: async (address, words) => { calls.push([address, ...words]); return address !== "t5"; },
   };
-  assert.deepEqual(await relabel(plan, io), { done: ["t4"], failed: ["t5", ID.pm] });
+  const out = await relabel(plan, io);
+  assert.deepEqual(out, { done: ["t4"], failed: ["t5"], unchecked: [ID.pm] });
+  assert.equal(relabelWarning(out), `Saved, but these panes' labels weren't updated: t5; these bots' panes could not be checked: ${ID.pm}.`);
+  assert.equal(relabelWarning({ failed: [], unchecked: [ID.pm] }), `Saved, but these bots' panes could not be checked: ${ID.pm}.`);
+  assert.equal(relabelWarning({ done: ["t4"], failed: [], unchecked: [] }), null);
   // The pane had no category yet: set too (relabelWords sets whatever differs from the new file).
   const words = ["role=tester", "category=eng", "squad=memory", `${SQUAD_MARK}=memory`];
   assert.deepEqual(calls, [["t4", ...words], ["t5", ...words]]);

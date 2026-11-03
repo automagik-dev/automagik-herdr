@@ -6,8 +6,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtures, golden, view, openAll } from "./sidebar-fixture.mjs";
-import { spaceRowOrder, buildTree } from "../mods/spaces-agents/rows.js";
-import { parseBots } from "../mods/spaces-agents/model.js";
+import { spaceRowOrder, buildTree } from "../mods/am-sidebar/rows.js";
+import { parseBots } from "../mods/am-sidebar/model.js";
 
 const ALL = fixtures();
 const TREE = new Set(["main", "category", "bot", "helper", "notice"]);
