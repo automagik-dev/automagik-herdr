@@ -33,7 +33,7 @@ import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, ne
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
-    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 300 : 360, props: form }
+    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 380 : 300, height: form.form === "menu" ? 640 : 360, props: form }
     : { mod: "am-sidebar", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
 }
 
@@ -356,7 +356,7 @@ export default class Spaces extends View {
       // Not in agents() (no status, or a renamed machine): agent.focus wouldn't know it; its pane does.
       .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : focusOrPeek(a.address)))
       // "Attach as bot…": the clone has no terminal menu of its own, so the row's right-click.
-      .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address }, "popup")))
+      .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address, known: this.knownLocal() }, "popup")))
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_1().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(a.extra ? a.name : this.agentName(a)))
       .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
@@ -652,8 +652,10 @@ export default class Spaces extends View {
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
       : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
+    // live: its own pane (Focus, Detach); terminal: the pane focused at the click (Attach).
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
-      machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");
+      machine: project.machine, terminal: focused()?.terminal ?? null, live: live?.terminal ?? null,
+      helpers: (n.helpers ?? []).map((h) => ({ terminal: h.terminal, name: h.name ?? null })) }, "popup");
     const size = main ? 30 : 26;
     let row = h_flex().flex_1().min_w(0).gap(8).items_center()
       .when(!planned, (el) => el.child(this.arrow(r, t)))
@@ -818,9 +820,9 @@ export default class Spaces extends View {
     const title = { edit: "Edit bot", start: "Start bot", attach: "Attach as bot" }[c];
     if (c === "attach" && !terminal) return notify({ title, body: "Focus the pane to attach first.", level: "warning" });
     // Attach with no bot named: the picker, for the pane.
-    if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal });
+    if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal, known: this.knownLocal() });
     // No bot named and the focused pane isn't one: the Bots list, to pick one.
-    if (!bot) return openBotForm({ form: "pick" }, "popup");
+    if (!bot) return openBotForm({ form: "pick", known: this.knownLocal() }, "popup");
     if (c === "edit") return openBotForm({ form: "edit", bot });
     // A bot's project: looked up by its id (ids are random, so it is one project).
     const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
@@ -830,6 +832,12 @@ export default class Spaces extends View {
     const r = c === "start" ? await startBot(project.key, bot, { sleep: sleepOf(cx) }) : await attachBot(project.key, bot, terminal);
     if (r.refused) notify({ title, body: r.refused, level: "warning", timeout: 12000 });
     this.refreshBots(cx);
+  }
+
+  // This computer's projects as the sidebar last found them (#74's first paint, then each
+  // discovery): the pick and attach lists draw them at once and refresh behind (#85).
+  knownLocal() {
+    return (this.bots ?? []).filter((q) => !q.machine).map((q) => ({ key: q.key, machine: null, file: q.file }));
   }
 
   // A discovery's lists are drawn as they come (this computer's projects first, each other
