@@ -7,7 +7,8 @@ import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
 import { keyOf, rememberProject } from "./bots.js";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal,
   paneLabels, attachWords, relabelWords, leadIdOf, leadPane } from "./launchArgs.js";
-import { installHook } from "./briefingText.mjs";
+import { installHook, runnerPath } from "./briefingText.mjs";
+import { PACK_NAME } from "./release.js";
 import { configPaths, knownModelsFrom, modelArgs } from "./models.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
@@ -159,7 +160,8 @@ async function startOnce(projectKey, botId) {
     else notify({ title: "Bots", level: "warning", timeout: 15000,
       body: `${bot.name} is pinned to "${bot.model}", which isn't a ${agent.name ?? agent.key} model this computer lists; it starts on the agent's default. Edit the bot to pick a listed model, or clear the pin.` });
   }
-  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin], labels });
+  const path = await seatPath(agent.run[0]);
+  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin], labels, path });
   // The briefing hook goes in before the session starts, so Claude Code reads it at startup.
   await afterBind(bot, projectKey, agent.key === "claude");
   let r;
@@ -248,4 +250,22 @@ export async function attachBot(projectKey, botId, terminal) {
         + "briefing, open /hooks once in that session to load it." });
   }
   return { ok: true };
+}
+
+/**
+ * The PATH a bot's agent starts with when it needs one (#56): an npm agent (#!/usr/bin/env node,
+ * like codex) whose node isn't on Herdr's PATH gets node's folder put first, as the CLI's start
+ * and a worker do (agentPath.mjs interpreterPath, run through the pack's bin/run.sh). Null, and
+ * the agent starts as before, when PATH already serves it or anything fails; a note is notified.
+ */
+async function seatPath(program) {
+  const home = appHome();
+  let got = null;
+  try {
+    const r = await exec("/bin/sh", [runnerPath(home), `${home.replace(/\/+$/, "")}/mods/${PACK_NAME}/agentPathEntry.mjs`, program]);
+    if (r?.code === 0) got = JSON.parse(r.stdout);
+  } catch { got = null; }
+  const path = typeof got?.path === "string" && got.path ? got.path : null;
+  if (typeof got?.note === "string" && got.note) notify({ title: "Bots", body: got.note, level: path ? "info" : "warning", timeout: 12000 });
+  return path;
 }

@@ -290,3 +290,22 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
   assert.equal(seat.status, 0, seat.stderr);
 });
+
+test("agentPathEntry.mjs (the sidebar's Start): prints the PATH to start an agent with, or null when PATH serves it", (t) => {
+  const s = scratch(t);
+  const prefix = npmPrefix(s.root);
+  const bin = join(s.root, "bin");
+  mkdirSync(bin);
+  symlinkSync(join(prefix, "bin/codex"), join(bin, "codex"));
+  const entry = new URL("../mods/am-sidebar/agentPathEntry.mjs", import.meta.url).pathname;
+  const ask = (program, path) => {
+    const r = spawnSync(process.execPath, [entry, program], { env: { ...s.env, PATH: path }, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const path = `${bin}:${s.empty}`;
+  assert.deepEqual(ask("codex", path),
+    { path: `${join(prefix, "bin")}:${path}`, note: `codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it.` });
+  assert.deepEqual(ask("codex", `${bin}:${join(prefix, "bin")}`), { path: null, note: null });
+  assert.deepEqual(ask("claude", path), { path: null, note: null });
+});

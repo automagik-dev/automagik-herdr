@@ -288,6 +288,40 @@ test("startBot: a pinned model goes to the agent with its flag (A12); a pin the 
   assert.match(pinNotes()[0].body, /pinned to "Opus 5.5", which isn't a Claude Code model this computer lists/);
 });
 
+test("startBot (#56): an agent that needs its interpreter on PATH runs under env PATH=<what agentPathEntry.mjs gives>", async (t) => {
+  reset();
+  const f = team();
+  f.bots.find((b) => b.id === ID.cap).agent = "codex";
+  const { main } = await project(t, f);
+  const app = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-app-")));
+  const before = state.appHome;
+  t.after(() => { state.appHome = before; rmSync(app, { recursive: true, force: true }); });
+  // A stand-in for the pack's run.sh: it answers for codex only, as agentPathEntry.mjs would.
+  mkdirSync(join(app, "mods/am-sidebar/bin"), { recursive: true });
+  writeFileSync(join(app, "mods/am-sidebar/bin/run.sh"), `[ "$1" = "${app}/mods/am-sidebar/agentPathEntry.mjs" ] || exit 9
+[ "$2" = codex ] || { echo '{"path":null,"note":null}'; exit 0; }
+echo '{"path":"/nvm/bin:/usr/bin","note":"codex runs under node, which isn'"'"'t on its PATH: /nvm/bin put first on it."}'\n`);
+  state.appHome = app;
+  state.agents.push({ key: "codex", name: "Codex", run: ["codex"], installed: true });
+  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
+  state.notes = [];
+  await startBot(main, ID.cap);
+  const capRun = state.hcCalls.find((a) => a[0] === "run");
+  assert.deepEqual(capRun.slice(capRun.indexOf("--")), ["--", "/usr/bin/env", "PATH=/nvm/bin:/usr/bin", "codex"]);
+  assert.deepEqual(state.notes.map((n) => [n.level, n.body]), [["info", "codex runs under node, which isn't on its PATH: /nvm/bin put first on it."]]);
+  // PATH already serves the agent: it starts as before. So it does when run.sh fails.
+  state.hcCalls = [];
+  await startBot(main, ID.dev);
+  const devRun = state.hcCalls.find((a) => a[0] === "run");
+  assert.deepEqual(devRun.slice(devRun.indexOf("--")), ["--", "claude"]);
+  rmSync(join(app, "mods/am-sidebar/bin/run.sh"));
+  state.hcCalls = [];
+  state.terminals = [];
+  await startBot(main, ID.main);
+  const mainRun = state.hcCalls.find((a) => a[0] === "run");
+  assert.deepEqual(mainRun.slice(mainRun.indexOf("--")), ["--", "claude"]);
+});
+
 // ---- A16: pane labels in the sidebar's Start and Attach ----
 
 const ranked = () => {
