@@ -54,7 +54,9 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * v2: `version=`, `mods=<comma list>`, `layout=added|kept`, `before=kept|none`, and
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
- * the rename reverts, and `usagemeter=<version>` when install.sh put the usagemeter binary in
+ * the rename reverts, `installed=<ISO time>` when update.mjs last put the pack's folders in place
+ * (the mod manager's INSTALLED column; am-mods/core.js parsePackMarker reads it too), and
+ * `usagemeter=<version>` when install.sh put the usagemeter binary in
  * ~/.local/bin (--uninstall removes only that one). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
@@ -74,14 +76,19 @@ export function parseMarker(text) {
     adopted: list(get("adopted")).map((e) => ({ mod: e.slice(0, e.indexOf(":")), path: e.slice(e.indexOf(":") + 1) }))
       .filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a.mod) && a.mod !== POCKET_LINK && ADOPTED_PATH.test(a.path)),
     migrated: list(get("migrated")).filter((p) => ADOPTED_PATH.test(p)),
+    installed: ISO_TIME.test(get("installed")) ? get("installed") : null,
     usagemeter: /^\d+\.\d+\.\d+$/.test(get("usagemeter")) ? get("usagemeter") : null,
   };
 }
 
-export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], usagemeter = null }) =>
+/** What `installed=` may hold: `new Date().toISOString()`. */
+export const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], installed = null, usagemeter = null }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
     ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
     ...(migrated.length ? [`migrated=${migrated.join(",")}`] : []),
+    ...(installed ? [`installed=${installed}`] : []),
     ...(usagemeter ? [`usagemeter=${usagemeter}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */
 export const NO_UPDATE_ENV = "AUTOMAGIK_HERDR_NO_UPDATE";
