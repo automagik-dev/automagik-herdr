@@ -13,9 +13,11 @@ const latest = (rows, limit) => (limit > 0 ? rows.slice(-limit) : []);
  * What a bot did, by the attach ledger's rows (attach.js readAttach) and the workers ledger's
  * (workers.js readLedger): `attach`, its attach/detach/end rows; `starts`, the seat start rows
  * (start and attach); `workers`, the worker start rows it asked for; `sessions`, the Claude
- * session rows of the terminals it played in, each while it played there (a terminal id
- * another bot took later, or hc reused, doesn't count); `transcript`, the newest session's
- * transcript path, or null. Each list keeps its last `limit` rows, in file order.
+ * session rows of the terminals it played in, each while it played there by the rows' times;
+ * `transcript`, the newest session's transcript path, or null. Each list keeps its last
+ * `limit` rows, in file order. Session rows carry a terminal id and no core, so the match is
+ * exact once a pane's detach or end row is written: a terminal id hc reused before the sweep
+ * writes that end row can show the new pane's sessions here meanwhile.
  */
 export function botHistory({ attachRows = [], ledgerRows = [], botId, limit = HISTORY_LIMIT }) {
   const attach = attachRows.filter((r) => r?.bot === botId);

@@ -273,8 +273,10 @@ automagik-herdr update [--check | --rollback]
 - `detach` unties a bot from its pane. `whois` says which bot a pane plays, or which pane a
   bot plays.
 - `history` reads the two ledgers for a bot: its attach, detach and end rows, its starts, the
-  Claude sessions of the panes it played (only while it played them) with the newest
-  transcript, and the workers it started. It writes nothing; a removed bot is named by its id.
+  Claude sessions of the panes it played, matched by terminal id and time, with the newest
+  transcript, and the workers it started. The match is exact once a pane's detach or end row is
+  written; a terminal id hc reused before then can briefly show the new pane's session. It
+  writes nothing; a removed bot is named by its id.
 
 ## The attach ledger
 
