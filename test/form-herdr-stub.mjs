@@ -13,3 +13,5 @@ export const settings = () => ({});
 export const pickFolder = async () => state.pickFolder ?? null;
 export const openOverlay = (spec) => { (state.opened ??= []).push(spec); return "o1"; };
 export const closeOverlay = (id) => { state.closed.push(id); return null; };
+// The bot menu's Focus (create.js): the panes Herdr shows now.
+export const panes = () => state.panes ?? [];

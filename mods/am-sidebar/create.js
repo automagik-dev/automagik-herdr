@@ -1,5 +1,6 @@
-// The Create / Edit form, the Attach picker, the bot list and a bot row's menu (Edit, Start,
-// Restart, Restart on…, Attach to the focused pane): the pack opened as a Herdr dialog or popup
+// The Create / Edit form, the Attach picker, the bot list and a bot row's menu (Configure, its
+// Prompt edited in place, Run: Start or Focus, Restart, Restart on…, Attach, Detach; Inspect:
+// what happened, by `automagik-herdr history`): the pack opened as a Herdr dialog or popup
 // (props.form "create" | "edit" | "attach" | "pick" | "menu"). The Create / Edit form is
 // drawn to the owner-approved mockup (A13, mockup/create-form.dc.html): a live character
 // preview, look, name and sidebar preview on the left; role, instructions, coding agent and
@@ -11,7 +12,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button } from "gpui-base";
-import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, focused, run, home, appHome, settings, hc, notify } from "herdr";
+import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, applyBotEdit } from "./model.js";
 import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
@@ -20,6 +21,9 @@ import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, edi
 import { restartAnswer, restartArgs } from "./restart.js";
 import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
 import { attachBot, startBot, liveTerminalOf, runCli, sleepOf } from "./launch.js";
+import { historyLines, menuItems } from "./inspect.js";
+import { clickActionOf } from "./rows.js";
+import { openWorkerTab, workerClick } from "./workerTab.js";
 
 const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
 // The form's dialog size: the mockup's 1000 × 840 (main.js opens it the same way).
@@ -37,6 +41,9 @@ function icon(p, size, color) {
 }
 
 // "Not saved: <why>", once: bots.js's writeBots says "Not saved:" itself.
+// Which Restart a busy menu runs (the item whose label says "Restarting…").
+const restartKey = ({ agent = null, force = false, fresh = false } = {}) => (agent ? "restart-on" : force ? "restart-force" : fresh ? "restart-fresh" : "restart");
+
 const notSaved = (why) => (/^Not saved:/.test(String(why)) ? String(why) : `Not saved: ${why}`);
 
 // The form's text fields, read into the plain state formModel works on.
@@ -48,11 +55,25 @@ export class BotForm {
     this.mode = p.form;
     this.error = null; // why it can't be saved, shown above the buttons
     this.busy = false;
-    if (this.mode === "menu") return;
+    if (this.mode === "menu") {
+      // The sections opened in place ("prompt", "inspect"), the prompt as read (its file's
+      // text is the save's snapshot) and the history as the CLI answered it.
+      this.shown = new Set();
+      this.prompt = TextareaState.new({ placeholder: "What it does, how it works, whom it reports to" });
+      this.prompt.set_auto_grow(4, 10);
+      this.prompt.on("change", (_e, cx) => cx.notify()); // the count under it
+      this.promptBase = null;
+      this.history = null;
+      return;
+    }
     if (this.mode === "attach" || this.mode === "pick") {
-      this.projects = null;
+      // The sidebar's projects as it last found them (props.known, its #74 first paint)
+      // draw at once; a fresh discovery replaces them when it answers.
+      this.projects = Array.isArray(p.known) ? p.known.filter((q) => q && !q.machine && Array.isArray(q.file?.bots)) : null;
+      this.refreshing = true;
       cx.spawn(async (cx) => {
-        try { this.projects = (await discoverProjects()).filter((q) => !q.machine); } catch (e) { this.error = String(e?.message ?? e); }
+        try { this.projects = (await discoverProjects()).filter((q) => !q.machine); } catch (e) { if (!this.projects) this.error = String(e?.message ?? e); }
+        this.refreshing = false;
         cx.notify();
       });
       return;
@@ -299,7 +320,7 @@ export class BotForm {
 
   attach(project, bot, cx) {
     if (this.busy) return;
-    this.busy = true;
+    this.busy = "attach";
     this.error = null;
     cx.spawn(async (cx) => {
       const r = await attachBot(project.key, bot.id, this.p.terminal);
@@ -323,7 +344,7 @@ export class BotForm {
 
   start(project, bot, cx) {
     if (this.busy) return;
-    this.busy = true;
+    this.busy = "start";
     this.error = null;
     cx.spawn(async (cx) => {
       const r = await startBot(project.key, bot.id, { sleep: sleepOf(cx) });
@@ -339,7 +360,7 @@ export class BotForm {
   // refusal --force overrides (a turn in progress) is offered once more as "Restart anyway".
   restart(project, bot, cx, { agent = null, force = false, fresh = false } = {}) {
     if (this.busy) return;
-    this.busy = true;
+    this.busy = restartKey({ agent, force, fresh });
     this.error = null;
     this.forceable = null;
     this.freshable = null;
@@ -373,6 +394,112 @@ export class BotForm {
     cx.notify();
   }
 
+  // ---- the bot menu's Prompt, Inspect, Focus and Detach ----
+
+  /** Opens or closes a menu section in place; the first open reads what it shows. */
+  toggle(section, cx) {
+    if (this.shown.has(section)) { this.shown.delete(section); cx.notify(); return; }
+    this.shown.add(section);
+    if (section === "prompt" && !this.promptBase && !this.promptReading) {
+      cx.spawn(async (cx) => {
+        this.promptError = null;
+        this.promptReading = true;
+        try { await this.loadPrompt(); } catch (e) { this.promptError = String(e?.message ?? e); }
+        this.promptReading = false;
+        cx.notify();
+      });
+    }
+    if (section === "inspect" && !this.history) {
+      cx.spawn(async (cx) => {
+        const r = await runCli(["history", this.p.bot, "--project", this.p.project]);
+        this.history = r.code === 0 && r.out ? r.out : { error: r.err || `automagik-herdr history failed (exit ${r.code}).` };
+        cx.notify();
+      });
+    }
+    cx.notify();
+  }
+
+  // The bot as its project's file holds it now, as the Edit form opens it (load): the text
+  // read is the save's snapshot, the raw entry what the save edits.
+  async loadPrompt() {
+    const key = this.p.project;
+    const text = await readTextFile(`${key}/${BOTS_PATH}`);
+    if (text === null) throw new Error(`${key}/${BOTS_PATH} is gone.`);
+    const { file, raw } = parseBots(text);
+    const b = raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
+    if (!b) throw new Error(`${key}/${BOTS_PATH} has no bot ${this.p.bot}.`);
+    this.promptBase = { text, raw, file, state: formFrom({ mode: "edit", bot: b }) };
+    this.prompt.set_value(this.promptBase.state.instructions ?? "");
+  }
+
+  // The Edit form's save (save()) with only the instructions changed: the same rules
+  // (problemOf), entry (entryOf) and stale-snapshot write.
+  savePrompt(cx) {
+    if (this.busy || !this.promptBase) return;
+    const { text, raw, file, state: initial } = this.promptBase;
+    const key = this.p.project;
+    const state = { ...initial, instructions: this.prompt.value() };
+    const why = problemOf(state, { key, file });
+    if (why) { this.error = notSaved(why); cx.notify(); return; }
+    if (!editChanged(state, initial)) { closeOverlay(this.p.overlay); return; }
+    const { entry, newCategory } = entryOf(state, file);
+    this.busy = "prompt";
+    this.error = null;
+    cx.spawn(async (cx) => {
+      try {
+        await writeBots(key, applyBotEdit(raw, entry, newCategory), text);
+      } catch (e) {
+        const msg = String(e?.message ?? e);
+        this.error = notSaved(/stale/i.test(msg) ? `${key}/${BOTS_PATH} changed since this menu opened; close it and open it again.` : msg);
+        this.busy = false;
+        cx.notify();
+        return;
+      }
+      run("am-sidebar.refresh");
+      closeOverlay(this.p.overlay);
+      this.busy = false;
+      cx.notify();
+    });
+  }
+
+  // Focus: what a click on the bot's row does (main.js openWorker): its pane when Herdr shows
+  // it; a kept pane without one opens as a tab after its starter's (workerTab.js); else a peek.
+  // props.worker is the row's rowWorker(); without it, the bot's own pane by itself.
+  focusPane(cx) {
+    if (this.busy) return;
+    const w = this.p.worker?.terminal ? this.p.worker : { terminal: this.p.live, botTerminal: null, name: this.p.name ?? null };
+    const plan = workerClick({ ...w, panes: panes(), spaces: spaces() });
+    if (plan.kind !== "open") {
+      const { command, args } = clickActionOf(w.terminal, panes());
+      run(command, args);
+      closeOverlay(this.p.overlay);
+      return;
+    }
+    this.busy = "focus";
+    cx.spawn(async (cx) => {
+      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep: sleepOf(cx), notify }); } finally {
+        this.busy = false;
+        closeOverlay(this.p.overlay);
+        cx.notify();
+      }
+    });
+    cx.notify();
+  }
+
+  // Detach: the CLI's `detach`, which writes the attach ledger's row and clears the labels.
+  detach(cx) {
+    if (this.busy) return;
+    this.busy = "detach";
+    this.error = null;
+    cx.spawn(async (cx) => {
+      const r = await runCli(["detach", this.p.bot, "--project", this.p.project]);
+      this.busy = false;
+      if (r.code !== 0) this.error = r.err || `automagik-herdr detach failed (exit ${r.code}).`;
+      else { run("am-sidebar.refresh"); closeOverlay(this.p.overlay); }
+      cx.notify();
+    });
+  }
+
   // ---- drawing (automations' helpers) ----
 
   button(id, label, t, onClick, opts = {}) {
@@ -398,30 +525,83 @@ export class BotForm {
           .when(list, (el) => el.child(this.button("bot-cancel", "Cancel", t, () => closeOverlay(this.p.overlay))))));
   }
 
-  // A bot row's right-click (A10): Edit, Start, Restart and Restart on… (not for a planned
-  // bot), Attach to the pane that was focused at the click. A bot defined on another machine
-  // is changed from there.
+  // A bot row's right-click (A10, #85): Configure (the Edit form), its Prompt edited in
+  // place, Run (inspect.js menuItems: Start or Focus, Restart, Restart with a new
+  // conversation, Restart on…, Attach to the pane focused at the click, Detach; none for a
+  // planned bot) and Inspect, what happened. A bot defined on another machine is changed
+  // from there.
   menuBody(t) {
     if (this.p.machine) {
       return div().p(14).text_size(12).text_color(t.muted)
-        .child(`${this.p.name} is defined on ${this.p.machine}; Edit, Start, Restart and Attach work from that computer.`);
+        .child(`${this.p.name} is defined on ${this.p.machine}; Configure, Prompt, Run and Inspect work from that computer.`);
     }
     const project = { key: this.p.project }, bot = { id: this.p.bot };
-    const pane = typeof this.p.terminal === "string" && !this.p.terminal.includes("/") ? this.p.terminal : null;
+    const local = (x) => (typeof x === "string" && x && !x.includes("/") ? x : null);
+    const pane = local(this.p.terminal), live = local(this.p.live);
+    const items = new Set(menuItems({ planned: Boolean(this.p.planned), live, pane }));
     const item = (id, label, onClick) => h_flex().id(id).h(30).px(10).items_center().rounded(7).cursor_pointer()
       .hover((s) => s.bg(t.hover)).on_click((_e, cx) => onClick(cx)).child(label);
+    const label = (s) => div().px(10).pt(8).pb(2).text_size(10).font_semibold().text_color(t.dim).child(s);
+    const fold = (section) => (this.shown.has(section) ? "▾" : "▸");
+    const note = (s) => div().px(10).text_size(12).text_color(t.muted).child(s);
+    const fresh = items.has("restart-fresh") || this.freshable;
     return v_flex().p(6).gap(2)
-      .child(item("menu-edit", "Edit…", () => this.edit(project, bot)))
-      .when(!this.p.planned, (el) => el.child(item("menu-start", this.busy ? "Starting…" : "Start", (cx) => this.start(project, bot, cx))))
-      .when(!this.p.planned, (el) => el.child(item("menu-restart", this.busy ? "Restarting…" : "Restart", (cx) => this.restart(project, bot, cx))))
-      .when(Boolean(this.forceable), (el) => el.child(item("menu-restart-force", "Restart anyway (ends what it is doing)",
+      .child(item("menu-configure", "Configure…", () => this.edit(project, bot)))
+      .child(item("menu-prompt", `Prompt ${fold("prompt")}`, (cx) => this.toggle("prompt", cx)))
+      .when(this.shown.has("prompt"), (el) => el.child(this.promptView(t)))
+      .when(items.has("start") || items.has("focus"), (el) => el.child(label("RUN")))
+      .when(items.has("focus"), (el) => el.child(item("menu-focus", this.busy === "focus" ? "Opening…" : `Focus (${live})`, (cx) => this.focusPane(cx))))
+      .when(items.has("start"), (el) => el.child(item("menu-start", this.busy === "start" ? "Starting…" : "Start", (cx) => this.start(project, bot, cx))))
+      .when(items.has("restart"), (el) => el.child(item("menu-restart", this.busy === "restart" ? "Restarting…" : "Restart", (cx) => this.restart(project, bot, cx))))
+      .when(Boolean(this.forceable), (el) => el.child(item("menu-restart-force", this.busy === "restart-force" ? "Restarting…" : "Restart anyway (ends what it is doing)",
         (cx) => this.restart(this.forceable.project, this.forceable.bot, cx, { agent: this.forceable.agent, force: true }))))
-      .when(Boolean(this.freshable), (el) => el.child(item("menu-restart-fresh", "Restart with a new conversation",
-        (cx) => this.restart(this.freshable.project, this.freshable.bot, cx, { fresh: true }))))
-      .when(!this.p.planned, (el) => el.child(item("menu-restart-on", `Restart on… ${this.swapOpen ? "▾" : "▸"}`, (cx) => this.toggleSwap(cx))))
-      .when(!this.p.planned && this.swapOpen, (el) => el.children(!this.swapAgents ? [div().px(22).h(26).text_size(12).text_color(t.muted).child("Finding agents…")]
+      .when(Boolean(fresh), (el) => el.child(item("menu-restart-fresh", this.busy === "restart-fresh" ? "Restarting…" : "Restart with a new conversation",
+        (cx) => this.restart(project, bot, cx, { fresh: true }))))
+      .when(items.has("restart-on"), (el) => el.child(item("menu-restart-on", this.busy === "restart-on" ? "Restarting…" : `Restart on… ${this.swapOpen ? "▾" : "▸"}`, (cx) => this.toggleSwap(cx))))
+      .when(items.has("restart-on") && this.swapOpen, (el) => el.children(!this.swapAgents ? [div().px(22).h(26).text_size(12).text_color(t.muted).child("Finding agents…")]
         : this.swapAgents.map((a) => item(`menu-restart-on-${a.key}`, `    ${a.name ?? a.key}`, (cx) => this.restart(project, bot, cx, { agent: a.key })))))
-      .when(!this.p.planned && Boolean(pane), (el) => el.child(item("menu-attach", `Attach to the focused pane (${pane})`, (cx) => this.attach(project, bot, cx))));
+      .when(items.has("attach"), (el) => el.child(item("menu-attach", this.busy === "attach" ? "Attaching…" : `Attach to the focused pane (${pane})`, (cx) => this.attach(project, bot, cx))))
+      .when(items.has("detach"), (el) => el.child(item("menu-detach", this.busy === "detach" ? "Detaching…" : `Detach from ${live}`, (cx) => this.detach(cx))))
+      .child(label("INSPECT"))
+      .child(item("menu-inspect", `What happened ${fold("inspect")}`, (cx) => this.toggle("inspect", cx)))
+      .when(this.shown.has("inspect"), (el) => el.child(this.historyView(t, note)));
+  }
+
+  // The prompt in place: the bot's instructions, Save writes them as the Edit form would.
+  promptView(t) {
+    if (this.promptError) return div().id("menu-prompt-error").px(10).text_size(12).text_color(t.ansi1).child(`Can't read the prompt: ${this.promptError}`);
+    if (!this.promptBase) return div().px(10).h(26).text_size(12).text_color(t.muted).child("Reading…");
+    const n = this.prompt.value().length;
+    return v_flex().id("menu-prompt-box").px(6).pb(4).gap(6)
+      .child(div().id("menu-prompt-text").p(8).rounded(8).border_1().border_color(t.input).bg(t.surface ?? t.background)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(Textarea.new(this.prompt).w_full().text_size(12)))
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_1().text_size(11).text_color(n > MAX_INSTRUCTIONS ? t.ansi1 : t.dim).child(`${thousands(n)} / ${thousands(MAX_INSTRUCTIONS)}`))
+        .child(this.button("menu-prompt-save", this.busy === "prompt" ? "Saving…" : "Save", t, (cx) => this.savePrompt(cx), { h: 24, solid: true })));
+  }
+
+  // What happened (`automagik-herdr history`): its panes, starts and sessions newest first,
+  // the newest transcript (a click copies its path), its workers, and the helpers its pane
+  // runs now (props.helpers, from the sidebar's row).
+  historyView(t, note) {
+    const helpers = Array.isArray(this.p.helpers) ? this.p.helpers.filter((h) => typeof h?.terminal === "string") : [];
+    const box = v_flex().id("menu-history").px(4).pb(6).gap(2).text_size(12);
+    if (!this.history) return box.child(note("Reading the ledgers…"));
+    if (this.history.error) return box.child(div().px(10).text_size(12).text_color(t.ansi1).child(this.history.error));
+    const { timeline, workers, transcript } = historyLines(this.history);
+    const line = (id, s) => div().id(id).px(10).min_w(0).truncate().text_color(t.foreground).child(s);
+    return box
+      .children(timeline.length ? timeline.map((e, i) => line(`menu-history-${i}`, e.text)) : [note("Nothing recorded on this computer yet.")])
+      .when(Boolean(transcript), (el) => el.child(h_flex().id("menu-transcript").px(10).gap(6).items_center().rounded(6).cursor_pointer()
+        .hover((s) => s.bg(t.hover)).tooltip(transcript)
+        .on_click((_e, cx) => { cx.write_to_clipboard(transcript); this.copiedTranscript = true; cx.notify(); })
+        .child(div().flex_none().text_color(t.muted).child(this.copiedTranscript ? "Copied:" : "Transcript:"))
+        .child(div().flex_1().min_w(0).truncate().child(transcript))))
+      .when(workers.length > 0, (el) => el.child(div().px(10).pt(4).text_size(10).font_semibold().text_color(t.dim).child("WORKERS"))
+        .children(workers.map((w, i) => line(`menu-worker-${i}`, w))))
+      .when(helpers.length > 0, (el) => el.child(div().px(10).pt(4).text_size(10).font_semibold().text_color(t.dim).child("HELPERS NOW"))
+        .children(helpers.map((h) => line(`menu-helper-${h.terminal}`, [h.name, h.terminal].filter(Boolean).join(" · ")))));
   }
 
   // This computer's bots by project: click one to attach the pane (attach), or Edit / Start (pick).
@@ -442,12 +622,14 @@ export class BotForm {
             .when(!b.planned, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 }))
               .child(this.button(`restart-${b.id}`, "Restart", t, (cx) => this.restart(q, b, cx), { h: 22 })))))];
     });
-    if (!rows.length && pick) {
+    if (!rows.length && pick && !this.refreshing) {
       // No bot yet: the list offers the one thing to do, the Create form.
       return v_flex().p(14).gap(2).child(h_flex().id("pick-new").h(30).px(8).items_center().rounded(7).cursor_pointer()
         .hover((s) => s.bg(t.hover)).on_click(() => this.create()).child("New bot"));
     }
-    return v_flex().p(14).gap(2).children(rows.length ? rows : [div().text_color(t.muted).child("No bots on this computer yet. Create one first.")]);
+    // Nothing known yet and the discovery still out: it is looking, not empty.
+    const none = this.refreshing ? "Finding bots…" : "No bots on this computer yet. Create one first.";
+    return v_flex().p(14).gap(2).children(rows.length ? rows : [div().text_color(t.muted).child(none)]);
   }
 
   // ---- the Create / Edit form (mockup/create-form.dc.html) ----

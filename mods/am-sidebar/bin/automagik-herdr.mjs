@@ -37,6 +37,7 @@ import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, read
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
 import { OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
+import { botHistory, historyLines } from "../inspect.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -592,6 +593,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
   whois <terminal> | whois --bot <bot>   who plays where, by the attach ledger
+  history <bot>                 what the bot did, by the attach and workers ledgers: its panes,
+                                starts, sessions (and the newest transcript) and workers
   brief <bot>                   print the bot's per-turn briefing as it would be now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
@@ -1567,6 +1570,23 @@ async function cmdWhois(opts, [terminal]) {
   return held ? `${address} plays ${out.bot} (${out.project}) since ${out.since}.` : `${address} plays no bot.`;
 }
 
+async function cmdHistory(opts, [ref]) {
+  // A bare id needs no definition (as detach): a removed bot's history is still there.
+  const bareId = BOT_ID_SHAPE.test(ref ?? "");
+  let bot = null;
+  try { bot = findBot((await projectFor(opts)).file, ref); } catch (e) { if (!bareId || !(e instanceof CliError)) throw e; }
+  const id = bot?.id ?? ref;
+  const h = botHistory({ attachRows: readAttachFile() ?? [], ledgerRows: workerLedgerRows(), botId: id });
+  if (opts.json) return { id, name: bot?.name ?? null, ...h };
+  const { timeline, workers, transcript } = historyLines(h);
+  return [
+    `${bot?.name ?? `bot ${id}`} (${id})`,
+    "  what happened", ...(timeline.length ? timeline.map((e) => `    ${e.text}`) : ["    nothing recorded on this computer"]),
+    ...(workers.length ? ["  workers", ...workers.map((w) => `    ${w}`)] : []),
+    ...(transcript ? [`  transcript   ${transcript}`] : []),
+  ].join("\n");
+}
+
 async function cmdBrief(opts, [ref]) {
   const project = await projectFor(opts);
   const bot = findBot(project.file, ref);
@@ -2208,9 +2228,9 @@ export async function meterAfterUpdate(io) {
 }
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, brief: cmdBrief, update: cmdUpdate,
+  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
   tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter };
-const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "brief"]);
+const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
 export async function main(argv = process.argv.slice(2)) {

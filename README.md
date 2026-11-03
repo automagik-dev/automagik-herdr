@@ -190,10 +190,16 @@ a place in a team, and keeps that team in front of every agent and of you.
 The pack replaces Herdr's `spaces` sidebar with one that draws each project's team under its
 space: the main bot as a card, categories as headers, captains with their members folded
 under them, planned bots dimmed with their wave. Each bot shows its character, its role and
-model, its agent's icon and its status. Right-click a bot to edit, start, restart or attach it:
-Restart runs `automagik-herdr restart` for it, and Restart on… restarts it on another installed
-agent (a new conversation; the bot's definition keeps its agent). A restart refused because the
-bot is mid-turn offers "Restart anyway".
+model, its agent's icon and its status. Right-click a bot for its menu: Configure opens the edit
+form (name, agent, model, role, category, lead, worker defaults); Prompt edits its instructions
+in place and saves them as the form does; Run starts it, or focuses its pane when it has one,
+restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it on another installed
+agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
+pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
+sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
+now. A planned bot's menu has no Run items. A restart refused because the bot is mid-turn offers
+"Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
+knows and refresh behind.
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
@@ -222,6 +228,7 @@ automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--forc
 automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
 automagik-herdr whois <terminal> | whois --bot <bot>
+automagik-herdr history <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
@@ -265,6 +272,11 @@ automagik-herdr update [--check | --rollback]
   refusal names the holder. `attach --move` moves a bot from its pane to this one.
 - `detach` unties a bot from its pane. `whois` says which bot a pane plays, or which pane a
   bot plays.
+- `history` reads the two ledgers for a bot: its attach, detach and end rows, its starts, the
+  Claude sessions of the panes it played, matched by terminal id and time, with the newest
+  transcript, and the workers it started. The match is exact once a pane's detach or end row is
+  written; a terminal id hc reused before then can briefly show the new pane's session. It
+  writes nothing; a removed bot is named by its id.
 
 ## The attach ledger
 
