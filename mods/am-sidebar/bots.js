@@ -8,13 +8,14 @@
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
 import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, parseBots, checkBots, listedProjects } from "./model.js";
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
+import { CALL_TIMEOUT_MS, TimedOut, discover, within } from "./discover.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "am.sidebar.projects";
 // A folder's project changes rarely (a repo made or removed): looked up again after a minute.
 const KEY_TTL = 60_000;
 
-const keys = new Map(); // JSON [machine, folder] -> { key, own, at } (model.js projectOf)
+const keys = new Map(); // JSON [machine, folder] -> { key, own, at, checking? } (model.js projectOf)
 const lastGood = new Map(); // JSON [machine, key] -> { file, warnings }
 
 const id = (machine, key) => JSON.stringify([machine ?? null, key]);
@@ -22,36 +23,40 @@ const under = (key, rest) => `${key === "/" ? "" : key}/${rest}`;
 
 // A call that rejects on another machine: rethrown when the machine can't be reached (the
 // answer is unknown, never "no"), else `fallback` (the program or file isn't there).
-// On this machine a rejection always means the program or file isn't there.
-async function orUnreachable(on, call, fallback) {
-  try { return await call(); } catch (e) {
+// On this machine a rejection always means the program or file isn't there. With `sleep`
+// (the caller's timer), a call to another machine longer than CALL_TIMEOUT_MS rejects
+// TimedOut: the machine is away.
+async function orUnreachable(on, call, fallback, sleep) {
+  const timed = (p) => within(p, on ? CALL_TIMEOUT_MS : 0, sleep);
+  try { return await timed(call()); } catch (e) {
     if (!on) return fallback;
-    try { await exec("true", [], { on }); } catch { throw e; }
+    if (e instanceof TimedOut) throw e;
+    try { await timed(exec("true", [], { on })); } catch { throw e; }
     return fallback;
   }
 }
-function gitOn(on) {
+function gitOn(on, sleep) {
   return (args, cwd) => orUnreachable(on, async () => {
     const r = await exec("git", args, { cwd, on });
     return r.code === 0 ? r.stdout : null;
-  }, null);
+  }, null, sleep);
 }
-function existsOn(on) {
-  return (p) => orUnreachable(on, async () => (await readTextFile(p, { on })) !== null, false);
+function existsOn(on, sleep) {
+  return (p) => orUnreachable(on, async () => (await readTextFile(p, { on })) !== null, false, sleep);
 }
 
 /**
  * The project of a folder on a machine (null: this one), as model.js projectOf's
  * `{ key, own }`, cached for a minute. When the machine can't be reached, the last answer
- * found for the folder; with none, it rejects.
+ * found for the folder; with none, it rejects. `opts.sleep`: see orUnreachable.
  */
-export async function projectOfFolder(folder, machine = null) {
+export async function projectOfFolder(folder, machine = null, { sleep = null } = {}) {
   const k = id(machine, folder);
   const hit = keys.get(k);
   if (hit && Date.now() - hit.at < KEY_TTL) return { key: hit.key, own: hit.own };
   let found;
   try {
-    found = await projectOf(folder, gitOn(machine), existsOn(machine));
+    found = await projectOf(folder, gitOn(machine, sleep), existsOn(machine, sleep));
   } catch (e) {
     if (hit) return { key: hit.key, own: hit.own };
     throw e;
@@ -99,6 +104,40 @@ function forgetProject(key, machine) {
   if (kept.length !== list.length) setShared(REMEMBERED, kept);
 }
 
+// Discovery's lookup (knownKeyOf): a folder keyed before answers at once with that key, and
+// is looked up again in the background (one look at a time) once the answer is a minute old,
+// so no refresh waits on a folder it has seen, whatever its machine is doing.
+async function knownKeyOf(folder, machine, sleep) {
+  const hit = keys.get(id(machine, folder));
+  if (!hit) return (await projectOfFolder(folder, machine, { sleep })).key;
+  if (Date.now() - hit.at >= KEY_TTL && !hit.checking) {
+    hit.checking = true;
+    projectOfFolder(folder, machine, { sleep }).catch(() => {}).finally(() => { hit.checking = false; });
+  }
+  return hit.key;
+}
+
+// One project's bots.json for discover.js: { file, warnings }, null when there is none (a
+// remembered project is forgotten then); rejects when the machine can't answer.
+async function readProject(p) {
+  const k = id(p.machine, p.key);
+  const text = await readTextFile(under(p.key, BOTS_PATH), { on: p.machine });
+  if (text === null) {
+    lastGood.delete(k);
+    if (p.remembered) forgetProject(p.key, p.machine);
+    return null;
+  }
+  try {
+    const { file, warnings } = parseBots(text);
+    lastGood.set(k, { file, warnings });
+    return { file, warnings };
+  } catch (e) {
+    const why = `${under(p.key, BOTS_PATH)}: ${e?.message ?? e}`;
+    const last = lastGood.get(k);
+    return last ? { file: last.file, warnings: [why, ...last.warnings] } : { file: { version: 1, categories: [], bots: [] }, warnings: [why] };
+  }
+}
+
 /**
  * Every project with definitions, once each however many spaces show it:
  * [{ key, machine, file, warnings, spaces }], `spaces` the ids of the open spaces keyed
@@ -109,51 +148,68 @@ function forgetProject(key, machine) {
  * only when its file is gone (read returns null), never when the read rejects. The CLI's
  * projects (listedByCli) are found as the remembered ones are; one whose file is gone is
  * just not shown: its line in the CLI's file stays, as the view never writes that file.
+ * Each machine is asked on its own, a few lookups at once (discover.js). `opts.sleep(ms)`
+ * (the caller's timer: a mod has no setTimeout) bounds each call to another machine to
+ * CALL_TIMEOUT_MS, after which that machine's projects show their last good file;
+ * `opts.onUpdate(list)` gets the list as soon as a machine is done, this computer's
+ * projects first, before a slow machine answers.
  */
-export async function discoverProjects() {
-  const found = new Map(); // id -> { key, machine, spaces, remembered }
-  const add = (key, machine, space, wasRemembered) => {
-    const k = id(machine, key);
-    const p = found.get(k) ?? { key, machine: machine ?? null, spaces: [], remembered: false };
-    if (space) p.spaces.push(space);
-    p.remembered ||= wasRemembered;
-    found.set(k, p);
-  };
-  for (const s of spaces()) {
-    // An empty folder is that machine's home. Ours is home(); another machine's isn't known
-    // here without asking it, so such a space is skipped (its projects can be remembered).
-    const folder = s.folder || (s.machine ? null : home());
-    if (!folder) continue;
-    // A machine that can't be reached and was never keyed: skipped this tick.
-    try { add(await keyOf(folder, s.machine), s.machine, s.id, false); } catch {}
-  }
-  for (const p of remembered()) add(p.key, p.machine ?? null, null, true);
-  for (const key of await listedByCli()) add(key, null, null, false);
+export async function discoverProjects({ sleep = null, onUpdate = null } = {}) {
+  // An empty folder is that machine's home. Ours is home(); another machine's isn't known
+  // here without asking it, so such a space is skipped (its projects can be remembered).
+  const shown = spaces().map((s) => ({ id: s.id, machine: s.machine ?? null, folder: s.folder || (s.machine ? null : home()) }));
+  return discover({ spaces: shown, remembered: remembered() }, {
+    listed: listedByCli,
+    keyOf: (folder, machine) => knownKeyOf(folder, machine, sleep),
+    read: readProject,
+    last: (p) => lastGood.get(id(p.machine, p.key)),
+  }, { sleep, onUpdate });
+}
 
+// ---- The last discovery, kept between runs (main.js keeps it in its localStorage) ----
+
+/**
+ * The text that restoreDiscovery draws from after a restart: the folders' keys and the
+ * projects found (`found`, discoverProjects' list).
+ */
+export function discoverySnapshot(found) {
+  return JSON.stringify({
+    keys: [...keys].map(([k, v]) => [...JSON.parse(k), v.key, v.own]),
+    projects: found.map((p) => ({ key: p.key, machine: p.machine ?? null, file: p.file, warnings: p.warnings })),
+  });
+}
+
+/**
+ * At startup, a discoverySnapshot text (null, or anything unreadable: nothing): its keys and
+ * projects become the ones known (each folder looked up again at the next discovery, each
+ * project read again; a machine away keeps showing them), and the projects come back as
+ * discoverProjects would list them for the spaces open now, to draw before it has answered.
+ */
+export function restoreDiscovery(text) {
+  let saved;
+  try { saved = JSON.parse(text); } catch { return []; }
+  if (!saved || typeof saved !== "object") return [];
+  const str = (v) => typeof v === "string";
+  for (const e of Array.isArray(saved.keys) ? saved.keys : []) {
+    if (!Array.isArray(e)) continue;
+    const [machine, folder, key, own] = e;
+    if (!(machine === null || str(machine)) || !str(folder) || !str(key) || !str(own)) continue;
+    const k = id(machine, folder);
+    if (!keys.has(k)) keys.set(k, { key, own, at: 0 });
+  }
   const out = [];
-  for (const [k, p] of found) {
-    const entry = (read) => out.push({ key: p.key, machine: p.machine, spaces: p.spaces, ...read });
-    let text;
-    try {
-      text = await readTextFile(under(p.key, BOTS_PATH), { on: p.machine });
-    } catch {
-      if (lastGood.has(k)) entry(lastGood.get(k));
-      continue;
-    }
-    if (text === null) {
-      lastGood.delete(k);
-      if (p.remembered) forgetProject(p.key, p.machine);
-      continue;
-    }
-    try {
-      const { file, warnings } = parseBots(text);
-      lastGood.set(k, { file, warnings });
-      entry({ file, warnings });
-    } catch (e) {
-      const why = `${under(p.key, BOTS_PATH)}: ${e?.message ?? e}`;
-      const last = lastGood.get(k);
-      entry(last ? { file: last.file, warnings: [why, ...last.warnings] } : { file: { version: 1, categories: [], bots: [] }, warnings: [why] });
-    }
+  for (const p of Array.isArray(saved.projects) ? saved.projects : []) {
+    if (!p || !str(p.key) || !(p.machine === null || str(p.machine))) continue;
+    let file;
+    try { ({ file } = parseBots(JSON.stringify(p.file))); } catch { continue; }
+    const warnings = Array.isArray(p.warnings) ? p.warnings.filter(str) : [];
+    const k = id(p.machine, p.key);
+    if (!lastGood.has(k)) lastGood.set(k, { file, warnings });
+    const on = spaces().filter((s) => {
+      const folder = s.folder || (s.machine ? null : home());
+      return folder && keys.get(id(s.machine ?? null, folder))?.key === p.key && (s.machine ?? null) === p.machine;
+    }).map((s) => s.id);
+    out.push({ key: p.key, machine: p.machine, spaces: on, file, warnings });
   }
   return out;
 }
