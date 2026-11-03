@@ -1,6 +1,7 @@
 // automagik-herdr, the command line (A11): every subcommand run as a program against scratch git
 // projects under $TMPDIR, with a fake `hc` first on PATH (test/fake-hc.mjs) that records
-// each call and answers from a state file. The real hc is never run.
+// each call and answers from a state file, and a fake `herdr-app` (test/fake-herdr-app.mjs; no
+// window unless a test opens one). The real hc and window are never touched.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
@@ -15,13 +16,14 @@ const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.ur
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
 const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
 /** A scratch world: a git project, a fake hc, a fake home and app home. */
-function scene(t, { terminals = [], briefing = true } = {}) {
+function scene(t, { terminals = [], briefing = true, window = { down: true } } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
@@ -31,6 +33,7 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
@@ -43,7 +46,11 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals, next: 100 }));
   writeFileSync(logPath, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
+  const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
+  writeFileSync(appState, JSON.stringify(window));
+  writeFileSync(appLog, "");
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
   delete env.HC_TERMINAL_ID;
   const cli = (args, { cwd = project, input } = {}) => {
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
@@ -51,10 +58,12 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   };
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
+  const appCalls = () => readFileSync(appLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
   const seed = (file) => { mkdirSync(join(project, ".herdr"), { recursive: true }); writeFileSync(botsPath, `${JSON.stringify(file, null, 2)}\n`); };
-  return { root, project, app, home, cli, calls, hcState, bots, botsPath, seed };
+  return { root, project, app, home, cli, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
 }
 
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -424,6 +433,36 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(again.code, 0);
   assert.match(again.out, /already running in t100/);
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
+});
+
+test("start (#56) lands in the project's space: a project terminal's tab only when its space shows the project", (t) => {
+  // The window: the caller's space on another folder, and the project's, its second tab selected.
+  const startIn = (callerLabels, { projectSpace = true } = {}) => {
+    const s = scene(t);
+    const spaces = [{ id: "sp-caller", folder: "/", machine: null, active: true, tabs: [{ id: "tb-c", active: true, terminals: [] }] }];
+    if (projectSpace) {
+      spaces.push({ id: "sp-proj", folder: s.project, machine: null, active: false,
+        tabs: [{ id: "tb-a", active: false, terminals: [] }, { id: "tb-b", active: true, terminals: [] }] });
+    }
+    writeFileSync(join(s.root, "herdr-app.json"), JSON.stringify({ spaces }));
+    s.seed(team());
+    const caller = term("t20", { cwd: s.project, argv: ["claude"] }); // e.g. an orchestrator working in the project
+    caller.labels = callerLabels;
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [caller], next: 100 }));
+    const r = s.cli(["start", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    return r;
+  };
+  // The caller's tab is in another space: the bot goes to the project's space, in its selected tab.
+  const away = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" });
+  assert.deepEqual([away.json().space, away.json().tab], ["sp-proj", "tb-b"]);
+  // The caller's tab is in the project's space: it takes the bot.
+  const home = startIn({ "herdr.space": "sp-proj", "herdr.tab": "tb-a" });
+  assert.deepEqual([home.json().space, home.json().tab], ["sp-proj", "tb-a"]);
+  // No space shows the project: never the caller's tab; no place, and the "unseen" warning.
+  const none = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" }, { projectSpace: false });
+  assert.deepEqual([none.json().space, none.json().tab], [null, null]);
+  assert.match(none.err, /No open Herdr space shows/);
 });
 
 test("start a member: parent is its lead's live terminal, outliving it; else --no-parent; --space/--tab add placement labels", (t) => {

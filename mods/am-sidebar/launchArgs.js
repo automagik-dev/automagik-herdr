@@ -352,3 +352,13 @@ export function placementFrom(gets) {
   const g = gets.find((x) => typeof x?.labels?.["herdr.space"] === "string" && x.labels["herdr.space"]);
   return g ? { space: g.labels["herdr.space"], tab: g.labels["herdr.tab"] || null, from: g.address } : null;
 }
+
+/**
+ * The same from the window (`herdr-app ls` as state.mjs spacesOf has it): the first space of
+ * this computer whose folder keys to the project (`keys`: Map<folder, key>), in its selected
+ * tab, passing over the ids in `skip`. Null when none does.
+ */
+export function spacePlace(spaces, keys, key, skip = new Set()) {
+  const s = spaces.find((x) => !x.machine && !skip.has(x.id) && x.folder && keys.get(x.folder) === key);
+  return s ? { space: s.id, tab: s.tabs?.find((t) => t.selected)?.id ?? null, from: null } : null;
+}

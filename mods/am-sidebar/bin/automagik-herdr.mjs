@@ -21,7 +21,8 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
-  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
+  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spacePlace, startArgs, startRefusal,
+  youngPane } from "../launchArgs.js";
 import { interpreterPath } from "../agentPath.mjs";
 import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
@@ -35,7 +36,7 @@ import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { plan as tidyPlan, planText } from "../tidy.js";
-import { fixNonVisual, readState } from "./state.mjs";
+import { fixNonVisual, readState, spacesOf } from "./state.mjs";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
 export class CliError extends Error {
@@ -791,7 +792,10 @@ async function pidOf(terminal) {
 /**
  * Where Herdr shows a bot started here (DESIGN: the space whose folder keys to the project):
  * the `herdr.space` / `herdr.tab` labels of a live terminal on this computer whose folder
- * keys to the project. Null when none does; the pane then has no place in Herdr's window.
+ * keys to the project, while the window (herdr-app ls) shows the project in that space: a
+ * caller's tab in another space never takes the bot. Else the window's space on the project, in
+ * its selected tab. Null when none does; the pane then has no place in Herdr's window. With no
+ * window to ask, the first labelled terminal's place.
  */
 async function placementOf(key) {
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && typeof r.cwd === "string");
@@ -800,11 +804,27 @@ async function placementOf(key) {
     try { keys.set(cwd, await keyOf(cwd)); } catch { /* a folder gone: not this project */ }
   }));
   const mine = rows.filter((r) => keys.get(r.cwd) === key);
+  const seen = await windowSpaces();
+  const shows = (place) => !seen || spacePlace(seen.spaces.filter((s) => s.id === place.space), seen.keys, key) !== null;
   for (const r of mine) {
     const place = placementFrom([await hcGet(r.address)].filter(Boolean));
-    if (place) return place;
+    if (place && shows(place)) return place;
   }
+  if (seen) return spacePlace(seen.spaces, seen.keys, key);
   return null;
+}
+
+/** `herdr-app ls` as State spaces (spacesOf) and each folder's key, or null: no herdr-app, no window. */
+async function windowSpaces() {
+  const r = await runProgram("herdr-app", ["ls"]);
+  let spaces;
+  try { spaces = r.code === 0 ? spacesOf(JSON.parse(r.stdout)) : null; } catch { spaces = null; }
+  if (!spaces) return null;
+  const keys = new Map();
+  await Promise.all([...new Set(spaces.map((s) => s.folder).filter(Boolean))].map(async (f) => {
+    try { keys.set(f, await keyOf(f)); } catch { /* a folder gone: not this project */ }
+  }));
+  return { spaces, keys };
 }
 
 async function cmdStart(opts, [ref]) {
