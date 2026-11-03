@@ -1,6 +1,6 @@
 # Space Row: rendering rules (desktop sidebar and Herdr Pocket)
 
-One feed, one design: "we are one". The desktop sidebar (`mods/spaces-agents`) and Herdr Pocket draw
+One feed, one design: "we are one". The desktop sidebar (`mods/am-sidebar`) and Herdr Pocket draw
 the same rows and cards from the same doc, by these rules. Neither client computes, derives or rounds
 anything beyond the formats defined here. The visual spec is the owner-approved mock "Herdr Space
 Row" v38; where this file and the mock differ on data, this file wins (the mock computed its numbers

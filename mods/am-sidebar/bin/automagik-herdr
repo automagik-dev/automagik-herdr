@@ -1,0 +1,13 @@
+#!/bin/sh
+# The automagik-herdr command (install.sh links ~/.local/bin/automagik-herdr here): runs
+# automagik-herdr.mjs beside it with the runtime run.sh finds (node 22.7 or later, else bun), so
+# it works where PATH has no node. Apache-2.0.
+
+# $0 is the link's path: follow the links to this file's own folder.
+p=$0
+while [ -L "$p" ]; do
+  to=$(readlink "$p") || break
+  case $to in /*) p=$to ;; *) p=$(dirname "$p")/$to ;; esac
+done
+dir=$(cd "$(dirname "$p")" && pwd -P) || exit 127
+exec sh "$dir/run.sh" "$dir/automagik-herdr.mjs" "$@"

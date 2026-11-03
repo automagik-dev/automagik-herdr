@@ -1,5 +1,5 @@
 {
   "global": {
-    "cmd-shift-m": "mod.open:mod-manager"
+    "cmd-shift-m": "mod.open:am-mods"
   }
 }

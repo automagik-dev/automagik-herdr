@@ -9,8 +9,8 @@ import fs, { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFi
 import { syncBuiltinESMExports } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { hookCommand, legacyHookCommand } from "../mods/spaces-agents/briefingText.mjs";
-import { foldersOf, migrateHooks } from "../mods/spaces-agents/migrateHooks.mjs";
+import { hookCommand, legacyHookCommand } from "../mods/am-sidebar/briefingText.mjs";
+import { foldersOf, migrateHooks } from "../mods/am-sidebar/migrateHooks.mjs";
 
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 const REAL_HOME = realpathSync(homedir());
@@ -101,4 +101,17 @@ test("a repo-rooted project still finds its hooks at depth; protected names and 
     assert.ok(!calls.readdir.some((p) => under(p, join(repo, name))), `${name} is not entered`);
   }
   assertUntouched(calls, s.home);
+});
+
+test("a scan that reaches its cap stops there and says so: \"scan stopped at N in <root>\"", (t) => {
+  const s = scratchHome(t);
+  const repo = join(s.root, "wide");
+  for (const n of [1, 2, 3, 4, 5]) mkdirSync(join(repo, `d${n}`), { recursive: true });
+  write(settings(repo), hook(s.app));
+  const lines = [];
+  foldersOf([repo], { log: (l) => lines.push(l), scanMax: 3 });
+  assert.deepEqual(lines, [`scan stopped at 3 in ${repo}`]);
+  const quiet = [];
+  foldersOf([repo], { log: (l) => quiet.push(l) });
+  assert.deepEqual(quiet, [], "under the cap: nothing logged");
 });

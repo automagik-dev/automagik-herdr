@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, visibleRows, botFold, categoryFold, knownBots, projectId,
   secondLine, argvToAsk, argvEntry,
-} from "../mods/spaces-agents/rows.js";
-import { parseBots } from "../mods/spaces-agents/model.js";
+} from "../mods/am-sidebar/rows.js";
+import { parseBots } from "../mods/am-sidebar/model.js";
 
 const look = { character: "star", colour: "blue" };
 const bot = (id, more = {}) => ({ id, name: id.slice(2), kind: "member", look, role: `${id} role`, instructions: "", agent: "claude", ...more });
@@ -85,15 +85,16 @@ test("helpersOf: the parent tree, depth first, never a known bot's terminal or w
   assert.deepEqual(got.map((h) => [h.terminal, h.name, h.depth]), [["h1", "build", 0], ["h2", "reviewer", 1], ["h4", "Codex", 0]]);
 });
 
-test("helpersOf: a bot's worker (worker.of, task, no bot label) folds under its pane with its model and effort", () => {
+test("helpersOf: a bot's worker (worker.of, task, no bot label) folds under its pane with its model, effort or template", () => {
   const terms = [
     T("t1", { labels: { bot: "b-devdevdevd" } }),
     T("w1", { parent: "t1", name: "feat-login", labels: { "worker.of": "b-devdevdevd", task: "feat/login", "worker.model": "opus", "worker.effort": "high" } }),
     T("w2", { parent: "t1", name: "fix-x", labels: { "worker.of": "b-devdevdevd", task: "fix/x" } }),
+    T("w3", { parent: "t1", name: "feat-y", labels: { "worker.of": "b-devdevdevd", task: "feat/y", "worker.template": "dev-sol" } }),
   ];
   const got = helpersOf(terms, "t1", new Set(["b-devdevdevd"]));
-  assert.deepEqual(got.map((h) => [h.terminal, h.name, h.depth, h.model, h.effort]),
-    [["w1", "feat-login", 0, "opus", "high"], ["w2", "fix-x", 0, null, null]]);
+  assert.deepEqual(got.map((h) => [h.terminal, h.name, h.depth, h.model, h.effort, h.template]),
+    [["w1", "feat-login", 0, "opus", "high", null], ["w2", "fix-x", 0, null, null, null], ["w3", "feat-y", 0, null, null, "dev-sol"]]);
 });
 
 test("buildTree: the C7 project as plain data", () => {
@@ -258,7 +259,7 @@ test("argvEntry + argvToAsk: a pane read in its sh -c wrapper is asked again on 
 });
 
 test("clickActionOf: a terminal with a pane is focused; a parked one (no pane) is peeked, never kept; remote alike", async () => {
-  const { clickActionOf } = await import("../mods/spaces-agents/rows.js");
+  const { clickActionOf } = await import("../mods/am-sidebar/rows.js");
   const panes = [{ pane: "p1", terminal: "t1dp" }, { pane: "p2", terminal: "box/t4" }, { pane: "p3", terminal: null, mod: "x" }];
   assert.deepEqual(clickActionOf("t1dp", panes), { command: "agent.focus", args: { terminal: "t1dp" } });
   assert.deepEqual(clickActionOf("t1pz", panes), { command: "terminal.peek", args: { terminal: "t1pz" } });

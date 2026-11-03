@@ -9,7 +9,7 @@ import {
   DASH, readFeed, projectOf, lineTwo, cardsOf, botCard, namesOf, arrowOf, fmtCount, fmtMinutes, fmtShare,
   fmtUsd, fmtTokens, fmtAsOf, scaleColor, scaleK, colorOf, pieAngles, sliceAt, polar, fetchFeed, bandLabel, DETAIL_ROWS,
   projectIndex, spaceProject,
-} from "../mods/spaces-agents/spaceRow.js";
+} from "../mods/am-sidebar/spaceRow.js";
 
 const TEXT = readFileSync(new URL("./fixtures/herdr-meter-space.sample.json", import.meta.url), "utf8");
 const DOC = JSON.parse(TEXT);

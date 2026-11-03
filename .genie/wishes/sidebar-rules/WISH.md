@@ -248,7 +248,7 @@ node --test test/order.test.mjs && node --test 'test/*.test.mjs' && for f in mod
 **Deliverables:**
 1. `placementOf` (bin) picks the project's space from `readState()` by project key, never from `where`. Start and Attach write `herdr.space` (and `herdr.tab` when known) to it (D4).
 2. No live space for the project: Start and Attach run `herdr-app do space.new` with folder = main checkout and name = `displayNameOf` (D7), then place the bot there.
-3. `tidy.js` (which may import the pure `order.js`, both being pure) gains the rename rule (a project space whose name is not its display name → `rename-space`) and the order rule (Herdr's order differs from `spaceOrder` without floats → `order-spaces`).
+3. `tidy.js` (which may import the pure `order.js`, both being pure) gains a stale-agent rule (owner, 2026-11-02): a plain agent with no `bot` label, no `worker.of` label and no live parent, idle for more than 6 hours, is planned as `report {kind: "stale-agent"}` with its idle time. It is reported only, never ended. Every agent is a bot seat or a worker; an agent the owner starts by hand is allowed and only reported. Group 3b also gains the rename rule (a project space whose name is not its display name → `rename-space`) and the order rule (Herdr's order differs from `spaceOrder` without floats → `order-spaces`).
 4. `briefingText.mjs`, three lines, all inside the 9,900-character cap:
    - a bot starts helpers from its own pane (hc's default `--parent`, D3);
    - a main bot sets and clears `automagik-herdr.needs-owner` (D11);

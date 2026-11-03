@@ -10,13 +10,13 @@ import { readFileSync } from "node:fs";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
-const fromPack = (context) => context.parentURL?.includes("/mods/spaces-agents/");
+const fromPack = (context) => context.parentURL?.includes("/mods/am-sidebar/");
 registerHooks({
   resolve: (specifier, context, next) => (stubs[specifier] && fromPack(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
 });
 const { all, textOf } = await import(stubs["gpui-kit"]);
-const { OPEN_MS, CLOSE_MS, lineTwoEl, cardEl, statsButtonEl, botCardEl } = await import("../mods/spaces-agents/spaceCards.js");
-const { readFeed, lineTwo, cardsOf, botCard, DASH } = await import("../mods/spaces-agents/spaceRow.js");
+const { OPEN_MS, CLOSE_MS, lineTwoEl, cardEl, statsButtonEl, botCardEl } = await import("../mods/am-sidebar/spaceCards.js");
+const { readFeed, lineTwo, cardsOf, botCard, DASH } = await import("../mods/am-sidebar/spaceRow.js");
 
 const DOC = JSON.parse(readFileSync(new URL("./fixtures/herdr-meter-space.sample.json", import.meta.url), "utf8"));
 const P = "/work/example-project";
@@ -113,7 +113,7 @@ test("the bot card: – for null, $0.00 for 0, no bar without parts", () => {
 });
 
 test("main.js reads the feed with hc on a timer, never per render", () => {
-  const main = readFileSync(new URL("../mods/spaces-agents/main.js", import.meta.url), "utf8");
+  const main = readFileSync(new URL("../mods/am-sidebar/main.js", import.meta.url), "utf8");
   assert.match(main, /cx\.timer\.every\(FEED_EVERY_MS, \(cx\) => this\.feedTick\(cx\)\)/);
   assert.match(main, /fetchFeed\(\{ hc, exec \}\)/);
   const render = main.slice(main.indexOf("  render(cx) {"));

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import {
   BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
   listedProjects, withListedProject, MAX_LISTED_PROJECTS,
-} from "../mods/spaces-agents/model.js";
+} from "../mods/am-sidebar/model.js";
 
 const run = promisify(execFile);
 // What bots.js hands projectKeyOf, over Node instead of Herdr's exec.
@@ -159,6 +159,34 @@ test("schema: a valid file parses with no warnings and checks clean", () => {
   assert.deepEqual(checkBots(file), []);
 });
 
+test("schema: a gemini bot's gemini-era model pins are dropped on read (seat and worker), raw keeps them", () => {
+  const source = sample((f) => {
+    f.bots[1].agent = "gemini";
+    f.bots[1].model = "gemini-2.5-pro";
+    f.bots[1].worker = { model: "gemini-2.5-flash", effort: "high" };
+    f.bots[2].worker = { agent: "gemini", model: "gemini-2.5-pro" };
+    f.bots[3].agent = "gemini";
+    f.bots[3].worker = { agent: "codex", model: "gpt-6.1-sol" };
+    return f;
+  });
+  const { file, warnings, raw } = parseBots(text(source));
+  const [cap, dev, tst] = [file.bots[1], file.bots[2], file.bots[3]];
+  assert.equal(cap.agent, "antigravity");
+  assert.equal(cap.model, undefined, "the seat's gemini pin is gone");
+  assert.deepEqual(cap.worker, { effort: "high" }, "its workers ran gemini too: their model is gone, effort kept");
+  assert.equal(dev.agent, "claude");
+  assert.deepEqual(dev.worker, { agent: "antigravity" });
+  assert.equal(tst.model, undefined, "its seat pin was made for gemini");
+  assert.deepEqual(tst.worker, { agent: "codex", model: "gpt-6.1-sol" }, "a codex worker keeps its codex model");
+  assert.deepEqual(warnings, [
+    `${ID.cap}: agent gemini is retired; it runs on antigravity (model pin gemini-2.5-pro and worker model gemini-2.5-flash dropped)`,
+    `${ID.dev}: agent gemini is retired; it runs on antigravity (worker model gemini-2.5-pro dropped)`,
+    `${ID.tst}: agent gemini is retired; it runs on antigravity (model pin GPT-6.1 Sol dropped)`,
+  ]);
+  assert.equal(raw.bots[1].model, "gemini-2.5-pro");
+  assert.equal(raw.bots[2].worker.model, "gemini-2.5-pro");
+});
+
 test("schema: raw is the file as read, entries left out of file included, and a separate copy", () => {
   const source = sample((f) => { f.bots.push({ name: "nobody", kind: "member" }); f.categories.push({ title: "no id" }); return f; });
   const { file, raw } = parseBots(text(source));
@@ -305,7 +333,7 @@ test("label key", () => {
 });
 
 // ---- the Create form's write-back (applyBotEdit) ----
-import { applyBotEdit, newCategoryId, OMNI_LOOK } from "../mods/spaces-agents/model.js";
+import { applyBotEdit, newCategoryId, OMNI_LOOK } from "../mods/am-sidebar/model.js";
 
 test("create: the first bot of a project, from no file, is a valid file", () => {
   const out = applyBotEdit(null, bot(ID.main, "main", { look: { ...OMNI_LOOK }, lead: ID.cap, category: "eng" }));
@@ -356,7 +384,7 @@ test("create: instructions over 4,000 characters can't be written", () => {
 });
 
 test("lead choices: a bot's descendants at any depth can't be its lead", async () => {
-  const { descendantsOf } = await import("../mods/spaces-agents/model.js");
+  const { descendantsOf } = await import("../mods/am-sidebar/model.js");
   const f = sample();
   assert.deepEqual([...descendantsOf(f, ID.cap)].sort(), [ID.dev, ID.tst].sort());
   assert.deepEqual([...descendantsOf(f, ID.dev)], []);
@@ -366,7 +394,7 @@ test("lead choices: a bot's descendants at any depth can't be its lead", async (
 });
 
 test("edit: planned keeps its other keys; wave and note come from the form", async () => {
-  const { plannedOf } = await import("../mods/spaces-agents/model.js");
+  const { plannedOf } = await import("../mods/am-sidebar/model.js");
   assert.deepEqual(plannedOf({ wave: 3, note: "old", squad: "access" }, 4, ""), { wave: 4, squad: "access" });
   assert.deepEqual(plannedOf(null, 1, "later"), { wave: 1, note: "later" });
 });
@@ -386,10 +414,10 @@ test("the CLI's project list: absolute keys once each, the newest last, at most 
 });
 
 // ---- A16: rank ----
-import { RANKS } from "../mods/spaces-agents/model.js";
+import { RANKS } from "../mods/am-sidebar/model.js";
 
 test("rank: an unknown one is warned about and dropped when shown, and refused when written; role stays free text", () => {
-  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "integrator", "pm", "owner"]);
+  assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "fixer", "integrator", "pm", "owner"]);
   const raw = { version: 1, categories: [], bots: [bot(ID.main, "main", { rank: "owner", role: "Runs it all" }), bot(ID.cap, "member", { rank: "boss" })] };
   const { file, warnings } = parseBots(JSON.stringify(raw));
   assert.equal(file.bots[0].rank, "owner");
@@ -427,4 +455,28 @@ test("category ids: parseBots warns about a non-slug id; checkBots refuses only 
   for (const title of ["Ação & Studio", "  --Quality \"gate\"-- ", "!!!", "Platform 2"]) {
     assert.match(newCategoryId(title, []), /^[a-z0-9]+(-[a-z0-9]+)*$/, title);
   }
+});
+
+test("schema: a gemini bot (retired agent) is read as antigravity with one warning; raw keeps gemini", () => {
+  const source = sample((f) => {
+    f.bots[1].agent = "gemini";
+    f.bots[2].agent = "gemini";
+    f.bots[2].worker = { agent: "gemini", effort: "high" };
+    f.bots[3].worker = { agent: "gemini" };
+    return f;
+  });
+  const { file, warnings, raw } = parseBots(text(source));
+  assert.equal(file.bots[1].agent, "antigravity");
+  assert.equal(file.bots[2].agent, "antigravity");
+  assert.deepEqual(file.bots[2].worker, { agent: "antigravity", effort: "high" });
+  assert.equal(file.bots[3].agent, "claude");
+  assert.deepEqual(file.bots[3].worker, { agent: "antigravity" });
+  assert.deepEqual(warnings, [
+    `${ID.cap}: agent gemini is retired; it runs on antigravity`,
+    `${ID.dev}: agent gemini is retired; it runs on antigravity`,
+    `${ID.tst}: agent gemini is retired; it runs on antigravity`,
+  ], "one line per bot, even when its worker names gemini too");
+  assert.equal(raw.bots[1].agent, "gemini", "the file on disk is not rewritten by reading it");
+  assert.equal(raw.bots[2].worker.agent, "gemini");
+  assert.deepEqual(checkBots(file), []);
 });

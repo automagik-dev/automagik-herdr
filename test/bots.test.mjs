@@ -11,8 +11,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { PROJECTS_FILE } from "../mods/spaces-agents/model.js";
-const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/spaces-agents/bots.js");
+import { PROJECTS_FILE } from "../mods/am-sidebar/model.js";
+const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
 
 const run = promisify(execFile);
 const ID = { main: "b-aaaaaaaaaa", dev: "b-cccccccccc" };

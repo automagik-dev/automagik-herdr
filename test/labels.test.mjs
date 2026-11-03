@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import {
   paneLabels, roleOf, labelWords, relabelWords, detachWords, relabelPlan, labelMoves, startArgs, SQUAD_MARK,
   relabel, relabelWarning, leadPane, attachWords,
-} from "../mods/spaces-agents/launchArgs.js";
-import { parseBots, effectiveCategory } from "../mods/spaces-agents/model.js";
+} from "../mods/am-sidebar/launchArgs.js";
+import { parseBots, effectiveCategory } from "../mods/am-sidebar/model.js";
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", test: "b-dddddddddd", plan: "b-eeeeeeeeee", pm: "b-ffffffffff" };
 const bot = (id, kind, extra = {}) => ({ id, name: id.slice(2, 5), kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "", agent: "claude", ...extra });

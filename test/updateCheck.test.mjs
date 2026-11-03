@@ -8,9 +8,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { announce, CHECK_EVERY_MS, EXEC_TIMEOUT_MS, NODE_PATHS, RETRY_MS, SHOWN_KEY, nextCheckIn, nodeOrder, noticeFor, readCheck, runCheck, shownFrom } from "../mods/spaces-agents/updateCheck.js";
-import { LATEST_URL } from "../mods/spaces-agents/release.js";
-import { cmdUpdate, CliError } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
+import { announce, CHECK_EVERY_MS, EXEC_TIMEOUT_MS, NODE_PATHS, RETRY_MS, SHOWN_KEY, nextCheckIn, nodeOrder, noticeFor, readCheck, runCheck, shownFrom } from "../mods/am-sidebar/updateCheck.js";
+import { LATEST_URL } from "../mods/am-sidebar/release.js";
+import { cmdUpdate, CliError } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 
 const UP = { version: "0.2.0", tag: "v0.2.0", page: "https://github.com/automagik-dev/automagik-herdr/releases/tag/v0.2.0" };
 const line = (o) => `${JSON.stringify(o)}\n`;
@@ -32,10 +32,10 @@ test("nodeOrder: PATH, then Homebrew (Apple silicon), then /usr/local; the one t
 test("runCheck: node missing from a Dock-started Herdr's PATH, found under /opt/homebrew", async () => {
   const calls = [];
   const exec = fakeExec({ "/opt/homebrew/bin/node": { code: 0, stdout: line({ current: "0.1.0", latest: "0.2.0", update: UP }), stderr: "" } }, calls);
-  const r = await runCheck(exec, "/app/mods/spaces-agents/update.mjs");
+  const r = await runCheck(exec, "/app/mods/am-sidebar/update.mjs");
   assert.equal(r.node, "/opt/homebrew/bin/node");
   assert.deepEqual(calls.map((c) => c[0]), ["node", "/opt/homebrew/bin/node"]);
-  assert.deepEqual(calls[1].slice(1), ["/app/mods/spaces-agents/update.mjs", "check"]);
+  assert.deepEqual(calls[1].slice(1), ["/app/mods/am-sidebar/update.mjs", "check"]);
   assert.equal(readCheck(r.result).kind, "update");
 });
 
@@ -71,8 +71,8 @@ test("runCheck: a node that never answers is given up after EXEC_TIMEOUT_MS and 
 test("runCheck: --mods names the app home's mods folder, so the installed version is that Herdr's", async () => {
   const calls = [];
   await runCheck(fakeExec({ node: { code: 0, stdout: line({ current: "0.1.0", latest: "0.1.0", update: null }) } }, calls),
-    "/home/x/app/mods/spaces-agents/update.mjs", null, { mods: "/home/x/app/mods" });
-  assert.deepEqual(calls[0], ["node", "/home/x/app/mods/spaces-agents/update.mjs", "check", "--mods", "/home/x/app/mods"]);
+    "/home/x/app/mods/am-sidebar/update.mjs", null, { mods: "/home/x/app/mods" });
+  assert.deepEqual(calls[0], ["node", "/home/x/app/mods/am-sidebar/update.mjs", "check", "--mods", "/home/x/app/mods"]);
 });
 
 test("the announced version is kept in shared: a reload or a second view doesn't announce it again", () => {
@@ -134,8 +134,8 @@ function mods(t, version = "0.1.0") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-up-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = join(root, "mods");
-  mkdirSync(join(dir, "spaces-agents"), { recursive: true });
-  writeFileSync(join(dir, "spaces-agents/VERSION"), `${version}\n`);
+  mkdirSync(join(dir, "am-sidebar"), { recursive: true });
+  writeFileSync(join(dir, "am-sidebar/VERSION"), `${version}\n`);
   return { root, dir };
 }
 
@@ -163,7 +163,7 @@ test("automagik-herdr update: the network down is one clear line, exit 1; flag m
   await assert.rejects(cmdUpdate({ rollback: true }, [], { modsDir: dir }), (e) => e instanceof CliError && /^Nothing rolled back: no earlier pack kept/.test(e.message));
 });
 
-const BIN = new URL("../mods/spaces-agents/bin/", import.meta.url).pathname;
+const BIN = new URL("../mods/am-sidebar/bin/", import.meta.url).pathname;
 const run = (file, args, env = {}) => spawnSync(process.execPath, [join(BIN, file), ...args], { encoding: "utf8", env: { ...process.env, ...env } });
 
 test("the program: update --check --json with updates off touches no network", (t) => {

@@ -4,8 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/spaces-agents/formModel.js";
-import { applyBotEdit, checkBots, parseBots } from "../mods/spaces-agents/model.js";
+import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/am-sidebar/formModel.js";
+import { applyBotEdit, checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -245,8 +245,10 @@ test("rank: members pick one or none; an edit keeps the stored one; the main bot
 
 test("rank: a stored rank outside the set is a problem until changed; the line names --rank, --rank= clears", () => {
   const ctx = { key: KEY, file: FILE, info: modelInfo("codex", CODEX) };
-  assert.match(problemOf(create({ rank: "main" }), ctx), /"main" isn't a rank; pick one of captain, dev, tester, reviewer, integrator, pm, owner, or none/);
+  assert.match(problemOf(create({ rank: "main" }), ctx), /"main" isn't a rank; pick one of captain, dev, tester, reviewer, fixer, integrator, pm, owner, or none/);
   assert.equal(problemOf(create({ rank: "pm" }), ctx), null);
+  assert.equal(problemOf(create({ rank: "fixer" }), ctx), null);
+  assert.match(commandOf(create({ rank: "fixer" }), { key: KEY, file: FILE }), / --rank=fixer /);
   assert.equal(problemOf(create({ kind: "main", rank: "main" }), { ...ctx, file: { ...FILE, bots: FILE.bots.filter((b) => b.kind !== "main") } }), null);
   assert.match(commandOf(create({ rank: "tester" }), { key: KEY, file: FILE }), / --rank=tester /);
   assert.doesNotMatch(commandOf(create(), { key: KEY, file: FILE }), /--rank/);
@@ -259,7 +261,7 @@ test("rank: a stored rank outside the set is a problem until changed; the line n
 
 // ---- the generated lines run through a real shell and the real CLI ----
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const SHELLS = ["/bin/sh", "/bin/zsh"].filter((sh) => existsSync(sh));
 // Values a shell or the CLI's strict parser could take for something else.
 const NASTY = {
@@ -338,4 +340,13 @@ test("UI_ICONS: the mockup's six icons as stroke-only SVG documents (tinted by s
     assert.doesNotMatch(text, /<script|url\(/, name);
   }
   assert.equal(uiIconFile("close"), "ui-close.svg");
+});
+
+test("formFrom: a stored gemini bot opens on antigravity with its gemini-era pin dropped; others keep theirs", () => {
+  const base = { id: "b-gemaaaaaaa", name: "g", kind: "member", look: { character: "star", colour: "blue" } };
+  const gem = formFrom({ mode: "edit", bot: { ...base, agent: "gemini", model: "gemini-2.5-pro" } });
+  assert.equal(gem.agent, "antigravity");
+  assert.equal(gem.pin, "");
+  const kept = formFrom({ mode: "edit", bot: { ...base, agent: "claude", model: "opus" } });
+  assert.deepEqual([kept.agent, kept.pin], ["claude", "opus"]);
 });

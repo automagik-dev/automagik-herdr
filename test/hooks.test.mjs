@@ -9,17 +9,17 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ledgerPath } from "../mods/spaces-agents/workers.js";
-import { OURS, commandFor, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/spaces-agents/briefingText.mjs";
+import { ledgerPath } from "../mods/am-sidebar/workers.js";
+import { OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
 import {
-  BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
+  BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, hooksNotice, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
   toStable,
-} from "../mods/spaces-agents/migrateHooks.mjs";
+} from "../mods/am-sidebar/migrateHooks.mjs";
 
 // git here must not read this host's global config.
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const PACK = join(ROOT, "mods", "spaces-agents");
+const PACK = join(ROOT, "mods", "am-sidebar");
 const UPDATE = join(PACK, "update.mjs");
 const NODE_DIR = dirname(process.execPath);
 const read = (path) => readFileSync(path, "utf8");
@@ -190,7 +190,7 @@ test("revertHooks edits only commands still holding the forward value, keeps wha
   const r = revertHooks([kept, changed, fresh], { appHome: s.app });
   assert.deepEqual(r.restored.sort(), [settings(fresh), settings(kept)].sort());
   assert.deepEqual(r.skipped.map((x) => x.file), [settings(changed)]);
-  assert.match(r.skipped[0].reason, /^no longer command -v node .*: left as it is$/);
+  assert.match(r.skipped[0].reason, /^no longer r="[^"]*\/mods\/am-sidebar\/bin\/run\.sh"; .*: left as it is$/);
   assert.deepEqual(commands(settings(kept)), ["brain recall", legacyHookCommand(s.app)]);
   assert.deepEqual(readJson(settings(kept)).permissions.allow, ["Bash(git status)", "Bash(npm test)"]);
   assert.deepEqual(commands(settings(fresh)), [legacyHookCommand(s.app)]);
@@ -240,6 +240,14 @@ test("botPaneFolders: the folders of live, bot-labelled local panes; none when h
   const run = (cmd, args) => { const a = answers[args.join(" ")]; if (cmd !== "hc" || !a) throw new Error("no"); return JSON.stringify(a); };
   assert.deepEqual(botPaneFolders(run), ["/p/sub"]);
   assert.deepEqual(botPaneFolders(() => { throw new Error("no hc"); }), []);
+});
+test("botPaneFolders: the foreground's cwd wins over the pane's own (Attach writes the hook there)", () => {
+  const answers = {
+    "ls --json": { terminals: [{ address: "t1", state: "live", cwd: "/p/row" }] },
+    "get t1 --json": { labels: { bot: "b-aaaaaaaaaa" }, cwd: "/p/shell", foreground: { cwd: "/p/attached" } },
+  };
+  const run = (cmd, args) => { const a = answers[args.join(" ")]; if (cmd !== "hc" || !a) throw new Error("no"); return JSON.stringify(a); };
+  assert.deepEqual(botPaneFolders(run), ["/p/attached"]);
 });
 
 test("knownProjects: the sidebar's remembered projects (both keys) and the CLI's lists, this computer's only", (t) => {
@@ -350,7 +358,8 @@ test("relink: the CLI link follows the sidebar folder; --version works through i
   symlinkSync(join(s.mods, "spaces-agents", "bin", "automagik-herdr.mjs"), link);
   const owned = new Set(["am-sidebar"]);
   assert.match(relink({ binDir: bin, modsDir: s.mods, owned }), /^linked /);
-  assert.equal(readlinkSync(link), join(s.mods, "am-sidebar", "bin", "automagik-herdr.mjs"));
+  // The folder ships the bin/automagik-herdr wrapper (it runs the .mjs through bin/run.sh): the link names it.
+  assert.equal(readlinkSync(link), join(s.mods, "am-sidebar", "bin", "automagik-herdr"));
   const v = spawnSync(link, ["--version"], { encoding: "utf8", env: { PATH: `${NODE_DIR}:/usr/bin:/bin`, HOME: join(s.root, "home"), HERDR_APP_HOME: s.app } });
   assert.equal(v.status, 0, v.stderr);
   assert.equal(v.stdout, `automagik-herdr ${read(join(PACK, "VERSION")).trim()}\n`);
@@ -403,22 +412,63 @@ test("update.mjs: install across the rename moves the hooks; rollback to v0.3 pu
   assert.ok(existsSync(join(s.mods, "am-sidebar", "briefing.mjs")) && !existsSync(join(s.mods, "spaces-agents")));
   assert.deepEqual(commands(settings(s.proj)), ["brain recall", hookCommand(s.app)]);
   assert.deepEqual(commands(settings(s.worker)), [hookCommand(s.app)], "the worker's worktree too");
-  assert.match(installed.stderr, /\/hooks there once/);
+  // The notice, last: each rewritten file with its project, running sessions, unknown projects.
+  const said = installed.stderr.split("\n").filter((l) => l.startsWith("notice: ")).map((l) => l.slice(8));
+  assert.match(said[0], /^IMPORTANT: the bots' briefing hook moved to a new path in 2 settings files:$/);
+  for (const dir of [s.proj, s.worker]) assert.ok(said.includes(`  ${dir}: ${settings(dir)}`), `${dir} is listed: ${said.join("\n")}`);
+  assert.ok(said.some((l) => /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/.test(l)));
+  assert.ok(said.some((l) => /not rewritten .*automagik-herdr start <bot>.*automagik-herdr attach <bot>/.test(l)));
+  assert.ok(installed.stderr.trimEnd().endsWith(said.at(-1)), "the notice is the last thing logged");
   const viaEntry = s.hook(hookCommand(s.app));
   assert.match(viaEntry.stdout, /You are Genie/, `the hook runs am-sidebar's briefing (${viaEntry.ms} ms, stderr: ${viaEntry.stderr})`);
 
-  // install.sh would link the CLI to am-sidebar; the rollback points it back.
-  symlinkSync(join(s.mods, "am-sidebar", "bin", "automagik-herdr.mjs"), link);
+  // install.sh would link the CLI to am-sidebar's wrapper; the rollback points it back.
+  symlinkSync(join(s.mods, "am-sidebar", "bin", "automagik-herdr"), link);
   const back = cli("rollback");
   assert.equal(back.status, 0, back.stderr);
+  assert.match(back.stderr, /^notice: IMPORTANT: the bots' briefing hook went back to the older release's path in 2 settings files:$/m);
+  assert.match(back.stderr, /^notice: A Claude session already running in those projects keeps the hook it loaded/m);
   assert.ok(existsSync(join(s.mods, "spaces-agents", "briefing.mjs")) && !existsSync(join(s.mods, "am-sidebar")));
   assert.deepEqual(commands(settings(s.proj)), ["brain recall", legacyHookCommand(s.app)]);
   assert.deepEqual(commands(settings(s.worker)), [legacyHookCommand(s.app)]);
   assert.deepEqual(readJson(settings(s.proj)).permissions, v020(s.app).permissions);
-  assert.equal(readlinkSync(link), join(s.mods, "spaces-agents", "bin", "automagik-herdr.mjs"));
+  // The kept spaces-agents (this checkout's) ships the wrapper too: the link names it.
+  assert.equal(readlinkSync(link), join(s.mods, "spaces-agents", "bin", "automagik-herdr"));
   const v = spawnSync(link, ["--version"], { encoding: "utf8", env: { PATH: `${NODE_DIR}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: s.app } });
   assert.equal(v.status, 0, v.stderr);
   assert.match(v.stdout, /^automagik-herdr \d+\.\d+\.\d+\n$/);
   assert.equal(read(join(s.mods, "pocket-link", ".state", "pairing.key")), "secret\n");
   assert.deepEqual(readdirSync(join(s.mods, "pocket-link")), [".state"]);
+});
+
+test("revertHooks: a direct hook (written with no entry point to place) goes back to v0.3's path too", (t) => {
+  const s = scratch(t);
+  const proj = project(s.root, "direct");
+  writeSettings(proj, { permissions: { allow: ["Edit"] }, hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: directHookCommand(s.app), timeout: 10 }] }] } });
+  assert.match(directHookCommand(s.app), /\/mods\/am-sidebar\/briefing\.mjs"$/);
+  const r = revertHooks([proj], { appHome: s.app });
+  assert.deepEqual(r.restored, [settings(proj)]);
+  assert.deepEqual(commands(settings(proj)), [legacyHookCommand(s.app)]);
+  assert.deepEqual(readJson(settings(proj)).permissions, { allow: ["Edit"] });
+  assert.deepEqual(revertHooks([proj], { appHome: s.app }).restored, [], "nothing the second time");
+});
+
+test("hooksNotice: every file with its project, the running sessions, unknown projects; nothing when nothing moved", () => {
+  const files = ["/p/a/.claude/settings.local.json", "/p/b/sub/.claude/settings.local.json"];
+  const forward = hooksNotice({ direction: "forward", rewritten: files, skipped: [] });
+  assert.deepEqual(forward.slice(0, 3), ["IMPORTANT: the bots' briefing hook moved to a new path in 2 settings files:",
+    `  /p/a: ${files[0]}`, `  /p/b/sub: ${files[1]}`]);
+  assert.match(forward[3], /running .* keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once\.$/);
+  assert.match(forward[4], /^Projects the pack doesn't know about were not rewritten/);
+  const back = hooksNotice({ direction: "back", restored: [files[0]], skipped: [] });
+  assert.equal(back[0], "IMPORTANT: the bots' briefing hook went back to the older release's path in 1 settings file:");
+  assert.equal(back.length, 3, "no unknown-projects line on the way back");
+  for (const none of [null, undefined, { direction: null, skipped: [] }, { direction: "forward", rewritten: [], skipped: [] },
+    { direction: "back", restored: [], skipped: [], crossed: true }]) assert.deepEqual(hooksNotice(none), []);
+  // Across the rename with nothing rewritten: still the warning, and both lines.
+  const silent = hooksNotice({ direction: "forward", rewritten: [], skipped: [], crossed: true });
+  assert.equal(silent.length, 3);
+  assert.match(silent[0], /^IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten/);
+  assert.match(silent[1], /a bot's project keeps the OLD hook and gets NO briefing/);
+  assert.match(silent[2], /^Projects the pack doesn't know about were not rewritten/);
 });
