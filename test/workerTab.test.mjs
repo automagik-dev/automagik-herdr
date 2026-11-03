@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { workerClick, workerTabName, keptSteps, openWorkerTab } from "../mods/spaces-agents/workerTab.js";
-import { helpersOf, visibleRows } from "../mods/spaces-agents/rows.js";
+import { workerClick, workerTabName, keptSteps, openWorkerTab } from "../mods/am-sidebar/workerTab.js";
+import { helpersOf, visibleRows } from "../mods/am-sidebar/rows.js";
 
 // A bot (t1, pane p1) in tab tb2 of space sp1; its worker t7 has no pane yet.
 const tabs = () => [{ id: "tb1", index: 1 }, { id: "tb2", index: 2 }, { id: "tb3", index: 3 }];

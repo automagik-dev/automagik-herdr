@@ -11,8 +11,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { PROJECTS_FILE } from "../mods/spaces-agents/model.js";
-const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/spaces-agents/bots.js");
+import { PROJECTS_FILE } from "../mods/am-sidebar/model.js";
+const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
 
 const run = promisify(execFile);
 const ID = { main: "b-aaaaaaaaaa", dev: "b-cccccccccc" };
@@ -48,7 +48,7 @@ test("writeBots from a worktree's key writes the main checkout only, and remembe
   assert.equal(existsSync(join(tree, ".herdr")), false);
   const written = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
   assert.deepEqual(JSON.parse(written), sample());
-  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: null }]);
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: main, machine: null }]);
   // The snapshot is required, and a stale one rejects instead of losing an edit.
   await assert.rejects(writeBots(key, sample()), /text the edit started from/);
   await assert.rejects(writeBots(key, sample(), null), /stale/);
@@ -145,12 +145,12 @@ test("discoverProjects: a remembered project with no space is found; forgotten o
   // "far" unreachable: its read rejects, it stays remembered and keeps its last good read.
   state.offline.add("far");
   assert.equal((await discoverProjects()).length, 2);
-  assert.equal(state.shared.get("spaces-agents.projects").length, 2);
+  assert.equal(state.shared.get("am.sidebar.projects").length, 2);
   // The file gone (read returns null): forgotten here, and still remembered for "far".
   unlinkSync(join(main, ".herdr", "bots.json"));
   const gone = await discoverProjects();
   assert.deepEqual(gone.map((p) => p.machine), ["far"]);
-  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: "far" }]);
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: main, machine: "far" }]);
 });
 
 test("discoverProjects: the CLI's project list is found with no space; a gone one is hidden, the list left alone", async (t) => {
@@ -202,7 +202,7 @@ test("writeBots after an edit relabels the changed bots' live local panes withou
   const { relabel } = await writeBots(main, edited, text);
   assert.equal(JSON.parse(readFileSync(join(main, ".herdr", "bots.json"), "utf8")).bots[1].rank, "pm");
   release();
-  assert.deepEqual(await relabel, { done: ["t5"], failed: ["t6"] });
+  assert.deepEqual(await relabel, { done: ["t5"], failed: ["t6"], unchecked: [] });
   assert.deepEqual(state.hcCalls, [["label", "t5", "role=pm"], ["label", "t6", "role=pm"]]); // never far/t7
   assert.equal(state.notes.length, 1);
   assert.match(state.notes[0].body, /these panes' labels weren't updated: t6/);
@@ -213,14 +213,15 @@ test("writeBots after an edit relabels the changed bots' live local panes withou
     const again = sample();
     again.bots[1].rank = "dev";
     const out = await writeBots(main, again, text);
-    assert.deepEqual((await out.relabel).done, []);
+    assert.deepEqual(await out.relabel, { done: [], failed: [], unchecked: [ID.dev] });
   } finally {
     Object.defineProperty(state, "terminals", { configurable: true, writable: true, value: [] });
   }
   assert.equal(state.notes.length, 2);
+  assert.match(state.notes[1].body, new RegExp(`^Saved, but these bots' panes could not be checked: ${ID.dev}\\.`));
   // A new file relabels nothing (no pane can carry its bots yet).
   state.hcCalls = [];
   const other = await repo(t);
-  assert.deepEqual(await (await writeBots(other.main, sample(), null)).relabel, { done: [], failed: [] });
+  assert.deepEqual(await (await writeBots(other.main, sample(), null)).relabel, { done: [], failed: [], unchecked: [] });
   assert.deepEqual(state.hcCalls, []);
 });

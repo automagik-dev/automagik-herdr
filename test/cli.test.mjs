@@ -8,10 +8,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { checkBots, parseBots } from "../mods/spaces-agents/model.js";
-import { writeBotsFile, findBot, CliError, listProject } from "../mods/spaces-agents/bin/automagik-herdr.mjs";
+import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
+import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
 const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -37,8 +37,8 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "sonnet" }));
   const app = join(root, "app");
-  mkdirSync(join(app, "mods/spaces-agents"), { recursive: true });
-  if (briefing) writeFileSync(join(app, "mods/spaces-agents/briefing.mjs"), "// stand-in\n");
+  mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
+  if (briefing) writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
   const statePath = join(root, "hc.json");
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals, next: 100 }));
@@ -334,15 +334,18 @@ test("ls by the ledger: a shell pane shows no agent in front; the import takes t
 
 test("create, edit, category, start and attach list their project for the sidebar; ls --all reads the list", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
-  const list = join(s.app, "spaces-agents-projects.json");
+  const list = join(s.app, "am-sidebar-projects.json");
   const listed = () => JSON.parse(readFileSync(list, "utf8"));
-  writeFileSync(list, JSON.stringify(["/elsewhere"]));
+  // A folder that is there: start, attach and create take a gone one off the list (tidy).
+  const elsewhere = join(s.root, "elsewhere");
+  mkdirSync(elsewhere);
+  writeFileSync(list, JSON.stringify([elsewhere]));
   assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
-  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  assert.deepEqual(listed(), [elsewhere, s.project]);
   // Once each, the newest last.
-  writeFileSync(list, JSON.stringify([s.project, "/elsewhere"]));
+  writeFileSync(list, JSON.stringify([s.project, elsewhere]));
   assert.equal(s.cli(["edit", "Genie", "--role", "lead"]).code, 0);
-  assert.deepEqual(listed(), ["/elsewhere", s.project]);
+  assert.deepEqual(listed(), [elsewhere, s.project]);
   writeFileSync(list, "[]");
   assert.equal(s.cli(["category", "add", "--title", "Eng"]).code, 0);
   assert.deepEqual(listed(), [s.project]);
@@ -369,21 +372,21 @@ test("twenty CLIs listing projects at once lose none of them", async (t) => {
     execFile(process.execPath, ["--input-type=module", "-e", writer, key, app], (err) => done(err ? err.code ?? 1 : 0));
   })));
   assert.deepEqual(codes, keys.map(() => 0));
-  const listed = JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8"));
+  const listed = JSON.parse(readFileSync(join(app, "am-sidebar-projects.json"), "utf8"));
   assert.deepEqual([...listed].sort(), [...keys].sort());
-  assert.equal(existsSync(join(app, "spaces-agents-projects.json.lock")), false);
+  assert.equal(existsSync(join(app, "am-sidebar-projects.json.lock")), false);
 });
 
 test("a stale project-list lock (a CLI killed mid-write) is taken over, and nothing is left behind", (t) => {
   const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-lock-")));
   t.after(() => rmSync(app, { recursive: true, force: true }));
-  const lock = join(app, "spaces-agents-projects.json.lock");
+  const lock = join(app, "am-sidebar-projects.json.lock");
   writeFileSync(lock, "999999 someone-else");
   const old = new Date(Date.now() - 60_000);
   utimesSync(lock, old, old);
   assert.equal(listProject("/p/a", app), true);
-  assert.deepEqual(JSON.parse(readFileSync(join(app, "spaces-agents-projects.json"), "utf8")), ["/p/a"]);
-  assert.deepEqual(readdirSync(app), ["spaces-agents-projects.json"]);
+  assert.deepEqual(JSON.parse(readFileSync(join(app, "am-sidebar-projects.json"), "utf8")), ["/p/a"]);
+  assert.deepEqual(readdirSync(app), ["am-sidebar-projects.json"]);
 });
 
 test("with no app home, nothing is listed and the command still succeeds; an unwritable list only warns", (t) => {
@@ -391,7 +394,7 @@ test("with no app home, nothing is listed and the command still succeeds; an unw
   rmSync(s.app, { recursive: true, force: true });
   assert.equal(s.cli(["create", "--name", "Genie", "--agent", "claude"]).code, 0);
   assert.equal(existsSync(s.app), false);
-  mkdirSync(join(s.app, "spaces-agents-projects.json"), { recursive: true }); // a folder where the file goes
+  mkdirSync(join(s.app, "am-sidebar-projects.json"), { recursive: true }); // a folder where the file goes
   const r = s.cli(["edit", "Genie", "--role", "lead"]);
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /couldn't list .* so the sidebar shows it only once a space is open on it/);
@@ -413,7 +416,7 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
   const settings = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
-  assert.match(settings.hooks.UserPromptSubmit[0].hooks[0].command, new RegExp(`${s.app}/mods/spaces-agents/briefing.mjs`));
+  assert.match(settings.hooks.UserPromptSubmit[0].hooks[0].command, new RegExp(`${s.app}/mods/am-sidebar/briefing.mjs`));
   assert.match(readFileSync(join(s.project, ".git/info/exclude"), "utf8"), /\*\*\/\.claude\/settings\.local\.json/);
   assert.equal(git(s.project, "status", "--porcelain", "--", ".claude"), "");
   // Started: the next start reports the running pane and runs nothing.

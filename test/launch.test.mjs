@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand } from "../mods/spaces-agents/launchArgs.js";
-const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/spaces-agents/launch.js");
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand } from "../mods/am-sidebar/launchArgs.js";
+const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -94,14 +94,14 @@ test("commands: name with optional JSON or key=value arguments", () => {
 });
 
 // ---- launch.js over the stand-ins: the sidebar runs the real CLI ----
-// launch.js execs `env HERDR_APP_HOME=<app> sh <app>/mods/spaces-agents/bin/run.sh <cli> …`
-// through the stub's exec (a real execFile). The scratch app home's mods/spaces-agents links
+// launch.js execs `env HERDR_APP_HOME=<app> sh <app>/mods/am-sidebar/bin/run.sh <cli> …`
+// through the stub's exec (a real execFile). The scratch app home's mods/am-sidebar links
 // to this checkout, and this process's PATH starts with a fake hc (test/fake-hc.mjs), its HOME
 // a scratch one, so the CLI never reaches a real hc, window or app home.
 
 const run = promisify(execFile);
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
-const MOD = new URL("../mods/spaces-agents", import.meta.url).pathname;
+const MOD = new URL("../mods/am-sidebar", import.meta.url).pathname;
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const saved = { PATH: process.env.PATH, HOME: process.env.HOME, HC_FAKE_STATE: process.env.HC_FAKE_STATE,
   HC_FAKE_LOG: process.env.HC_FAKE_LOG, HC_TERMINAL_ID: process.env.HC_TERMINAL_ID, HERDR_APP_HOME: process.env.HERDR_APP_HOME };
@@ -121,7 +121,7 @@ async function world(t, { file = team(), terminals = () => [] } = {}) {
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
   mkdirSync(join(app, "mods"), { recursive: true });
-  symlinkSync(MOD, join(app, "mods/spaces-agents"));
+  symlinkSync(MOD, join(app, "mods/am-sidebar"));
   const statePath = join(root, "hc.json");
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: terminals(main), next: 100 }));
@@ -162,7 +162,7 @@ test("startBot runs the CLI: hc run in the project's space and tab, an attach ro
   const rows = w.ledger();
   assert.deepEqual(rows.map((x) => [x.event, x.bot, x.terminal, x.by]), [["attach", ID.cap, "t7", "import"], ["attach", ID.dev, "t100", "start"]]);
   assert.deepEqual(state.hcCalls, [], "the sidebar itself calls no hc: no label, no run");
-  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: w.main, machine: null }]);
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: w.main, machine: null }]);
   // Started already: the ledger's pane is focused, never a second one.
   assert.deepEqual(await startBot(w.main, ID.dev), { focused: "t100" });
   assert.deepEqual(state.runs, [["agent.focus", { terminal: "t100" }]]);

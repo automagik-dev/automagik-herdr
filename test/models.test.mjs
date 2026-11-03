@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, resolveAgent, shownModel, withOverrides } from "../mods/spaces-agents/models.js";
+import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, resolveAgent, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
 
 const files = (map) => ({ home: "/h", read: (p) => map[p] ?? null });
 

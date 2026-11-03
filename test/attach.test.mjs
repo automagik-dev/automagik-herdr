@@ -9,9 +9,9 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { attachKey, attachRow, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "../mods/spaces-agents/attach.js";
+import { attachKey, attachRow, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "../mods/am-sidebar/attach.js";
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc" };
 const CORE = "fakecore0000";
@@ -98,8 +98,8 @@ function scene(t, terminals = () => []) {
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
-  mkdirSync(join(app, "mods/spaces-agents"), { recursive: true });
-  writeFileSync(join(app, "mods/spaces-agents/briefing.mjs"), "// stand-in\n");
+  mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
+  writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
   const statePath = join(root, "hc.json");
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: terminals(project), next: 100 }));

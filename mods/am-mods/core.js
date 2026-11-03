@@ -1,0 +1,544 @@
+// Everything the manager does to files, with no dependency on the Herdr runtime: the view passes
+// `io` (exec, readText, writeText) so the same code runs under `node --test` against real git.
+
+export const MARKET_TOPIC = "herdr-mod";
+
+// Pocket Link belongs to automagik-pocket (its mod, LaunchAgent and pairing state). This manager
+// reads its row and links to that repo's installer; it never installs, updates or removes it —
+// a delete here would destroy the pairing key in .state/.
+export const POCKET_LINK = "pocket-link";
+/** Pocket Link under any spelling: macOS's disk is case-insensitive, so `Pocket-Link` is its folder too. */
+export const isPocketLink = (name) => String(name ?? "").toLowerCase() === POCKET_LINK;
+/** A mod folder a package may bring: lowercase words and dashes, as update.mjs's packFolder. */
+export const MOD_NAME = /^[a-z0-9][a-z0-9-]*$/;
+/** A layout file a package may bring. */
+const LAYOUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
+const lower = (names) => new Set([...names].map((n) => String(n).toLowerCase()));
+export const POCKET_LINK_REFUSAL =
+  "Pocket Link pertence a automagik-dev/automagik-pocket: instale ou remova pelo instalador de lá. Esta linha é só leitura.";
+
+const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
+const backupDir = (appHome) => `${appHome}/automagik-herdr/backup`;
+// Beside mods/, on the same file system, where Herdr never loads a mod from.
+const stagingDir = (appHome) => `${appHome}/automagik-herdr/staging`;
+const present = async (io, path) => (await io.exec("test", ["-e", path])).code === 0;
+
+/** Moves a folder or file aside, stamped, and returns where it went: never a delete. */
+async function moveAside(io, appHome, path, name) {
+  await run(io, "mkdir", ["-p", backupDir(appHome)]);
+  const to = `${backupDir(appHome)}/${name}-${stamp()}`;
+  await run(io, "mv", [path, to]);
+  return to;
+}
+
+/**
+ * Puts a mod's private state into its staged folder: dot paths and node_modules.
+ * A folder's *contents* are copied, not the folder: the package may ship its own `.state/`, and
+ * copying `from/.state` onto `to/.state` would nest it as `.state/.state/<key>`. The person's files
+ * are copied after the package's, so theirs win. A link (a `.state` kept elsewhere) stays a link
+ * to the same place, and a dotfile stays a file.
+ */
+async function carryPrivate(io, from, to) {
+  if (!from) return 0;
+  const names = (await run(io, "ls", ["-A", from])).split("\n").filter(Boolean);
+  let carried = 0;
+  for (const name of names) {
+    if (!(name.startsWith(".") || name === "node_modules")) continue;
+    const src = `${from}/${name}`, dst = `${to}/${name}`;
+    const link = (await io.exec("test", ["-L", src])).code === 0;
+    if (!link && (await io.exec("test", ["-d", src])).code === 0) {
+      await run(io, "mkdir", ["-p", dst]);
+      await run(io, "cp", ["-RP", `${src}/.`, `${dst}/`]);
+    } else {
+      await run(io, "rm", ["-rf", dst]);
+      await run(io, "cp", ["-P", src, dst]);
+    }
+    carried += 1;
+  }
+  return carried;
+}
+
+// A package is any folder of a repo that holds `mods/<name>/main.js`: the repo root, or one
+// folder per package when a repo holds several (`github-panel/mods/github/…`).
+export function findPackages(files) {
+  const byPrefix = new Map();
+  for (const f of files) {
+    const m = f.match(/^(?:(.*)\/)?mods\/([^/]+)\/main\.js$/);
+    if (!m) continue;
+    const prefix = m[1] ?? "";
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, { prefix, mods: [], layouts: [], files: [] });
+    byPrefix.get(prefix).mods.push(m[2]);
+  }
+  for (const pkg of byPrefix.values()) {
+    const base = pkg.prefix ? `${pkg.prefix}/` : "";
+    pkg.mods.sort();
+    pkg.files = files.filter((f) => pkg.mods.some((name) => f.startsWith(`${base}mods/${name}/`)));
+    pkg.layouts = files.filter((f) => f.startsWith(`${base}layouts/`) && !f.slice(base.length + 8).includes("/"));
+    pkg.recipe = files.includes(`${base}RECIPE.md`);
+    pkg.preview = files.includes(`${base}preview.png`);
+    pkg.keys = files.includes(`${base}keys.json`);
+    pkg.name = pkg.prefix ? pkg.prefix.split("/").at(-1) : pkg.mods.join(" + ");
+  }
+  return [...byPrefix.values()].sort((a, b) => a.prefix.localeCompare(b.prefix));
+}
+
+// What AGENTS.md asks to tell the person before adding a mod: whether it runs programs, reaches
+// the network or touches files. A pattern match on the source, so it can only over-report.
+const RISKS = [
+  ["roda programas", /\bexec\s*\(|\bhc\s*\(|process\.run/],
+  ["acessa a rede", /\bfetch\s*\(|WebSocket/],
+  ["lê arquivos", /readTextFile\s*\(|watchFolder\s*\(|fs\.(readFile|readdir|stat)/],
+  ["escreve arquivos", /writeTextFile\s*\(|fs\.(writeFile|mkdir|rm|unlink|rename)/],
+];
+
+// An alias hides the plain call from a pattern match (`import { exec as sh }`, `const { exec: sh }`),
+// so the scan also reads every aliased binding and reports the risk its real name carries.
+const RISK_OF = {
+  exec: "roda programas", hc: "roda programas", "process.run": "roda programas",
+  fetch: "acessa a rede", WebSocket: "acessa a rede",
+  readTextFile: "lê arquivos", watchFolder: "lê arquivos",
+  writeTextFile: "escreve arquivos",
+};
+export function aliasedRisks(text) {
+  const out = [];
+  const parts = (list) => list.split(",").map((x) => x.trim()).filter(Boolean);
+  for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from/g)) for (const p of parts(m[1])) {
+    const a = /^([\w$.]+)\s+as\s+([\w$]+)$/.exec(p);
+    if (a && RISK_OF[a[1]]) out.push(RISK_OF[a[1]]);
+  }
+  for (const m of text.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) for (const p of parts(m[1])) {
+    const a = /^([\w$.]+)\s*:\s*([\w$]+)$/.exec(p);
+    if (a && RISK_OF[a[1]]) out.push(RISK_OF[a[1]]);
+  }
+  return out;
+}
+
+export function scanRisks(sources) {
+  const found = new Map();
+  const add = (label, path) => {
+    if (!found.has(label)) found.set(label, []);
+    if (!found.get(label).includes(path)) found.get(label).push(path);
+  };
+  for (const { path, text } of sources) {
+    for (const [label, re] of RISKS) if (re.test(text)) add(label, path);
+    for (const label of aliasedRisks(text)) add(label, path);
+  }
+  return [...found].map(([label, paths]) => ({ label, paths }));
+}
+
+async function run(io, cmd, args, opts) {
+  const r = await io.exec(cmd, args, opts);
+  if (r.code !== 0) throw new Error(`${cmd} ${args[0]}: ${(r.stderr || r.stdout).trim()}`);
+  return r.stdout;
+}
+
+export function repoUrl(fullName) {
+  return /^(https?|file|git):|^\//.test(fullName) ? fullName : `https://github.com/${fullName}.git`;
+}
+
+// Shallow clone into a fresh folder under `cacheDir`; returns the folder, commit and tracked files.
+// With `commit` (the catalog's headCommit) the clone is that commit, not whatever HEAD is now.
+export async function fetchSource(io, source, cacheDir, commit = null) {
+  const dir = `${cacheDir}/${source.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, "")}-${Date.now()}`;
+  await run(io, "mkdir", ["-p", cacheDir]);
+  await run(io, "git", ["clone", "-q", "--depth", "1", repoUrl(source), dir]);
+  if (/^[0-9a-f]{40}$/.test(commit ?? "") && (await run(io, "git", ["-C", dir, "rev-parse", "HEAD"])).trim() !== commit) {
+    await run(io, "git", ["-C", dir, "fetch", "-q", "--depth", "1", "origin", commit]);
+    await run(io, "git", ["-C", dir, "checkout", "-q", "--detach", commit]);
+  }
+  const sha = (await run(io, "git", ["-C", dir, "rev-parse", "HEAD"])).trim();
+  const files = (await run(io, "git", ["-C", dir, "ls-files"])).split("\n").filter(Boolean);
+  return { dir, sha, files };
+}
+
+export async function remoteSha(io, source) {
+  const out = await run(io, "git", ["ls-remote", repoUrl(source), "HEAD"]);
+  return out.split(/\s/)[0] || null;
+}
+
+export async function readSources(io, dir, pkg) {
+  const texts = [];
+  for (const path of pkg.files.filter((f) => /\.(m?js|json)$/.test(f))) {
+    texts.push({ path, text: (await io.readText(`${dir}/${path}`)) ?? "" });
+  }
+  return texts;
+}
+
+function parseKeys(text) {
+  if (!text) return {};
+  const v = JSON.parse(text);
+  return v && typeof v === "object" ? v : {};
+}
+
+// What installing `pkg` would do, without doing it. `record` is the earlier install of the same
+// package (an update): its own mods and layouts are replaced, anything else with the same name is
+// a clash and blocks the install, as AGENTS.md never overwrites.
+export async function planInstall(io, { appHome, dir, pkg, record, existingMods, existingLayouts }) {
+  const base = pkg.prefix ? `${dir}/${pkg.prefix}` : dir;
+  // Names compare case-insensitively (macOS's disk does): `Demo` is the person's `demo`.
+  const ownMods = lower(record?.mods ?? []);
+  const ownLayouts = lower(record?.layouts ?? []);
+  const haveMods = lower(existingMods);
+  const haveLayouts = lower(existingLayouts);
+  const layouts = pkg.layouts.map((f) => f.split("/").at(-1));
+  const clashes = [
+    ...pkg.mods.filter((m) => !MOD_NAME.test(m) || (haveMods.has(m.toLowerCase()) && !ownMods.has(m.toLowerCase()))).map((m) => `mods/${m}`),
+    ...layouts.filter((l) => !LAYOUT_NAME.test(l) || (haveLayouts.has(l.toLowerCase()) && !ownLayouts.has(l.toLowerCase()))).map((l) => `layouts/${l}`),
+  ];
+  const theirs = pkg.keys ? parseKeys(await io.readText(`${base}/keys.json`)) : {};
+  const mine = parseKeys(await io.readText(`${appHome}/keys.json`));
+  // A key the package added earlier and the person left alone is the package's to change.
+  const ownKeys = new Map((record?.keys ?? []).map((k) => [`${k.section}\u0000${k.key}`, k.action]));
+  const keyAdds = [];
+  const keyConflicts = [];
+  for (const [section, entries] of Object.entries(theirs)) {
+    for (const [key, action] of Object.entries(entries ?? {})) {
+      const current = mine[section]?.[key];
+      const own = ownKeys.get(`${section}\u0000${key}`);
+      if (current === undefined || current === action || (own !== undefined && current === own)) {
+        if (current !== action) keyAdds.push({ section, key, action });
+      } else {
+        keyConflicts.push({ section, key, action, current });
+      }
+    }
+  }
+  return { base, mods: pkg.mods, layouts, clashes, keyAdds, keyConflicts, risks: scanRisks(await readSources(io, dir, pkg)) };
+}
+
+async function writeKeys(io, appHome, change) {
+  const path = `${appHome}/keys.json`;
+  const keys = parseKeys(await io.readText(path));
+  change(keys);
+  await io.writeText(path, JSON.stringify(keys, null, 2) + "\n");
+}
+
+// Copies the package and adds its keys. Conflicting keys are left as the person has them. Each
+// mod is built in a staging folder (the package's files, then the installed copy's private state),
+// and only then are the record's old folders moved aside (never deleted) and the staged ones
+// renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
+export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
+  if (plan.clashes.length) throw new Error(`já existe: ${plan.clashes.join(", ")}`);
+  if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
+  const badName = plan.mods.find((m) => !MOD_NAME.test(m)) ?? plan.layouts.find((l) => !LAYOUT_NAME.test(l));
+  if (badName) throw new Error(`nome recusado: ${badName} (pastas de mod em minúsculas, a-z 0-9 -)`);
+  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
+  const staged = [];
+  try {
+    for (const m of plan.mods) {
+      const stage = `${stagingDir(appHome)}/${m}-${stamp()}`;
+      staged.push([m, stage]);
+      await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, stage]);
+      // The package brings plain files and folders only: a link it ships (a `.state` pointing
+      // outside, a dangling dotfile) would be written through or installed as is. Refused, as
+      // update.mjs refuses one in a release tarball.
+      const odd = (await run(io, "find", [stage, "!", "-type", "f", "!", "-type", "d"])).split("\n").filter(Boolean);
+      if (odd.length) throw new Error(`${m}: o pacote traz um link ou arquivo especial (${odd[0].slice(stage.length + 1)}): recusado`);
+      const live = `${appHome}/mods/${m}`;
+      if ((record?.mods ?? []).includes(m) && (await present(io, live))) await carryPrivate(io, live, stage);
+    }
+  } catch (e) {
+    for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
+    throw e;
+  }
+  // Mods, then layouts, then keys, journalled: a failure anywhere puts every folder and layout
+  // back where it was. keys.json is written last, in one write, so a failed write changed nothing
+  // and nothing after it can fail.
+  const aside = [];
+  const placed = [];
+  const laid = [];
+  try {
+    for (const m of record?.mods ?? []) {
+      const live = `${appHome}/mods/${m}`;
+      if (await present(io, live)) aside.push([live, await moveAside(io, appHome, live, m)]);
+    }
+    for (const [m, stage] of staged) {
+      // Only into a free name: `mv` onto an existing folder (any case) would land inside it, and
+      // the undo below must reverse only what this run created.
+      const dest = `${appHome}/mods/${m}`;
+      if (await present(io, dest)) throw new Error(`já existe: mods/${m}`);
+      await run(io, "mv", [stage, dest]);
+      placed.push([dest, stage]);
+    }
+    for (const l of record?.layouts ?? []) {
+      const p = `${appHome}/layouts/${l}`;
+      if (await present(io, p)) aside.push([p, await moveAside(io, appHome, p, l)]);
+    }
+    for (const l of plan.layouts) {
+      const to = `${appHome}/layouts/${l}`;
+      if (await present(io, to)) throw new Error(`já existe: layouts/${l}`);
+      laid.push(to);
+      await run(io, "cp", [`${plan.base}/layouts/${l}`, to]);
+    }
+    if (plan.keyAdds.length) {
+      await writeKeys(io, appHome, (all) => {
+        for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
+      });
+    }
+  } catch (e) {
+    for (const to of laid) await io.exec("rm", ["-f", to]);
+    for (const [live, stage] of placed.reverse()) await io.exec("mv", [live, stage]);
+    for (const [live, to] of aside.reverse()) await io.exec("mv", [to, live]);
+    for (const [, stage] of staged) await io.exec("rm", ["-rf", stage]);
+    throw e;
+  }
+  const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
+  return {
+    source, prefix, sha, mods: plan.mods, layouts: plan.layouts, keys: dedupeKeys(keys),
+    risks: plan.risks.map((r) => r.label), at: new Date().toISOString(),
+  };
+}
+
+function dedupeKeys(keys) {
+  const seen = new Map();
+  for (const k of keys) seen.set(`${k.section}\u0000${k.key}`, k);
+  return [...seen.values()];
+}
+
+export async function checkMods(io, appHome, mods) {
+  const failures = [];
+  for (const m of mods) {
+    const r = await io.exec("herdr-app", ["check", `${appHome}/mods/${m}`]);
+    if (r.code !== 0) failures.push({ mod: m, error: (r.stderr || r.stdout).trim() });
+  }
+  return failures;
+}
+
+// Removes what the record says the manager installed. A key is removed only while it still runs
+// the action the package added: one the person rebound since then stays.
+export async function uninstall(io, { appHome, record }) {
+  if (record.mods.some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
+  for (const m of record.mods) {
+    const p = `${appHome}/mods/${m}`;
+    if (await present(io, p)) await moveAside(io, appHome, p, m);
+  }
+  for (const l of record.layouts ?? []) {
+    const p = `${appHome}/layouts/${l}`;
+    if (await present(io, p)) await moveAside(io, appHome, p, l);
+  }
+  if (record.keys?.length) {
+    await writeKeys(io, appHome, (all) => {
+      for (const k of record.keys) {
+        if (all[k.section]?.[k.key] === k.action) delete all[k.section][k.key];
+      }
+    });
+  }
+}
+
+// A mod the manager did not install: a symlink is only unlinked, the folder it points to stays.
+export async function removeLocal(io, { appHome, name, symlink, path }) {
+  if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
+  const where = `${appHome}/${path ?? `mods/${name}`}`;
+  if (symlink) return void (await run(io, "rm", [where]));   // only the link; the folder it points to stays
+  if (await present(io, where)) await moveAside(io, appHome, where, name);
+}
+
+// The person's mods folder: Herdr's own (listed in installed.json), the manager's and the rest.
+// A mod is on in `mods/`, and off in `mods-disabled/` — beside it, where the app never looks.
+export const OFF_DIR = "mods-disabled";
+const onOff = (on) => (on ? "mods" : OFF_DIR);
+
+export async function listMods(io, { appHome, records }) {
+  const shipped = Object.keys(parseKeys(await io.readText(`${appHome}/installed.json`)));
+  // A folder that isn't there yet is not an error: the first mod turned off creates it.
+  const entries = async (dir, on) => {
+    try {
+      const out = await run(io, "find", [`${appHome}/${dir}`, "-mindepth", "1", "-maxdepth", "1", "(", "-type", "d", "-o", "-type", "l", ")"]);
+      return out.split("\n").filter(Boolean).map((path) => ({ path, on }));
+    } catch {
+      return [];
+    }
+  };
+  const links = new Set();
+  for (const dir of ["mods", OFF_DIR]) {
+    try {
+      const out = await run(io, "find", [`${appHome}/${dir}`, "-mindepth", "1", "-maxdepth", "1", "-type", "l"]);
+      for (const p of out.split("\n").filter(Boolean)) links.add(p);
+    } catch {}
+  }
+  const owner = new Map();
+  for (const r of records) for (const m of r.mods) owner.set(m, r);
+  const found = [...(await entries("mods", true)), ...(await entries(OFF_DIR, false))];
+  const mods = [];
+  for (const { path, on } of found) {
+    const name = path.split("/").at(-1);
+    if (name.startsWith(".")) continue;
+    // What the files themselves say: a clone names what it came from, an installer leaves a
+    // manifest under data/, and the app writes <name>.error when a mod fails to load.
+    let meta = {};
+    try { meta = JSON.parse((await io.readText(`${path}/mod.json`)) ?? "{}") ?? {}; } catch {}
+    let manifest = null;
+    try { manifest = JSON.parse((await io.readText(`${appHome}/data/${name}/install-manifest.json`)) ?? "null"); } catch {}
+    let changed = null;
+    try { changed = Number((await run(io, "stat", ["-f", "%m", path])).trim()) * 1000 || null; } catch {}
+    const record = owner.get(name) ?? null;
+    const kind = record ? "installed" : on && shipped.includes(name) ? "herdr" : meta.cloned_from ? "clone" : "local";
+    mods.push({
+      name,
+      enabled: on,
+      kind,
+      symlink: links.has(path),
+      path: `${onOff(on)}/${name}`,
+      clone: meta.cloned_from ?? null,
+      title: typeof meta.title === "string" ? meta.title : null,
+      manifest: manifest && typeof manifest === "object" ? { owner: manifest.owner ?? null, at: manifest.installedAt ?? null } : null,
+      changed,
+      record,
+    });
+  }
+  return mods.sort(
+    (a, b) => (a.kind === "herdr") - (b.kind === "herdr") || Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name),
+  );
+}
+
+// Moves a mod between the two folders; kept off, it is out of the app's sight until moved back.
+export async function setEnabled(io, { appHome, name, enabled }) {
+  if (!name || /\//.test(name)) throw new Error(`not a mod name: ${name}`);
+  // Off means "moved to mods-disabled/", which would strand a pairing key that lives in .state/.
+  if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
+  const to = enabled ? "mods" : OFF_DIR;
+  await run(io, "mkdir", ["-p", `${appHome}/${to}`]);
+  await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);
+}
+
+// GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login
+// (30 searches a minute instead of 10); without `gh`, `anonymous(url)` fetches the same URL.
+export async function searchMarket(io, { query = "", sort = "stars", page = 1, perPage = 50 }, anonymous) {
+  const q = `topic:${MARKET_TOPIC}${query.trim() ? ` ${query.trim()}` : ""}`;
+  const params = { q, sort, order: "desc", per_page: String(perPage), page: String(page) };
+  let body = null;
+  let ghError = null;
+  try {
+    const args = ["api", "-X", "GET", "search/repositories"];
+    for (const [k, v] of Object.entries(params)) args.push("-f", `${k}=${v}`);
+    const r = await io.exec("gh", args);
+    if (r.code === 0) body = JSON.parse(r.stdout);
+    else ghError = (r.stderr || r.stdout).trim();
+  } catch (e) {
+    ghError = String(e?.message ?? e);
+  }
+  if (!body) {
+    const url = `https://api.github.com/search/repositories?${new URLSearchParams(params)}`;
+    const res = await anonymous(url);
+    if (res.status !== 200) {
+      const msg = (() => { try { return JSON.parse(res.text).message; } catch { return res.text.slice(0, 120); } })();
+      throw new Error(`GitHub respondeu ${res.status}: ${msg}${ghError ? ` (gh: ${ghError})` : ""}`);
+    }
+    body = JSON.parse(res.text);
+  }
+  return {
+    total: Math.min(body.total_count ?? 0, 1000),
+    items: (body.items ?? []).map((r) => ({
+      fullName: r.full_name,
+      description: r.description ?? "",
+      stars: r.stargazers_count ?? 0,
+      pushedAt: r.pushed_at,
+      url: r.html_url,
+    })),
+  };
+}
+
+// ---- the official catalog (herdr.dev/mods) ----
+
+// Our marketplace: this pack publishes its own index (catalog/index.json, same shape as
+// herdr.dev's), and an installed copy may point anywhere via data/am-mods/catalog.json.
+// The pack publishes from `dev`. Kept equal to mods/am-sidebar/release.js's CATALOG_URL by
+// test/pack-installer.test.mjs; an installed copy can override it via data/am-mods/catalog.json.
+export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
+
+/** The commit the catalog pins for `source` (its `headCommit`), or null: an install fetches that commit. */
+export function catalogCommit(catalog, source) {
+  for (const entry of catalog?.byMod?.values() ?? []) {
+    if (entry?.fullName === source && /^[0-9a-f]{40}$/.test(entry.headCommit ?? "")) return entry.headCommit;
+  }
+  return null;
+}
+
+export function parseCatalog(json) {
+  const mods = Array.isArray(json?.mods) ? json.mods : [];
+  const byMod = new Map();
+  for (const entry of mods) {
+    for (const name of entry.modNames ?? []) if (!byMod.has(name)) byMod.set(name, entry);
+  }
+  return { generatedAt: json?.generatedAt ?? null, count: mods.length, byMod };
+}
+
+// Where the index is: the pack's installer writes data/am-mods/catalog.json ({ url }); an install
+// from before the rename has data/mod-manager/'s, copied to data/am-mods/ by the rename migration
+// and read as the fallback; the mod's own catalog.json is the copy in a checkout,
+// and the published index is the fallback. A URL the person set wins wherever it is, the most
+// recently changed one when both data folders hold one (else data/am-mods first): a copy still
+// holding a URL the pack wrote never shadows it. A local path (no URL scheme) whose file is gone
+// counts as not set, so a renamed or removed checkout falls back to the published index.
+const PACK_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
+export const isLocalCatalogPath = (url) => !/^[a-z][a-z0-9+.-]*:/i.test(url);
+export async function catalogUrl(io, appHome) {
+  const found = [];
+  for (const path of [`${appHome}/data/am-mods/catalog.json`, `${appHome}/data/mod-manager/catalog.json`, `${appHome}/mods/am-mods/catalog.json`]) {
+    try {
+      const raw = await io.readText(path);
+      const url = raw ? JSON.parse(raw)?.url : null;
+      if (typeof url !== "string" || !url) continue;
+      if (isLocalCatalogPath(url)) {
+        let text = null;
+        try { text = await io.readText(url); } catch {}
+        if (!text) continue;
+      }
+      found.push({ path, url });
+    } catch {}
+  }
+  const mine = found.filter((f) => !PACK_URLS.includes(f.url));
+  if (mine.length >= 2 && !mine[1].path.includes("/mods/")) {
+    try {
+      const newer = await io.exec("sh", ["-c", '[ "$1" -nt "$2" ]', "sh", mine[1].path, mine[0].path]);
+      if (newer?.code === 0) return mine[1].url;
+    } catch {}
+  }
+  return (mine[0] ?? found[0])?.url ?? CATALOG_URL;
+}
+
+export async function fetchCatalog(io, http, url = CATALOG_URL) {
+  // A checkout points at its own file; a published index is fetched.
+  if (!/^https?:\/\//.test(url)) {
+    const text = await io.readText(url);
+    if (!text) throw new Error(`no mods index at ${url}`);
+    return parseCatalog(JSON.parse(text));
+  }
+  const res = await http(url);
+  if (res.status !== 200) throw new Error(`mods index: HTTP ${res.status} (${url})`);
+  return parseCatalog(JSON.parse(res.text));
+}
+
+// Where a catalog entry keeps a mod's files: `path` is the folder a multi-mod repo nests it in.
+export const catalogPath = (entry) => (entry.path ? `${entry.path}/` : "");
+
+// What changed between the installed folder and the catalog's head commit: file by file, hashed
+// on both sides. `dir` is a checkout of the repo at that commit.
+export async function drift(io, { appHome, dir, entry, name, localPath }) {
+  const root = `${dir}/${catalogPath(entry)}mods/${name}`;
+  const local = `${appHome}/${localPath}`;
+  // The app writes its own files into every mod folder; they are not part of anyone's package.
+  const SKIP = /^(gpui-kit\.d\.ts|jsconfig\.json|node_modules\/.*|\..*)$/;
+  const list = async (at) =>
+    (await run(io, "find", [at, "-type", "f"])).split("\n").filter(Boolean)
+      .map((p) => p.slice(at.length + 1)).filter((f) => !SKIP.test(f));
+  const hash = async (at, files) => {
+    const out = new Map();
+    if (!files.length) return out;
+    const sums = await run(io, "shasum", ["-a", "256", ...files.map((f) => `${at}/${f}`)]);
+    for (const line of sums.split("\n").filter(Boolean)) {
+      const cut = line.indexOf("  ");
+      if (cut < 0) continue;
+      out.set(line.slice(cut + 2).slice(at.length + 1), line.slice(0, cut));
+    }
+    return out;
+  };
+  const [theirs, mine] = await Promise.all([list(root), list(local)]);
+  const [theirsHash, mineHash] = await Promise.all([hash(root, theirs), hash(local, mine)]);
+  let changed = 0, added = 0, removed = 0;
+  for (const [file, sum] of mineHash) {
+    if (!theirsHash.has(file)) added += 1;
+    else if (theirsHash.get(file) !== sum) changed += 1;
+  }
+  for (const file of theirsHash.keys()) if (!mineHash.has(file)) removed += 1;
+  return { changed, added, removed, mine: mine.length, theirs: theirs.length, clean: !changed && !added && !removed, at: new Date().toISOString() };
+}

@@ -12,10 +12,10 @@ const SCRIPT = fileURLToPath(new URL("../scripts/version.mjs", import.meta.url))
 function scratchRepo(version = "0.0.0") {
   const root = mkdtempSync(join(tmpdir(), "version-test-"));
   mkdirSync(join(root, "scripts"));
-  mkdirSync(join(root, "mods", "spaces-agents"), { recursive: true });
+  mkdirSync(join(root, "mods", "am-sidebar"), { recursive: true });
   copyFileSync(SCRIPT, join(root, "scripts", "version.mjs"));
   writeFileSync(join(root, "package.json"), `${JSON.stringify({ name: "automagik-herdr", private: true, version, type: "module" }, null, 2)}\n`);
-  writeFileSync(join(root, "mods", "spaces-agents", "VERSION"), `${version}\n`);
+  writeFileSync(join(root, "mods", "am-sidebar", "VERSION"), `${version}\n`);
   return root;
 }
 const git = (root, ...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -72,10 +72,10 @@ test("set writes every field, check finds drift, set refuses a non-version", () 
   try {
     setVersion("0.3.1", root);
     assert.deepEqual(drift("0.3.1", root), []);
-    assert.equal(readFileSync(join(root, "mods", "spaces-agents", "VERSION"), "utf8"), "0.3.1\n");
+    assert.equal(readFileSync(join(root, "mods", "am-sidebar", "VERSION"), "utf8"), "0.3.1\n");
     assert.equal(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).type, "module", "other keys kept");
-    writeFileSync(join(root, "mods", "spaces-agents", "VERSION"), "0.3.0\n");
-    assert.deepEqual(drift("0.3.1", root), ["mods/spaces-agents/VERSION = 0.3.0"]);
+    writeFileSync(join(root, "mods", "am-sidebar", "VERSION"), "0.3.0\n");
+    assert.deepEqual(drift("0.3.1", root), ["mods/am-sidebar/VERSION = 0.3.0"]);
     assert.throws(() => setVersion("1.0.0", root), /not a version/);
     assert.throws(() => setVersion("0.01.0", root), /not a version/);
   } finally {
@@ -112,7 +112,7 @@ test("the CLI over git: ships, next, set and check as release.yml runs them", ()
     assert.equal(cli(root, "plan", "yes"), "cut");
     commit(root, "feat(cli): update --check");
     assert.equal(cli(root, "next"), "0.3.0");
-    writeFileSync(join(root, "mods", "spaces-agents", "VERSION"), "0.0.9\n");
+    writeFileSync(join(root, "mods", "am-sidebar", "VERSION"), "0.0.9\n");
     assert.throws(() => cli(root, "check"), /Command failed/);
   } finally {
     rmSync(root, { recursive: true, force: true });

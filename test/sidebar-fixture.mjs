@@ -4,8 +4,8 @@
 // agents in its panes that aren't a bot's pane, each with its hc sub-agents; its shells are
 // the rest of its panes. Shared by the ordering tests of every sidebar-rules group.
 import { readFileSync, readdirSync } from "node:fs";
-import { parseBots } from "../mods/spaces-agents/model.js";
-import { liveFrom, buildTree, placeTrees, helpersOf, knownBots, projectId, botFold, categoryFold, spaceRowOrder } from "../mods/spaces-agents/rows.js";
+import { parseBots } from "../mods/am-sidebar/model.js";
+import { liveFrom, buildTree, placeTrees, helpersOf, knownBots, projectId, botFold, categoryFold, spaceRowOrder } from "../mods/am-sidebar/rows.js";
 
 export const FIXTURES = new URL("./fixtures/sidebar/", import.meta.url);
 

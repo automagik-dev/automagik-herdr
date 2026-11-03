@@ -10,13 +10,13 @@ import { join } from "node:path";
 
 import { createHash } from "node:crypto";
 
-import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/spaces-agents/model.js";
-import { effortArgs, promptArgs } from "../mods/spaces-agents/models.js";
+import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
+import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { baseCandidates, branchNamesTask, branchSlug, parseWorktrees, readLedger, runsTemplate, sessionChange, startRow, swapArm, swapByte, templateAgent,
-  workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/spaces-agents/workers.js";
+  workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
-const CLI = new URL("../mods/spaces-agents/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", stray: "b-zzzzzzzzzz" };
 
@@ -53,8 +53,8 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
-  mkdirSync(join(app, "mods/spaces-agents"), { recursive: true });
-  if (briefing) writeFileSync(join(app, "mods/spaces-agents/briefing.mjs"), "// stand-in\n");
+  mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
+  if (briefing) writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
   const statePath = join(root, "hc.json");
   const logPath = join(root, "hc.log");
   const terminals = [term("t1", { bot: ID.dev, cwd: project }), term("t2", { cwd: project }), term("t3", { bot: ID.stray, cwd: project }),
@@ -542,7 +542,7 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
 });
 
 test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with hc kill once merged", async () => {
-  const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/spaces-agents/briefingText.mjs");
+  const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/am-sidebar/briefingText.mjs");
   const file = parseBots(JSON.stringify(team())).file;
   const text = briefingText({ self: { ...file.bots[2], instructions: "x".repeat(4000) }, file });
   assert.ok(text.includes(WORKER_LINE));
@@ -648,7 +648,7 @@ test("worker: a live worker with no worker.role label holds its worktree as a wr
 });
 
 test("worker: the check and the start run under one lock per worktree, named by its real path's hash", async (t) => {
-  const { worktreeLock } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const s = scene(t);
   const [a, b] = [join(s.root, "wa"), join(s.root, "wb")];
   mkdirSync(a);
@@ -907,7 +907,7 @@ test("worker --task: the ledger row's task, project, lead, worktree, base, creat
 });
 
 test("planned swaps: the rule is sha256(bot:project:task)[0] % 3, deterministic, about one task in three", async () => {
-  const { swapTask } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { swapTask } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const { createHash } = await import("node:crypto");
   const ids = Array.from({ length: 300 }, (_, i) => `gn-${i + 1}`);
   const swapped = ids.filter((id) => swapTask(ID.dev, "/p", id)).length;
@@ -927,7 +927,7 @@ test("planned swaps: the rule is sha256(bot:project:task)[0] % 3, deterministic,
 });
 
 test("planned swaps: a swap task runs worker.swap; the bot's own --model/--effort are recorded, not used", async (t) => {
-  const { swapTask } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { swapTask } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const file = team();
   file.bots[2].worker.swap = { effort: "xhigh", model: "gpt-5.4" };
   const s = scene(t, { file });
@@ -963,7 +963,7 @@ test("planned swaps: a swap task runs worker.swap; the bot's own --model/--effor
 });
 
 test("planned swaps: an unknown swap agent is named only on a swap task, and the rest of the arm runs", async (t) => {
-  const { swapTask } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { swapTask } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const file = team();
   file.bots[2].worker.swap = { agent: "nosuch", effort: "xhigh" };
   const s = scene(t, { file });
@@ -980,7 +980,7 @@ test("planned swaps: an unknown swap agent is named only on a swap task, and the
 });
 
 test("planned swaps: a template worker never swaps, from a bots.json template or a per-task --template", async (t) => {
-  const { swapTask } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { swapTask } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const file = team();
   file.bots[2].worker = { template: "dev-sol", swap: { effort: "low" } };
   const s = scene(t, { file });
@@ -1021,7 +1021,7 @@ test("bots.json worker.swap: validated like the worker's agent, model and effort
 });
 
 test("worker lock: named by realpathSync.native, so a folder's case can't split it", async (t) => {
-  const { worktreeLock } = await import("../mods/spaces-agents/bin/automagik-herdr.mjs");
+  const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-case-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "Task-Tree"));

@@ -95,7 +95,9 @@ This wish turns that branch into the product:
 **depends-on:** herdr-bots
 **blocks:** none
 
-Group 8 (release v0.4.0) also waits for sidebar-rules Groups 2–5, which land in `wish/am-pack` after Group 7 and ship with v0.4.0 (owner, 2026-11-02).
+Version note (2026-11-02): dev's release workflow cuts the next minor for any feat merge, so v0.4.0 went to worker roles (PR #47). The am pack ships as the next minor cut after it merges to dev, expected v0.5.0. Feature PRs into dev wait until it merges, so the number holds. Read "v0.4.0" below as that release.
+
+Group 8 (release v0.4.0) waits for Group 6c (usagemeter), Group 7 (rename), the install fixes for #43 and #44, and the must-fix that keeps the hook scan out of `$HOME` (a project rooted at `$HOME` walked ~/Desktop, ~/Documents, ~/Downloads and ~/Library, which can raise macOS privacy prompts). Sidebar-rules Group 2 is already merged; Groups 3a, 3b, 4 and 5 move to v0.4.1. Owner, 2026-11-02: new installs got only the sidebar, so ship the full pack sooner. (It replaces the earlier ruling that v0.4.0 waits for sidebar-rules Groups 2–5.)
 
 ## Success Criteria
 
@@ -674,6 +676,25 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - one hooks journal;
   - numbered `.am-backup` files;
   - revert moves a byte-equal stable command back, so v0.3 never adds a duplicate.
+
+### Group 8 — integrate, verify, release — 2026-11-03 (released as v0.5.0, #64, 2237b58)
+
+- Released as **v0.5.0**, not v0.4.0: dev's feat merge for worker roles took v0.4.0 (see the version note). The release has `automagik-herdr-pack-0.5.0.tgz` and `SHA256SUMS`, its notes come from docs/release-notes-v0.5.0.md, and main moved to 8de5bec.
+- Merged in order: Group 6c (#40), the install fixes #50 (#43) and #51 (#44), the `$HOME` scan guard (#48), the keychain test trap (#49), dev into wish/am-pack (#54), Group 7 a/b/c (#59, #60, #61), the release prep (#62, #63), then wish/am-pack into dev (#64). An independent reviewer approved each one at the commit that was merged.
+- **QA on scratch homes, at c35fbea:** 55 checks, 0 failures.
+  - A: the fresh one-liner.
+  - B: a real v0.2.0 upgrade, then rollback, a second rollback (refused, as documented), a reinstall and an uninstall.
+  - C: a real v0.4.1 upgrade, then rollback. The integrated reviewer repeated this one independently, with the real assets.
+  - D: a personal layout plus sheepdog, then an uninstall.
+  - Pocket Link stayed byte-identical in every scenario.
+- **Rulings:**
+  - No hook shim (owner): the installer warns loudly instead, and the release notes say that running bot sessions need a restart or `/hooks`.
+  - Older self-updaters (v0.2 to v0.4.1) can't see the renamed tarball, so users rerun the one-liner. This is documented, with no compatibility tarball.
+- **Still open:**
+  - the owner's click-through (docs/qa-v0.5.0-checklist.md) and the live install on the owner's Mac;
+  - sidebar-rules Groups 3a, 3b, 4 and 5, which move to a later release;
+  - follow-up issues #56 (bot seats' PATH), #58 (attach ledger) and #65 (flaky briefing tests).
+- Status stays APPROVED until the owner's click-through passes; then it becomes SHIPPED.
 
 ### Group 5a — am-markdown — 2026-11-02 (merged, #19)
 

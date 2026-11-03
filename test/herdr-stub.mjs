@@ -15,7 +15,15 @@ export const state = {
 export const terminals = () => state.terminals;
 export const focused = () => state.focused;
 export const knownAgents = async () => state.agents;
-export function run(name, args) { state.runs.push([name, args]); return null; }
+// state.runFault(name, args): an error to throw for that call (theme.js's app.theme), or nothing.
+export function run(name, args) {
+  state.runs.push([name, args]);
+  const fault = state.runFault?.(name, args);
+  if (fault) throw fault;
+  return null;
+}
+// The theme list app.theme can use (theme.js), as Herdr's themes() answers it.
+export const themes = () => state.themeList ?? [];
 export async function hc(args) { state.hcCalls.push(args); return state.hcAnswer(args); }
 
 // The briefing hook (launch.js afterBind): the app home it computes the script path from,
@@ -42,10 +50,14 @@ export function exec(command, args = [], { cwd, on } = {}) {
 export async function readTextFile(path, { on } = {}) {
   state.calls.push({ kind: "read", path, on: on ?? null });
   if (on && state.offline.has(on)) throw new Error(`${on} is unreachable`);
+  // state.readFault(path): an error to throw for a file that is there (Herdr's 1 MiB cap, a permission).
+  const fault = state.readFault?.(path);
+  if (fault) throw fault;
   try { return await readFile(path, "utf8"); } catch (e) { if (e.code === "ENOENT") return null; throw e; }
 }
 
 export async function writeTextFile(path, text, expected) {
+  state.calls.push({ kind: "write", path, expected });
   // A test can change the file between a caller's read and this write (a race).
   if (state.beforeWrite) await state.beforeWrite(path);
   let now = null;

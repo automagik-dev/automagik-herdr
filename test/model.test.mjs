@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import {
   BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
   listedProjects, withListedProject, MAX_LISTED_PROJECTS,
-} from "../mods/spaces-agents/model.js";
+} from "../mods/am-sidebar/model.js";
 
 const run = promisify(execFile);
 // What bots.js hands projectKeyOf, over Node instead of Herdr's exec.
@@ -333,7 +333,7 @@ test("label key", () => {
 });
 
 // ---- the Create form's write-back (applyBotEdit) ----
-import { applyBotEdit, newCategoryId, OMNI_LOOK } from "../mods/spaces-agents/model.js";
+import { applyBotEdit, newCategoryId, OMNI_LOOK } from "../mods/am-sidebar/model.js";
 
 test("create: the first bot of a project, from no file, is a valid file", () => {
   const out = applyBotEdit(null, bot(ID.main, "main", { look: { ...OMNI_LOOK }, lead: ID.cap, category: "eng" }));
@@ -384,7 +384,7 @@ test("create: instructions over 4,000 characters can't be written", () => {
 });
 
 test("lead choices: a bot's descendants at any depth can't be its lead", async () => {
-  const { descendantsOf } = await import("../mods/spaces-agents/model.js");
+  const { descendantsOf } = await import("../mods/am-sidebar/model.js");
   const f = sample();
   assert.deepEqual([...descendantsOf(f, ID.cap)].sort(), [ID.dev, ID.tst].sort());
   assert.deepEqual([...descendantsOf(f, ID.dev)], []);
@@ -394,7 +394,7 @@ test("lead choices: a bot's descendants at any depth can't be its lead", async (
 });
 
 test("edit: planned keeps its other keys; wave and note come from the form", async () => {
-  const { plannedOf } = await import("../mods/spaces-agents/model.js");
+  const { plannedOf } = await import("../mods/am-sidebar/model.js");
   assert.deepEqual(plannedOf({ wave: 3, note: "old", squad: "access" }, 4, ""), { wave: 4, squad: "access" });
   assert.deepEqual(plannedOf(null, 1, "later"), { wave: 1, note: "later" });
 });
@@ -414,7 +414,7 @@ test("the CLI's project list: absolute keys once each, the newest last, at most 
 });
 
 // ---- A16: rank ----
-import { RANKS } from "../mods/spaces-agents/model.js";
+import { RANKS } from "../mods/am-sidebar/model.js";
 
 test("rank: an unknown one is warned about and dropped when shown, and refused when written; role stays free text", () => {
   assert.deepEqual(RANKS, ["captain", "dev", "tester", "reviewer", "fixer", "integrator", "pm", "owner"]);
