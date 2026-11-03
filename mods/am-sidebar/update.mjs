@@ -9,7 +9,8 @@
 // runtime having no fetch); the rules over plain data live in release.js. Apache-2.0.
 //
 //   node update.mjs check             [--mods <dir>]   one JSON line: current, latest, update
-//   node update.mjs update [--check] [--json] [--mods <dir>]   install the latest release (apply: the same, JSON)
+//   node update.mjs update [--check] [--json] [--mods <dir>]   install the latest release (apply: the same, JSON;
+//                                     apply --expect <v>: only if the latest is still <v>, else `refused`)
 //   node update.mjs rollback          [--mods <dir>]   swap the kept set back; one JSON line
 //   node update.mjs install --from <tgz> --version <v> [--mods <dir>] [--adopt] [--setup]
 //       a tarball already checked against SHA256SUMS (install.sh); one JSON line. --setup also
@@ -266,6 +267,41 @@ function keepSet(modsDir, next, moved, record, old, rename, warnings) {
   }
 }
 
+/** In a kept set: the automagik layout its pack placed (the reference copy at the swap), which a
+ *  rollback puts back under the same rule as placeLayout's. Dot-named, so no set lists it. */
+export const KEPT_LAYOUT = ".layout.json";
+const layoutRefOf = (modsDir) => join(stateDirOf(modsDir), "automagik.json");
+
+function keepLayout(modsDir, dir, warnings) {
+  try {
+    if (isFile(layoutRefOf(modsDir))) cpSync(layoutRefOf(modsDir), join(dir, KEPT_LAYOUT));
+  } catch (error) { warnings.push(`the layout was not kept for a rollback (${error.message})`); }
+}
+
+/**
+ * After a rollback: the rolled-to pack's layout (`body`, from its kept set) goes back in place of
+ * the rolled-out pack's when the live one is still that pack's own (byte-equal to the reference),
+ * or absent; one the person edited is kept (D8). The reference becomes `body` either way.
+ * Returns "restored", "same", "kept", or null (no layout was kept with that set).
+ */
+export function restoreLayout({ modsDir, body, log = () => {} }) {
+  if (!body) return null;
+  const live = join(dirname(resolve(modsDir)), PACK_LAYOUT);
+  const ref = layoutRefOf(modsDir);
+  const had = isFile(live) ? readFileSync(live) : null;
+  const lastPack = isFile(ref) ? readFileSync(ref) : null;
+  let placed = "kept";
+  if (had && had.equals(body)) placed = "same";
+  else if (had && lastPack && had.equals(lastPack)) {
+    writeFileSync(live, body);
+    log(`put back the automagik layout the rolled-back pack shipped (${live})`);
+    placed = "restored";
+  } else if (had) log(`kept your automagik layout (${live}): you changed it; the rolled-back pack's is in ${ref}`);
+  else placed = "same"; // the person removed it: a rollback doesn't add it back
+  writeFileSync(ref, body);
+  return placed;
+}
+
 export const writeMarker = (modsDir, record) => {
   const path = markerOf(modsDir);
   writeFileSync(`${path}.tmp`, formatMarker(record));
@@ -489,6 +525,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     const warnings = [];
     try { writeMarker(modsDir, record); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
+    if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings);
     for (const m of plan.left) {
       const why = Object.hasOwn(ABSORBED, m) ? "the pack's sidebar or Markdown mod does its job now" : "--adopt moves it to backup/ and installs the pack's";
@@ -516,6 +553,9 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   if (!set || set.mods.length === 0) throw new Error(`no earlier pack kept at ${prev}: nothing to roll back to`);
   const record = readMarker(modsDir) ?? { version: UNRELEASED, mods: [], layout: null, before: "none", adopted: [] };
   const owned = new Set(record.mods);
+  // The layout the kept set's pack placed, read before the set moves (null: kept before v0.9).
+  let keptLayout = null;
+  try { if (isFile(join(prev, KEPT_LAYOUT))) keptLayout = readFileSync(join(prev, KEPT_LAYOUT)); } catch {}
   const next = freshPath(stateDirOf(modsDir), ".prev-next-");
   const moves = [];
   const out = [];
@@ -576,15 +616,19 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted, installed: new Date().toISOString() }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
   let old = null;
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
+  // The rolled-out pack's layout goes with its folders, so a second rollback brings it back.
+  if (out.length && exists(next)) keepLayout(modsDir, next, warnings);
   if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings);
   else warnings.push(`the folders rolled out are in ${next}`);
+  let layout = null;
+  try { layout = restoreLayout({ modsDir, body: keptLayout, log }); } catch (error) { warnings.push(`the automagik layout was not put back (${error.message})`); }
   // The migration's edits whose mod left mods/ in this rollback are reverted from the journals
   // (an edit to a mod still installed stays); then the references follow the folders now in
   // place (forward again, they move again).
   const reverted = revertRefs({ modsDir, log, warnings, left: (mod) => left.has(mod) && !set.mods.includes(mod) });
   const migration = migrateRefs({ modsDir, log, warnings });
   const hooks = moveHooks({ modsDir, log, warnings, binDir, window });
-  return { pack: modsDir, prev, mods: set.mods, version: set.version, reverted: reverted.restored, migration, hooks, warnings };
+  return { pack: modsDir, prev, mods: set.mods, version: set.version, layout, reverted: reverted.restored, migration, hooks, warnings };
 }
 
 /**
@@ -837,15 +881,28 @@ export async function checkForUpdate({ fetch = globalThis.fetch, env = process.e
   return { current, latest, update: pickUpdate(current, release), disabled: false };
 }
 
-/** check, then download, verify and apply when there is an update. `{ current, latest, update, installed }`. */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), log, binDir = null, window = false } = {}) {
+/**
+ * check, then download, verify and apply when there is an update. `{ current, latest, update, installed }`.
+ * `expect`: the version the person confirmed (the status bar's dialog). When the latest release
+ * is another one by now, nothing is downloaded: `{ ..., installed: null, refused: { expected, latest } }`.
+ */
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), log, binDir = null, window = false, expect = null } = {}) {
   const found = await checkForUpdate({ fetch, env, modsDir });
   if (!found.update) return { ...found, installed: null };
+  if (expect && found.update.version !== expect) return { ...found, installed: null, refused: { expected: expect, latest: found.update.version } };
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
     const before = oldSidebarHere(modsDir);
     const installed = await applyUpdate({ tgzPath, version: found.update.version, modsDir, log });
+    // The release's layout, as install.sh --setup places it (D8: one the person edited is kept),
+    // so an update shows what the release added to it; then the person's layouts are migrated.
+    const tgzDir = join(dir, "layout");
+    try {
+      mkdirSync(tgzDir);
+      await run("tar", ["-xzf", resolve(tgzPath), "-C", tgzDir, PACK_LAYOUT]).catch(() => {});
+      installed.layout = placeLayout({ modsDir, tgzDir, record: readMarker(modsDir), log });
+    } catch (error) { installed.warnings.push(`the automagik layout was not placed (${error.message})`); }
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window, crossed: crossedRename(modsDir, before) });
     return { ...found, installed };
@@ -888,12 +945,12 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply | rollback | install --from <tgz> --version <v> [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] | rollback | install --from <tgz> --version <v> [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
 const FLAGS = {
-  check: [], apply: [], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--adopt", "--setup"],
+  check: [], apply: ["--expect"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--adopt", "--setup"],
   repair: ["--from", "--version"],
 };
-const VALUED = new Set(["--mods", "--from", "--version"]);
+const VALUED = new Set(["--mods", "--from", "--version", "--expect"]);
 
 /** Strict arguments: an unknown command or flag, or a flag missing its value, is a usage error before anything is read. */
 export function parseArgs(argv) {
@@ -924,7 +981,7 @@ async function main(argv) {
   const host = { binDir: binDirOf(), window: liveHome(modsDir) };
   if (command === "check" || (command === "update" && opts.check)) return checkForUpdate({ modsDir });
   if (command === "apply" || command === "update") {
-    const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, ...host });
+    const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, expect: opts.expect ?? null, ...host });
     if (command === "update") notice(r.installed?.hooks?.hooks);
     if (command === "apply" || opts.json) return r;
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };

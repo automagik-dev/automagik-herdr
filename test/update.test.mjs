@@ -660,3 +660,124 @@ test("any CLI start moves our link from the .mjs to the installed pack's wrapper
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readlinkSync(link), join(bin, "automagik-herdr"));
 });
+
+// ---- The automagik layout on update and rollback (PR #79: am-status in the status bar) ----
+
+const LAYOUT_V1 = '{ "id": "root", "children": [{ "id": "status", "content": { "mod": "workspace-status" } }] }\n';
+const LAYOUT_V2 = '{ "id": "root", "children": [{ "id": "status", "content": { "mod": "am-status" } }] }\n';
+/** A release tarball at `version` carrying layouts/automagik.json = `layout`, as release.yml packs it. */
+function tarballWithLayout(version, layout) {
+  const src = mkdtempSync(join(tmpdir(), "pack-src-"));
+  const tree = join(src, "tree");
+  packDir(tree, version);
+  mkdirSync(join(tree, "layouts"));
+  writeFileSync(join(tree, "layouts", "automagik.json"), layout);
+  const out = join(src, `automagik-herdr-pack-${version}.tgz`);
+  execFileSync("tar", ["czf", out, "-C", tree, ...MODS, "layouts"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+  return { path: out, buf: readFileSync(out), src };
+}
+/** An app home at 0.1.0 whose pack placed LAYOUT_V1 (live and reference), and a 0.2.0 release with LAYOUT_V2. */
+function layoutHome() {
+  const { home, mods } = appHome("0.1.0");
+  mkdirSync(join(home, "layouts"));
+  writeFileSync(join(home, "layouts", "automagik.json"), LAYOUT_V1);
+  writeFileSync(join(home, "automagik-herdr", "automagik.json"), LAYOUT_V1);
+  const t = tarballWithLayout("0.2.0", LAYOUT_V2);
+  const rel = release("0.2.0");
+  const table = { [LATEST_URL]: rel, [rel.assets[0].browser_download_url]: t.buf, [rel.assets[1].browser_download_url]: `${sha(t.buf)}  automagik-herdr-pack-0.2.0.tgz\n` };
+  const live = () => readFileSync(join(home, "layouts", "automagik.json"), "utf8");
+  const ref = () => readFileSync(join(home, "automagik-herdr", "automagik.json"), "utf8");
+  const done = () => { rmSync(t.src, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); };
+  return { home, mods, table, live, ref, done };
+}
+
+test("installUpdate places the release's layout over the last pack's own (what `automagik-herdr update` runs)", async () => {
+  const h = layoutHome();
+  try {
+    const r = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    assert.equal(r.installed.version, "0.2.0");
+    assert.equal(r.installed.layout, "replaced");
+    assert.equal(h.live(), LAYOUT_V2, "the status bar block names am-status now");
+    assert.equal(h.ref(), LAYOUT_V2);
+    assert.equal(readFileSync(join(prevSetOf(h.mods), ".layout.json"), "utf8"), LAYOUT_V1, "the kept set carries the layout its pack placed");
+  } finally { h.done(); }
+});
+
+test("installUpdate keeps a layout the person edited (D8), and adds one that is missing", async () => {
+  const h = layoutHome();
+  try {
+    const mine = LAYOUT_V1.replace('"root"', '"mine"');
+    writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
+    const r = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    assert.equal(r.installed.layout, "kept");
+    assert.equal(h.live(), mine);
+    assert.equal(h.ref(), LAYOUT_V2, "the pack's copy is still the reference");
+  } finally { h.done(); }
+  const g = layoutHome();
+  try {
+    rmSync(join(g.home, "layouts", "automagik.json"));
+    const r = await installUpdate({ fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
+    assert.equal(r.installed.layout, "added");
+    assert.equal(g.live(), LAYOUT_V2);
+  } finally { g.done(); }
+});
+
+test("rollback puts the rolled-to pack's layout back (no layout naming a missing am-status), and a second rollback undoes it", async () => {
+  const h = layoutHome();
+  try {
+    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    const back = rollback({ modsDir: h.mods });
+    assert.equal(back.version, "0.1.0");
+    assert.equal(back.layout, "restored");
+    assert.equal(h.live(), LAYOUT_V1);
+    assert.equal(h.ref(), LAYOUT_V1, "the reference is the rolled-to pack's");
+    assert.equal(readFileSync(join(prevSetOf(h.mods), ".layout.json"), "utf8"), LAYOUT_V2, "the rolled-out pack's layout is kept with it");
+    const forward = rollback({ modsDir: h.mods });
+    assert.equal(forward.version, "0.2.0");
+    assert.equal(forward.layout, "restored");
+    assert.equal(h.live(), LAYOUT_V2);
+    assert.equal(h.ref(), LAYOUT_V2);
+  } finally { h.done(); }
+});
+
+test("rollback keeps a layout the person edited after the update; a set kept before v0.9 (no layout) changes nothing", async () => {
+  const h = layoutHome();
+  try {
+    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    const mine = LAYOUT_V2.replace('"root"', '"mine"');
+    writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
+    const back = rollback({ modsDir: h.mods });
+    assert.equal(back.layout, "kept");
+    assert.equal(h.live(), mine);
+    assert.equal(h.ref(), LAYOUT_V1);
+  } finally { h.done(); }
+  const g = layoutHome();
+  try {
+    await installUpdate({ fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
+    rmSync(join(prevSetOf(g.mods), ".layout.json"));
+    const back = rollback({ modsDir: g.mods });
+    assert.equal(back.layout, null);
+    assert.equal(g.live(), LAYOUT_V2);
+  } finally { g.done(); }
+});
+
+test("installUpdate with `expect`: a newer latest than the confirmed version downloads nothing and is refused", async () => {
+  const h = layoutHome();
+  try {
+    const calls = [];
+    const r = await installUpdate({ fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.1.5" });
+    assert.equal(r.installed, null);
+    assert.deepEqual(r.refused, { expected: "0.1.5", latest: "0.2.0" });
+    assert.deepEqual(calls.map((c) => c.url), [LATEST_URL], "only the release lookup: no tarball, no SHA256SUMS");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    const ok = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0" });
+    assert.equal(ok.installed.version, "0.2.0");
+  } finally { h.done(); }
+});
+
+test("node update.mjs apply --expect <v>: the flag takes a value; other commands refuse it", async () => {
+  const { parseArgs } = await import("../mods/am-sidebar/update.mjs");
+  assert.deepEqual(parseArgs(["apply", "--expect", "0.8.1", "--mods", "/m"]), { command: "apply", opts: { expect: "0.8.1", mods: "/m" } });
+  assert.throws(() => parseArgs(["apply", "--expect"]), /usage/);
+  assert.throws(() => parseArgs(["check", "--expect", "0.8.1"]), /usage/);
+});

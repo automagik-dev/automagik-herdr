@@ -69,11 +69,11 @@ test("the list: the pack as one group with its version, Yours, Herdr built-in fo
   view.init({}, cx);
   await cx.settle();
   const text = textOf(draw(view, cx));
-  assert.match(text, /8 Automagik Herdr · 2 yours · 2 built-in · 1 off/);
+  assert.match(text, new RegExp(`${PACK_MODS.length} Automagik Herdr · 2 yours · 2 built-in · 1 off`));
   for (const head of ["ON", "NAME", "KIND", "CHECK", "VERSION", "SOURCE", "INSTALLED", "CHANGED"]) assert.match(text, new RegExp(`\\b${head}\\b`));
   assert.doesNotMatch(text, /\bPATH\b/, "the path is in the detail line, not an untitled column");
   assert.doesNotMatch(text, /seus|do Herdr|desligad|catálogo|atualiz|upstream \?|←/);
-  assert.match(textOf(nodes.get("group-pack")), /Automagik Herdr 0\.5\.1 · 8/);
+  assert.match(textOf(nodes.get("group-pack")), new RegExp(`Automagik Herdr 0\\.5\\.1 · ${PACK_MODS.length}`));
   assert.match(textOf(nodes.get("group-yours")), /Yours · 2/);
   assert.match(textOf(nodes.get("group-herdr")), /▸ Herdr built-in · 2 mods/);
   assert.equal(nodes.get("mod-spaces"), undefined, "built-in mods fold into one row");
@@ -117,7 +117,7 @@ test("u on a pack mod asks, then runs automagik-herdr update in this app home; n
   await cx.settle();
   select(view, "am-footer");
   await key(view, cx, "u");
-  assert.match(view.confirm?.text ?? "", /update Automagik Herdr \(all 8 of its mods\) with automagik-herdr update\? \(y\/n\)/);
+  assert.match(view.confirm?.text ?? "", new RegExp(`update Automagik Herdr \\(all ${PACK_MODS.length} of its mods\\) with automagik-herdr update\\? \\(y/n\\)`));
   await key(view, cx, "y");
   await cx.settle();
   assert.equal(readFileSync(s.calls, "utf8"), `${s.appHome} update\n`);

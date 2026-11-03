@@ -12,6 +12,10 @@ sidebar-chrome, md-menu, auto-tabs, new-menu-tui, mod-manager and automations, i
                         Start/Attach, briefing and the space icon dialog are this pack's). Its layout is the root
                         layouts/automagik.json, so Herdr does not dock a second sidebar.
   mods/am-footer        from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg, bot.svg and layers.svg (Lucide, ISC; bot.svg as Herdr ships it in frame/welcome)
+  mods/am-status        from Herdr's `workspace-status` 0.1.12 — changed: main.js, mod.json; added: label.js,
+                        RECIPE.md; monitor.svg, server.svg and branch.svg copied unchanged from
+                        `workspace-chrome` as Herdr 0.1.12 ships it (am-footer's 0.1.11 is
+                        older than these files)
   mods/am-markdown      from Herdr's `menu` 0.1.10, with the Markdown renderer merged in from
                         ohneda/herdr-markdown-browser (MIT; notice below) — changed: main.js,
                         mod.json; added: marks.js, open.js, LICENSE-upstream
