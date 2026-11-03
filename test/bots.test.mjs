@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
 import { PROJECTS_FILE } from "../mods/am-sidebar/model.js";
-const { discoverProjects, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
+const { discoverProjects, discoverySnapshot, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
 
 const run = promisify(execFile);
 const ID = { main: "b-aaaaaaaaaa", dev: "b-cccccccccc" };
@@ -36,7 +36,7 @@ async function repo(t) {
 }
 const put = (dir, file) => { mkdirSync(join(dir, ".herdr"), { recursive: true }); writeFileSync(join(dir, ".herdr", "bots.json"), typeof file === "string" ? file : JSON.stringify(file)); };
 function reset() {
-  Object.assign(state, { spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [] });
+  Object.assign(state, { spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), hung: new Set(), calls: [] });
 }
 
 test("writeBots from a worktree's key writes the main checkout only, and remembers it", async (t) => {
@@ -120,6 +120,139 @@ test("discoverProjects: a machine away keeps its known key, and is skipped when 
   assert.deepEqual(later.map((p) => [p.key, p.file.bots.length]), [[main, 2]]);
   assert.ok(state.calls.some((c) => c.command === "git"), "the key was asked again");
   assert.ok(!state.calls.some((c) => c.kind === "read" && c.path.startsWith(tree)));
+});
+
+// A timer for discoverProjects' calls to another machine that runs out at once. A machine
+// that never answers gets a name of its own per test: bots.js keeps one gate per machine for
+// the module's life, so calls stuck on one stay stuck.
+const quick = () => new Promise((done) => setImmediate(done));
+const gitCalls = () => state.calls.filter((c) => c.kind === "exec" && c.command === "git");
+const callsTo = (m) => state.calls.filter((c) => c.on === m);
+const DAY = 24 * 3600_000;
+
+test("discoverProjects: a folder keyed once isn't asked again; a minute later it is placed at once and asked once", async (t) => {
+  reset();
+  const { main, tree } = await repo(t);
+  put(main, sample());
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  state.spaces = [{ id: "s1", folder: main, machine: "slow1" }, { id: "s2", folder: tree, machine: "slow1" }];
+  await discoverProjects();
+  state.calls = [];
+  assert.deepEqual((await discoverProjects()).map((p) => p.spaces), [["s1", "s2"]]);
+  assert.deepEqual(gitCalls(), [], "no key looked up again");
+  // A minute on, "slow1" never answers: the known keys place the spaces at once and are asked
+  // once; the read times out and the last good file (read in this run) shows, not stale.
+  t.mock.timers.tick(61_000);
+  state.hung.add("slow1");
+  state.calls = [];
+  const found = await discoverProjects({ sleep: quick });
+  assert.deepEqual(found.map((p) => [p.key, p.spaces, p.file.bots.length, p.stale ?? false]), [[main, ["s1", "s2"], 2, false]]);
+  assert.deepEqual(gitCalls().map((c) => c.cwd), [main, tree]);
+  // The failed look renews the keys: the next discovery doesn't ask again.
+  state.calls = [];
+  await discoverProjects({ sleep: quick });
+  assert.deepEqual(gitCalls(), []);
+});
+
+test("discoverProjects: a machine that never answers, with 15 folders, is never sent more than 8 calls", async (t) => {
+  reset();
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  state.hung.add("h15");
+  state.spaces = Array.from({ length: 15 }, (_, i) => ({ id: `r${i}`, folder: `/srv/p${i}`, machine: "h15" }));
+  for (let round = 0; round < 3; round++) {
+    assert.deepEqual(await discoverProjects({ sleep: quick }), []);
+    t.mock.timers.tick(61_000);
+  }
+  assert.equal(callsTo("h15").length, 8);
+});
+
+test("discoverProjects: a machine that never answers doesn't hold back this computer's projects", async (t) => {
+  reset();
+  const { main } = await repo(t);
+  put(main, sample());
+  state.hung.add("dead");
+  state.spaces = [{ id: "r1", folder: "/srv/app", machine: "dead" }, { id: "s1", folder: main, machine: null }];
+  rememberProject("/srv/other", "dead");
+  const found = await discoverProjects({ sleep: quick });
+  assert.deepEqual(found.map((p) => [p.key, p.machine, p.spaces]), [[main, null, ["s1"]]]);
+  // Away is not "no": the remembered project stays remembered.
+  assert.equal(state.shared.get("am.sidebar.projects").length, 1);
+});
+
+test("restoreDiscovery: the last discovery draws at startup under the spaces open now; a machine away shows it stale, then not", async (t) => {
+  reset();
+  const { main, tree } = await repo(t);
+  put(main, sample());
+  state.spaces = [{ id: "s1", folder: tree, machine: null }, { id: "r1", folder: main, machine: "far" }];
+  const saved = discoverySnapshot(await discoverProjects());
+  const seen = JSON.parse(saved).projects[1].seen;
+  // A restart: a fresh module, the spaces with new ids, "far" not answering.
+  const fresh = await import("../mods/am-sidebar/bots.js?restart");
+  state.spaces = [{ id: "n1", folder: tree, machine: null }, { id: "n2", folder: main, machine: "far" }];
+  state.hung.add("far");
+  state.calls = [];
+  const drawn = fresh.restoreDiscovery(saved);
+  assert.deepEqual(state.calls, [], "drawn without asking anything");
+  assert.deepEqual(drawn.map((p) => [p.key, p.machine, p.spaces, p.file.bots.length, p.stale ?? false]),
+    [[main, null, ["n1"], 2, false], [main, "far", ["n2"], 2, false]]);
+  // "far" times out: its saved file shows stale, with when it was read.
+  const found = await fresh.discoverProjects({ sleep: quick });
+  assert.deepEqual(found.map((p) => [p.key, p.machine, p.spaces, p.file.bots.length, p.stale ?? false]),
+    [[main, null, ["n1"], 2, false], [main, "far", ["n2"], 2, true]]);
+  assert.match(found[1].warnings[0], /^last seen 1 min ago; far isn't answering$/);
+  // Saved again, it keeps the time it was read (never as if read now), and no note.
+  const again = JSON.parse(fresh.discoverySnapshot(found)).projects[1];
+  assert.equal(again.seen, seen);
+  assert.deepEqual(again.warnings, []);
+  // Three discoveries without an answer: no longer shown.
+  await fresh.discoverProjects({ sleep: quick });
+  await fresh.discoverProjects({ sleep: quick });
+  assert.deepEqual((await fresh.discoverProjects({ sleep: quick })).map((p) => p.machine), [null]);
+});
+
+test("restoreDiscovery: a saved file stops showing once its machine has answered", async (t) => {
+  reset();
+  const { main } = await repo(t);
+  put(main, sample());
+  const path = join(main, ".herdr", "bots.json");
+  const saved = JSON.stringify({ keys: [["near", main, main, main, Date.now()]], projects: [{ key: main, machine: "near", file: sample(), warnings: [], seen: Date.now() }] });
+  const fresh = await import("../mods/am-sidebar/bots.js?answered");
+  state.spaces = [{ id: "r1", folder: main, machine: "near" }];
+  assert.equal(fresh.restoreDiscovery(saved).length, 1);
+  // "near" answers (its git does) but this file can't be read: the saved copy goes.
+  state.readFault = (p) => (p === path ? new Error("EACCES") : null);
+  t.after(() => { state.readFault = null; });
+  // (No timer: "quick" would give up on the real git call too.)
+  await fresh.discoverProjects();
+  assert.deepEqual(await fresh.discoverProjects(), []);
+});
+
+test("restoreDiscovery: a saved key that is wrong now is put right in the first discovery", async (t) => {
+  reset();
+  const { main, tree } = await repo(t);
+  put(main, sample());
+  const now = Date.now();
+  const saved = JSON.stringify({ keys: [[null, tree, "/moved/away", "/moved/away", now]],
+    projects: [{ key: "/moved/away", machine: null, file: sample(), warnings: [], seen: now }] });
+  const fresh = await import("../mods/am-sidebar/bots.js?moved");
+  state.spaces = [{ id: "s1", folder: tree, machine: null }];
+  assert.deepEqual(fresh.restoreDiscovery(saved).map((p) => [p.key, p.spaces]), [["/moved/away", ["s1"]]]);
+  assert.deepEqual((await fresh.discoverProjects()).map((p) => [p.key, p.spaces]), [[main, ["s1"]]]);
+});
+
+test("restoreDiscovery: keys unused for a week and files read over a day ago are left out; nothing readable draws nothing", async () => {
+  reset();
+  const fresh = await import("../mods/am-sidebar/bots.js?old");
+  const now = Date.now();
+  state.spaces = [{ id: "s1", folder: "/a", machine: null }, { id: "s2", folder: "/b", machine: null }];
+  const saved = JSON.stringify({
+    keys: [[null, "/a", "/a", "/a", now - 8 * DAY], [null, "/b", "/b", "/b", now - DAY]],
+    projects: [{ key: "/a", machine: null, file: sample(), warnings: [], seen: now }, { key: "/b", machine: null, file: sample(), warnings: [], seen: now - 2 * DAY }],
+  });
+  assert.deepEqual(fresh.restoreDiscovery(saved).map((p) => [p.key, p.spaces]), [["/a", []]]);
+  for (const text of [null, "", "{nope", "[]", JSON.stringify({ keys: [[1, 2]], projects: [{ key: "/x", machine: null, file: "no", seen: now }] })]) {
+    assert.deepEqual(fresh.restoreDiscovery(text), [], String(text));
+  }
 });
 
 test("discoverProjects: a file that doesn't parse on its first read shows with the reason", async (t) => {
