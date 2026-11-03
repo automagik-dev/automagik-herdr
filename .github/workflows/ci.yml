@@ -1,6 +1,6 @@
 name: CI
 
-# The pack's tests, a syntax check of every file Herdr, the CLI or the release tooling runs,
+# The pack's tests, a syntax check of every pack mod and the release tooling, the catalog index,
 # and one version everywhere (scripts/version.mjs). No build step and no dependencies: the
 # pack is plain JavaScript that Herdr loads as it is.
 
@@ -36,13 +36,16 @@ jobs:
       - name: Syntax
         run: |
           set -euo pipefail
-          for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do
             node --check "$f"
           done
           sh -n install.sh
-          sh -n mods/spaces-agents/bin/run.sh
-          sh -n mods/spaces-agents/bin/automagik-herdr
-          shellcheck -s sh install.sh mods/spaces-agents/bin/run.sh mods/spaces-agents/bin/automagik-herdr
+          sh -n mods/am-sidebar/bin/run.sh
+          sh -n mods/am-sidebar/bin/automagik-herdr
+          shellcheck -s sh install.sh mods/am-sidebar/bin/run.sh mods/am-sidebar/bin/automagik-herdr
+
+      - name: Catalog
+        run: node scripts/catalog.mjs --check
 
       - name: One version
         run: node scripts/version.mjs check

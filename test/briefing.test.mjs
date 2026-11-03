@@ -11,10 +11,12 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { parseBots } from "../mods/spaces-agents/model.js";
-import { briefingText, directMembers, mergeHook, hookCommand, briefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT } from "../mods/spaces-agents/briefingText.mjs";
-import { BUDGET_MS, CALL_MS, GUARD_MS, timeScale } from "../mods/spaces-agents/briefing.mjs";
-const { afterBind } = await import("../mods/spaces-agents/launch.js");
+import { parseBots } from "../mods/am-sidebar/model.js";
+import {
+  briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
+} from "../mods/am-sidebar/briefingText.mjs";
+import { BUDGET_MS, CALL_MS, GUARD_MS, timeScale } from "../mods/am-sidebar/briefing.mjs";
+const { afterBind } = await import("../mods/am-sidebar/launch.js");
 
 const run = promisify(execFile);
 // git here must not read this host's global ignore (it may list settings.local.json already).
@@ -24,7 +26,7 @@ process.on("exit", () => rmSync(process.env.XDG_CONFIG_HOME, { recursive: true, 
 const NODE_DIR = dirname(process.execPath);
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs briefing.mjs with that runtime instead.
 const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
-const SCRIPT = new URL("../mods/spaces-agents/briefing.mjs", import.meta.url).pathname;
+const SCRIPT = new URL("../mods/am-sidebar/briefing.mjs", import.meta.url).pathname;
 // briefing.mjs under test runs with its times multiplied by SCALE (HERDR_BRIEFING_TIME_SCALE):
 // each fake hc call is a node process, which a loaded machine can take seconds to start, and the
 // real 2 s budget would then cut answers the test expects. A hung call hangs HANG_MS, far past the
@@ -149,28 +151,35 @@ test("cap: 4,000-character instructions and twelve members with long reports sta
   assert.ok(huge.endsWith("</herdr-bot>"));
 });
 
-test("hook command: runs the installed script through bin/run.sh when it is there, both quoted", () => {
-  assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs");
-  const run = "/Users/x/.config/herdr-app/mods/spaces-agents/bin/run.sh";
+test("hook command: runs the stable entry point through the installed sidebar's bin/run.sh when it is there, all quoted", () => {
+  assert.equal(briefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/mods/am-sidebar/briefing.mjs");
+  assert.equal(stableBriefingPath("/Users/x/.config/herdr-app/"), "/Users/x/.config/herdr-app/automagik-herdr/briefing.mjs");
+  const mods = "/Users/x/.config/herdr-app/mods";
   assert.equal(hookCommand("/Users/x/.config/herdr-app"),
-    `[ ! -f "${run}" ] || sh "${run}" "/Users/x/.config/herdr-app/mods/spaces-agents/briefing.mjs"`);
-  const odd = '/odd \\"\\$HOME\\`/mods/spaces-agents';
-  assert.equal(hookCommand('/odd "$HOME`'), `[ ! -f "${odd}/bin/run.sh" ] || sh "${odd}/bin/run.sh" "${odd}/briefing.mjs"`);
+    `r="${mods}/am-sidebar/bin/run.sh"; [ -f "$r" ] || r="${mods}/spaces-agents/bin/run.sh"; [ ! -f "$r" ] || sh "$r" "/Users/x/.config/herdr-app/automagik-herdr/briefing.mjs"`);
+  const run = `${mods}/spaces-agents/bin/run.sh`;
+  assert.equal(legacyHookCommand("/Users/x/.config/herdr-app"),
+    `[ ! -f "${run}" ] || sh "${run}" "${mods}/spaces-agents/briefing.mjs"`);
+  const odd = '/odd \\"\\$HOME\\`';
+  assert.equal(hookCommand('/odd "$HOME`'),
+    `r="${odd}/mods/am-sidebar/bin/run.sh"; [ -f "$r" ] || r="${odd}/mods/spaces-agents/bin/run.sh"; [ ! -f "$r" ] || sh "$r" "${odd}/automagik-herdr/briefing.mjs"`);
 });
 
 test("hook command, run by sh: the script gets stdin; no run.sh exits 0 silently; no runtime is 127, never 2", (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-hookcmd-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const app = join(root, "app with 'quotes' $x");
-  const pack = join(app, "mods/spaces-agents");
+  const pack = join(app, "mods/am-sidebar");
   mkdirSync(join(pack, "bin"), { recursive: true });
-  writeFileSync(join(pack, "briefing.mjs"), 'let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => console.log(`briefed ${s}`));\n');
+  // The script the hook names: the stable entry point (the shim is tested in hooks.test.mjs).
+  mkdirSync(dirname(stableBriefingPath(app)), { recursive: true });
+  writeFileSync(stableBriefingPath(app), 'let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => console.log(`briefed ${s}`));\n');
   const hook = (env) => spawnSync("/bin/sh", ["-c", hookCommand(app)], { input: '{"prompt":"hi"}', encoding: "utf8",
     env: { HOME: root, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath), ...env } });
   // A rollback to a pack without run.sh, or an uninstall: nothing, exit 0.
   const missing = hook();
   assert.deepEqual([missing.status, missing.stdout, missing.stderr], [0, "", ""]);
-  copyFileSync(new URL("../mods/spaces-agents/bin/run.sh", import.meta.url), join(pack, "bin/run.sh"));
+  copyFileSync(new URL("../mods/am-sidebar/bin/run.sh", import.meta.url), join(pack, "bin/run.sh"));
   const ran = hook();
   assert.equal(ran.status, 0, ran.stderr);
   assert.equal(ran.stdout, 'briefed {"prompt":"hi"}\n');
@@ -181,7 +190,7 @@ test("hook command, run by sh: the script gets stdin; no run.sh exits 0 silently
 
 test("hook merge: an older `node` hook is upgraded in place to the run.sh form, then left alone", () => {
   // The form written before bin/run.sh (v0.3.4 and earlier).
-  const oldForm = (home) => `command -v node >/dev/null && node "${briefingPath(home).replace(/[\\"$`]/g, (c) => `\\${c}`)}" || true`;
+  const oldForm = (home) => `command -v node >/dev/null && node "${briefingPath(home, "spaces-agents").replace(/[\\"$`]/g, (c) => `\\${c}`)}" || true`;
   for (const home of ["/h", '/odd "$HOME`', "/old-home"]) {
     const text = JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [
       { hooks: [{ type: "command", command: "brain recall" }] },
@@ -464,8 +473,9 @@ async function session(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-hook-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const appHome = join(root, "herdr-app");
-  mkdirSync(join(appHome, "mods", "spaces-agents"), { recursive: true });
-  writeFileSync(join(appHome, "mods", "spaces-agents", "briefing.mjs"), "// installed\n");
+  mkdirSync(join(appHome, "mods", "am-sidebar"), { recursive: true });
+  writeFileSync(join(appHome, "mods", "am-sidebar", "briefing.mjs"), "// installed\n");
+  writeFileSync(join(appHome, "mods", "am-sidebar", "briefingEntry.mjs"), "// the entry point\n");
   const proj = join(root, "proj");
   await run("git", ["init", "-q", proj]);
   await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: proj });
@@ -485,6 +495,7 @@ test("afterBind: a Claude bot gets the hook merged into settings.local.json, set
   const local = JSON.parse(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8"));
   assert.equal(local.model, "opus");
   assert.deepEqual(local.hooks.UserPromptSubmit.map((g) => g.hooks[0].command), ["brain recall", hookCommand(appHome)]);
+  assert.equal(readFileSync(stableBriefingPath(appHome), "utf8"), "// the entry point\n", "the entry point put in place");
   assert.equal(readFileSync(join(proj, ".claude", "settings.json"), "utf8"), shared);
   assert.deepEqual(state.notes, []);
   assert.match(readFileSync(join(proj, ".git", "info", "exclude"), "utf8"), /^\*\*\/\.claude\/settings\.local\.json$/m);
@@ -493,6 +504,23 @@ test("afterBind: a Claude bot gets the hook merged into settings.local.json, set
   assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: false });
   assert.equal(JSON.parse(readFileSync(join(proj, ".claude", "settings.local.json"), "utf8")).hooks.UserPromptSubmit.length, 2);
   assert.equal(readFileSync(join(proj, ".git", "info", "exclude"), "utf8").split(EXCLUDE_LINE).length, 2);
+  assert.deepEqual(state.notes, []);
+});
+
+test("afterBind: a v0.3 hook moves onto the entry point in place; with no entry point to place, the folder's own path", async (t) => {
+  const { appHome, proj } = await session(t);
+  mkdirSync(join(proj, ".claude"));
+  const file = join(proj, ".claude", "settings.local.json");
+  writeFileSync(file, JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: legacyHookCommand(appHome), timeout: 10 }] }] } }));
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: true });
+  const moved = JSON.parse(readFileSync(file, "utf8"));
+  assert.deepEqual(moved.hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: hookCommand(appHome), timeout: 10 }] }], "updated, not doubled");
+  assert.deepEqual(moved.permissions, { allow: ["Bash(ls)"] });
+  // A pack with no entry point to copy (and none placed): the hook names the folder's own script.
+  rmSync(stableBriefingPath(appHome));
+  rmSync(join(appHome, "mods", "am-sidebar", "briefingEntry.mjs"));
+  assert.deepEqual(await afterBind(bot(ID.main, "main"), proj), { written: true });
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).hooks.UserPromptSubmit[0].hooks[0].command, directHookCommand(appHome));
   assert.deepEqual(state.notes, []);
 });
 
@@ -513,8 +541,8 @@ test("afterBind: briefing.mjs not at the computed path: the owner is told the fi
   assert.equal(existsSync(join(proj, ".claude")), false);
   assert.doesNotMatch(readFileSync(join(proj, ".git", "info", "exclude"), "utf8"), /settings\.local/);
   assert.equal(state.notes.length, 1);
-  assert.match(state.notes[0].body, /moved-home\/mods\/spaces-agents\/briefing\.mjs isn't there/);
-  assert.match(state.notes[0].body, /copy the pack in again as mods\/spaces-agents/);
+  assert.match(state.notes[0].body, /moved-home\/mods\/am-sidebar\/briefing\.mjs isn't there/);
+  assert.match(state.notes[0].body, /copy the pack in again as mods\/am-sidebar/);
 });
 
 test("afterBind: not Claude, or a settings file that isn't JSON: nothing written, never a throw", async (t) => {

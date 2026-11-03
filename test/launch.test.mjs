@@ -4,14 +4,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, labelMoves, attachRefusal, parseCommand } from "../mods/spaces-agents/launchArgs.js";
-const { startBot, attachBot, liveTerminalOf } = await import("../mods/spaces-agents/launch.js");
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, labelMoves, attachRefusal, parseCommand } from "../mods/am-sidebar/launchArgs.js";
+const { startBot, attachBot, liveTerminalOf } = await import("../mods/am-sidebar/launch.js");
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -158,7 +158,7 @@ test("startBot: a member with a live lead runs under it, in the project's space 
   const runArgs = state.hcCalls.find((a) => a[0] === "run");
   assert.deepEqual(runArgs, ["run", "--bg", "--json", "--name", "dev-cccc", "--cwd", main, "--label", `bot=${ID.dev}`,
     "--label", "herdr.space=s1", "--label", "herdr.tab=b", "--parent", "t7", "--outlive-parent", "--", "claude"]);
-  assert.deepEqual(state.shared.get("spaces-agents.projects"), [{ key: main, machine: null }]);
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: main, machine: null }]);
 });
 
 test("startBot: lead down -> --no-parent; a live bot is focused, not started; planned refused", async (t) => {
@@ -186,7 +186,7 @@ test("attachBot: a Claude pane whose session is in another project is refused, n
   assert.match(r.refused, new RegExp(`runs in ${other}`));
   assert.match(r.refused, new RegExp(`project ${main}`));
   assert.deepEqual(state.hcCalls.filter((a) => a[0] === "label"), []);
-  assert.equal(state.shared.get("spaces-agents.projects"), undefined);
+  assert.equal(state.shared.get("am.sidebar.projects"), undefined);
 });
 
 test("attachBot: a Claude session in the project's worktree passes; the label moves off the old holder", async (t) => {
@@ -200,6 +200,31 @@ test("attachBot: a Claude session in the project's worktree passes; the label mo
 });
 
 // ---- fix loop 1 ----
+
+test("startBot: an edit during Start whose labels hc refuses is a warning, like Attach's", async (t) => {
+  reset();
+  const { main } = await project(t);
+  state.notes = [];
+  state.spaces = [{ id: "s1", folder: main, machine: null, active: true, tabs: [] }];
+  const answer = state.hcAnswer;
+  state.hcAnswer = (args) => {
+    if (args[0] === "run") {
+      // The bot gets a rank while hc run is going.
+      const f = JSON.parse(readFileSync(join(main, ".herdr", "bots.json"), "utf8"));
+      f.bots.find((b) => b.id === ID.dev).rank = "tester";
+      writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(f));
+    }
+    if (args[0] === "label") return { code: 1, stdout: "", stderr: "hc: label refused" };
+    return answer(args);
+  };
+  assert.deepEqual(await startBot(main, ID.dev), { terminal: "t42" });
+  assert.deepEqual(state.hcCalls.find((a) => a[0] === "label"), ["label", "t42", "role=tester"]);
+  // (The other notice is the briefing hook's: the stand-in app home has no briefing.mjs.)
+  const labelNotes = state.notes.filter((n) => /plays/.test(n.body));
+  assert.equal(labelNotes.length, 1);
+  assert.equal(labelNotes[0].body, "t42 plays Dev, but its labels role=tester weren't set: hc: label refused");
+  assert.equal(labelNotes[0].level, "warning");
+});
 
 test("startBot: two Starts at once open one pane; a Start right after focuses the new one", async (t) => {
   reset();

@@ -1,0 +1,31 @@
+{
+  "repos": [
+    {
+      "fullName": "GaganSD/coding-agent-toolkit",
+      "path": "herdr-insights",
+      "name": "Insights",
+      "blurb": "A native Herdr dashboard for token usage across Pi, Codex, Claude Code, and OpenCode. It reads existing local session data, shows model rankings and activity, and opens in its own tab without changing terminals, layouts, or keys.",
+      "modNames": [
+        "insights"
+      ],
+      "headCommit": "92cdb30bfe5b41b0b25e5a44f2b3965f9811ce24",
+      "stars": 38,
+      "pushedAt": "2026-10-31T02:52:29Z",
+      "defaultBranch": "main",
+      "hasKeys": false,
+      "hasPreview": true,
+      "license": "MIT",
+      "recipeBytes": 8962
+    },
+    {
+      "fullName": "automagik-dev/automagik-pocket",
+      "external": true,
+      "name": "Pocket Link",
+      "blurb": "Pair a phone with this computer so Herdr Pocket reaches its agents from anywhere. The mod, its LaunchAgent and its pairing state live in automagik-pocket and are installed by that repo, never by this pack.",
+      "defaultBranch": "dev",
+      "stars": 0,
+      "pushedAt": "",
+      "license": "Apache-2.0"
+    }
+  ]
+}

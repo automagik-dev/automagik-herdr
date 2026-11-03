@@ -5,7 +5,7 @@
 export const nodes = new Map(); // id -> node, of the tree index() last walked
 
 function element(kind, arg) {
-  const node = { kind, arg, kids: [], props: {} };
+  const node = { kind, arg, kids: [], props: {}, calls: [] }; // calls: every other builder call
   const api = {
     child: (c) => { node.kids.push(c); return proxy; },
     children: (cs) => { node.kids.push(...cs); return proxy; },
@@ -23,7 +23,7 @@ function element(kind, arg) {
     get(_t, prop) {
       if (prop === "__node") return node;
       if (prop === "then" || typeof prop === "symbol") return undefined;
-      return api[prop] ?? (() => proxy);
+      return api[prop] ?? ((...args) => { node.calls.push([prop, ...args]); return proxy; });
     },
   });
   if (kind === "button" || kind === "popover") api.id(arg);
@@ -66,6 +66,8 @@ export const h_flex = () => element("h_flex");
 export const v_flex = () => element("v_flex");
 export class View {}
 export const Button = { new: (id) => element("button", id) };
+// A rendered Markdown body: its text is a child, so textOf/index find it like any other element.
+export class TextView { static markdown(_id, text) { return element("markdown").child(String(text)); } }
 export const Popover = { new: (id) => element("popover", id) };
 export const Input = { new: (state) => element("input", state) };
 export const Textarea = { new: (state) => element("textarea", state) };
