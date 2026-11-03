@@ -102,3 +102,16 @@ test("a repo-rooted project still finds its hooks at depth; protected names and 
   }
   assertUntouched(calls, s.home);
 });
+
+test("a scan that reaches its cap stops there and says so: \"scan stopped at N in <root>\"", (t) => {
+  const s = scratchHome(t);
+  const repo = join(s.root, "wide");
+  for (const n of [1, 2, 3, 4, 5]) mkdirSync(join(repo, `d${n}`), { recursive: true });
+  write(settings(repo), hook(s.app));
+  const lines = [];
+  foldersOf([repo], { log: (l) => lines.push(l), scanMax: 3 });
+  assert.deepEqual(lines, [`scan stopped at 3 in ${repo}`]);
+  const quiet = [];
+  foldersOf([repo], { log: (l) => quiet.push(l) });
+  assert.deepEqual(quiet, [], "under the cap: nothing logged");
+});
