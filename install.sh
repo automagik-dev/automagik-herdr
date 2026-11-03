@@ -60,7 +60,7 @@ main() {
   NODE_MIN=22.7
   CASK=penso/tap/herdr-gpui
   # usagemeter (Group 6c): release.js USAGEMETER.version, kept equal by a test. One shared path.
-  METER_VERSION=0.2.0
+  METER_VERSION=0.3.0
   METER_RELEASES=https://github.com/automagik-dev/usagemeter/releases
   METER=$BIN_DIR/usagemeter
   METER_OK=1

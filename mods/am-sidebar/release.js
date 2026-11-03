@@ -32,7 +32,7 @@ export const POCKET_LINK = "pocket-link";
  */
 export const USAGEMETER = Object.freeze({
   repo: "automagik-dev/usagemeter",
-  version: "0.2.0",
+  version: "0.3.0",
   assets: Object.freeze({
     "darwin-arm64": "usagemeter-darwin-arm64", "darwin-x86_64": "usagemeter-darwin-x86_64",
     "linux-x86_64": "usagemeter-linux-x86_64", "linux-aarch64": "usagemeter-linux-aarch64",

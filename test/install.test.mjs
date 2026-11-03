@@ -144,7 +144,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
-  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
+  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.3\\.0\n$`));
   // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
   const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "latest", "download", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
   for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`am-sidebar/bin/${f}`), `the tarball has am-sidebar/bin/${f}`);
@@ -503,7 +503,7 @@ test("install, update, rollback, uninstall: a planted pocket-link stays byte-ide
   assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.match(s.mark(), /^version=9\.9\.0$/m);
   // The record's usagemeter line survives update.mjs's update and rollback (Group 6c).
-  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
   assert.equal(treeSum(pocket), sum, "after rollback");
   assert.equal(s.run("--uninstall").code, 0);
   assert.deepEqual(readdirSync(s.mods), ["pocket-link"]);
@@ -675,7 +675,7 @@ test("a clean same-version rerun checks every file and every mod, swaps nothing 
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /Checksum: ok\.\n(  check passed: .*\n)+(.*\n)*Automagik Herdr 9\.9\.0 is already up to date .*: every file matches the release and every mod passed herdr-app check\./);
   assert.equal(s.checks().length - checksBefore, PACK_MODS.length);
-  assert.match(r.out, /usagemeter 0\.2\.0: already installed/);
+  assert.match(r.out, /usagemeter 0\.3\.0: already installed/);
   assert.equal(s.meterCalls().length, meterBefore, "usagemeter current: nothing downloaded");
   assert.doesNotMatch(r.out, /Downloading|Linked|repaired|missing|differs|Done/);
   assert.equal(lstatSync(s.pack).ino, ino);
@@ -933,7 +933,7 @@ const leftovers = (s) => readdirSync(dirname(meterBin(s))).filter((n) => n.start
 
 test("usagemeter: install.sh pins release.js's version and knows its four builds", () => {
   assert.equal(/^\s+METER_VERSION=(\S+)$/m.exec(readFileSync(INSTALL, "utf8"))?.[1], USAGEMETER.version);
-  assert.equal(USAGEMETER.version, "0.2.0");
+  assert.equal(USAGEMETER.version, "0.3.0");
   assert.deepEqual(Object.values(USAGEMETER.assets).sort(),
     ["usagemeter-darwin-arm64", "usagemeter-darwin-x86_64", "usagemeter-linux-aarch64", "usagemeter-linux-x86_64"]);
   for (const name of Object.values(USAGEMETER.assets)) assert.ok(readFileSync(INSTALL, "utf8").includes(`asset=${name} ;;`), name);
@@ -946,25 +946,25 @@ test("usagemeter: a scratch install puts the hash-checked binary in ~/.local/bin
     s.publishMeter();
     const r = s.run("--yes");
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /Installed usagemeter 0\.2\.0 \(.*\/\.local\/bin\/usagemeter, checksum ok\)/);
-    assert.equal(meterSays(s), "usagemeter 0.2.0");
+    assert.match(r.out, /Installed usagemeter 0\.3\.0 \(.*\/\.local\/bin\/usagemeter, checksum ok\)/);
+    assert.equal(meterSays(s), "usagemeter 0.3.0");
     assert.equal(lstatSync(meterBin(s)).mode & 0o777, 0o755);
-    assert.equal(sha(meterBin(s)), sha(join(s.root, "release", "usagemeter", "download", "v0.2.0", `usagemeter-darwin-${arch}`)));
+    assert.equal(sha(meterBin(s)), sha(join(s.root, "release", "usagemeter", "download", "v0.3.0", `usagemeter-darwin-${arch}`)));
     assert.deepEqual(leftovers(s), []);
-    assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
-    assert.deepEqual(s.meterCalls().map((u) => u.replace(/.*\/download\//, "")), ["v0.2.0/SHA256SUMS", `v0.2.0/usagemeter-darwin-${arch}`]);
+    assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
+    assert.deepEqual(s.meterCalls().map((u) => u.replace(/.*\/download\//, "")), ["v0.3.0/SHA256SUMS", `v0.3.0/usagemeter-darwin-${arch}`]);
     // No LaunchAgent and no daemon: the sidebar runs `usagemeter sync`, nothing else does.
     assert.equal(existsSync(join(s.home, "Library", "LaunchAgents")), false);
     const before = s.meterCalls().length;
     const again = s.run();
     assert.equal(again.code, 0, again.err);
-    assert.match(again.out, /usagemeter 0\.2\.0: already installed/);
+    assert.match(again.out, /usagemeter 0\.3\.0: already installed/);
     assert.equal(s.meterCalls().length, before);
     // A newer pack (update.mjs rewrites the record) keeps the usagemeter line, and still no download.
     s.publish("9.9.1");
     const update = s.run();
     assert.equal(update.code, 0, update.err);
-    assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+    assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
     assert.equal(s.meterCalls().length, before);
   }
   assert.doesNotMatch(readFileSync(INSTALL, "utf8"), /LaunchAgent|launchctl/);
@@ -988,15 +988,15 @@ test("usagemeter: offline, or no build for this machine: a warning, and the pack
   offline.publish("9.9.0");
   const r = offline.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Warning: usagemeter was not installed: could not download file:.*\/usagemeter\/download\/v0\.2\.0\/SHA256SUMS/);
+  assert.match(r.out, /Warning: usagemeter was not installed: could not download file:.*\/usagemeter\/download\/v0\.3\.0\/SHA256SUMS/);
   assert.equal(existsSync(meterBin(offline)), false);
   assert.deepEqual(offline.versions(), offline.all("9.9.0"));
   // Offline at first, then online: the rerun (pack already current) installs it.
   offline.publishMeter();
   const later = offline.run();
   assert.equal(later.code, 0, later.err);
-  assert.equal(meterSays(offline), "usagemeter 0.2.0");
-  assert.equal(parseMarker(offline.mark()).usagemeter, "0.2.0");
+  assert.equal(meterSays(offline), "usagemeter 0.3.0");
+  assert.equal(parseMarker(offline.mark()).usagemeter, "0.3.0");
   const odd = scratch(t, { arch: "ppc" });
   odd.publish("9.9.0");
   odd.publishMeter();
@@ -1018,7 +1018,20 @@ test("usagemeter: --no-usagemeter skips the step, with no download", (t) => {
   assert.match(s.run("--help").out, /--no-usagemeter/);
 });
 
-test("usagemeter: never a downgrade (0.10.0 is newer than 0.2.0); an older one is replaced; a link or folder stays", (t) => {
+test("usagemeter: the v0.2.0 the last pin installed is upgraded to v0.3.0, and recorded as ours", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  plantMeter(s, "0.2.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Installed usagemeter 0\.3\.0 \(.*checksum ok\)/);
+  assert.equal(meterSays(s), "usagemeter 0.3.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
+  assert.deepEqual(leftovers(s), []);
+});
+
+test("usagemeter: never a downgrade (0.10.0 is newer than 0.3.0); an older one is replaced; a link or folder stays", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   s.publishMeter();
@@ -1026,7 +1039,7 @@ test("usagemeter: never a downgrade (0.10.0 is newer than 0.2.0); an older one i
   const kept = sha(meterBin(s));
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /usagemeter 0\.10\.0 is installed .*not older than 0\.2\.0: not replacing it/);
+  assert.match(r.out, /usagemeter 0\.10\.0 is installed .*not older than 0\.3\.0: not replacing it/);
   assert.equal(sha(meterBin(s)), kept);
   assert.deepEqual(s.meterCalls(), []);
   assert.equal(parseMarker(s.mark()).usagemeter, null);
@@ -1034,8 +1047,8 @@ test("usagemeter: never a downgrade (0.10.0 is newer than 0.2.0); an older one i
   plantMeter(s, "0.1.9");
   const up = s.run();
   assert.equal(up.code, 0, up.err);
-  assert.equal(meterSays(s), "usagemeter 0.2.0");
-  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  assert.equal(meterSays(s), "usagemeter 0.3.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
   // A link (a build the person points at) is left, and no longer recorded as the pack's.
   rmSync(meterBin(s));
   symlinkSync("/usr/bin/true", meterBin(s));
@@ -1056,7 +1069,7 @@ test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left w
   s.publish("9.9.0");
   s.publishMeter();
   // A pre-release of a newer version, or of the pinned one: kept, no download.
-  for (const dev of ["0.3.0-dev", "0.2.0-dev", "0.2.1+abc"]) {
+  for (const dev of ["0.4.0-dev", "0.3.0-dev", "0.3.1+abc"]) {
     plantMeter(s, dev);
     const kept = sha(meterBin(s));
     const r = s.run("--yes");
@@ -1079,8 +1092,8 @@ test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left w
   plantMeter(s, "0.1.0-dev");
   const old = s.run();
   assert.equal(old.code, 0, old.err);
-  assert.equal(meterSays(s), "usagemeter 0.2.0");
-  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  assert.equal(meterSays(s), "usagemeter 0.3.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
 });
 
 test("usagemeter: --uninstall --no-usagemeter keeps even a pack-installed binary", (t) => {
@@ -1088,7 +1101,7 @@ test("usagemeter: --uninstall --no-usagemeter keeps even a pack-installed binary
   s.publish("9.9.0");
   s.publishMeter();
   assert.equal(s.run("--yes").code, 0);
-  assert.equal(parseMarker(s.mark()).usagemeter, "0.2.0");
+  assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
   const kept = sha(meterBin(s));
   const u = s.run("--uninstall", "--no-usagemeter");
   assert.equal(u.code, 0, u.err);
@@ -1105,13 +1118,13 @@ test("usagemeter: --uninstall removes a pack-installed binary and leaves one the
   assert.equal(ours.run("--yes").code, 0);
   const u = ours.run("--uninstall");
   assert.equal(u.code, 0, u.err);
-  assert.match(u.out, /Removed .*\/usagemeter \(usagemeter 0\.2\.0\)\. Its store is kept\./);
+  assert.match(u.out, /Removed .*\/usagemeter \(usagemeter 0\.3\.0\)\. Its store is kept\./);
   assert.equal(existsSync(meterBin(ours)), false);
   // The person's own (the pinned version, there first): never recorded, never removed.
   const theirs = scratch(t);
   theirs.publish("9.9.0");
   theirs.publishMeter();
-  plantMeter(theirs, "0.2.0");
+  plantMeter(theirs, "0.3.0");
   const planted = sha(meterBin(theirs));
   assert.equal(theirs.run("--yes").code, 0);
   assert.equal(parseMarker(theirs.mark()).usagemeter, null);
@@ -1122,10 +1135,10 @@ test("usagemeter: --uninstall removes a pack-installed binary and leaves one the
   newer.publish("9.9.0");
   newer.publishMeter();
   assert.equal(newer.run("--yes").code, 0);
-  plantMeter(newer, "0.3.0");
+  plantMeter(newer, "0.4.0");
   const n = newer.run("--uninstall");
-  assert.match(n.out, /Left .*usagemeter: it is not the usagemeter 0\.2\.0 this installer put there/);
-  assert.equal(meterSays(newer), "usagemeter 0.3.0");
+  assert.match(n.out, /Left .*usagemeter: it is not the usagemeter 0\.3\.0 this installer put there/);
+  assert.equal(meterSays(newer), "usagemeter 0.4.0");
   // Ours, with Pocket Link installed beside the pack: left, and Pocket Link untouched.
   const pocket = scratch(t);
   pocket.publish("9.9.0");
@@ -1136,6 +1149,6 @@ test("usagemeter: --uninstall removes a pack-installed binary and leaves one the
   const pl = treeSum(join(pocket.mods, "pocket-link"));
   const p = pocket.run("--uninstall");
   assert.match(p.out, /Left .*usagemeter: Pocket Link .* runs it too/);
-  assert.equal(meterSays(pocket), "usagemeter 0.2.0");
+  assert.equal(meterSays(pocket), "usagemeter 0.3.0");
   assert.equal(treeSum(join(pocket.mods, "pocket-link")), pl);
 });
