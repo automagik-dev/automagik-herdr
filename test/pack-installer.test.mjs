@@ -204,6 +204,24 @@ test("names differing only in case: Pocket-Link, Demo and Main.json never touch 
   assert.deepEqual(after, before, "the person's mods and layouts are byte-identical");
 });
 
+test("the catalog URLs: core.js and release.js agree, and a copy of an old pack URL reads the monorepo's", async (t) => {
+  const release = await import("../mods/am-sidebar/release.js");
+  assert.equal(core.CATALOG_URL, release.CATALOG_URL);
+  assert.equal(core.CATALOG_URL, "https://raw.githubusercontent.com/automagik-dev/automagik/dev/herdr/catalog/index.json");
+  assert.equal(core.PACK_REPO, "automagik-dev/automagik");
+  assert.deepEqual([...core.PACK_URLS], [...release.PACK_CATALOG_URLS]);
+  const home = scratch(t);
+  const ioOf = () => ({ readText: async (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, exec: async () => ({ code: 1 }) });
+  for (const old of core.PACK_URLS.slice(1)) {
+    mkdirSync(join(home, "data", "am-mods"), { recursive: true });
+    writeFileSync(join(home, "data", "am-mods", "catalog.json"), JSON.stringify({ url: old }));
+    assert.equal(await core.catalogUrl(ioOf(), home), core.CATALOG_URL, `a copy still on ${old}`);
+  }
+  // A URL the person set stays theirs.
+  writeFileSync(join(home, "data", "am-mods", "catalog.json"), JSON.stringify({ url: "https://example.test/mine.json" }));
+  assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/mine.json");
+});
+
 test("catalogUrl: a local catalog path whose file is gone falls back to the published index", async (t) => {
   const home = scratch(t);
   const put = (dir, url) => {

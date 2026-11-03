@@ -344,7 +344,7 @@ const onOff = (on) => (on ? "mods" : OFF_DIR);
 export const PACK_MARKER = "automagik-herdr/installed-by-install.sh";
 export const PACK_TITLE = "Automagik Herdr";
 export const PACK_SOURCE = "automagik-herdr";
-export const PACK_REPO = "automagik-dev/automagik-herdr";
+export const PACK_REPO = "automagik-dev/automagik";
 /** The sidebar folder carries the pack's VERSION and the `automagik-herdr` command. */
 export const PACK_CLI = "mods/am-sidebar/bin/automagik-herdr";
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
@@ -528,11 +528,12 @@ export async function searchMarket(io, { query = "", sort = "stars", page = 1, p
 
 // ---- the official catalog (herdr.dev/mods) ----
 
-// Our marketplace: this pack publishes its own index (catalog/index.json, same shape as
-// herdr.dev's), and an installed copy may point anywhere via data/am-mods/catalog.json.
-// The pack publishes from `dev`. Kept equal to mods/am-sidebar/release.js's CATALOG_URL by
+// Our marketplace: this pack publishes its own index (herdr/catalog/index.json in the Automagik
+// monorepo, same shape as herdr.dev's), and an installed copy may point anywhere via
+// data/am-mods/catalog.json. The pack publishes from `dev`. Kept equal to
+// mods/am-sidebar/release.js's CATALOG_URL (and PACK_URLS to its PACK_CATALOG_URLS) by
 // test/pack-installer.test.mjs; an installed copy can override it via data/am-mods/catalog.json.
-export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
+export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik/dev/herdr/catalog/index.json";
 
 /** The commit the catalog pins for `source` (its `headCommit`), or null: an install fetches that commit. */
 export function catalogCommit(catalog, source) {
@@ -556,9 +557,16 @@ export function parseCatalog(json) {
 // and read as the fallback; the mod's own catalog.json is the copy in a checkout,
 // and the published index is the fallback. A URL the person set wins wherever it is, the most
 // recently changed one when both data folders hold one (else data/am-mods first): a copy still
-// holding a URL the pack wrote never shadows it. A local path (no URL scheme) whose file is gone
-// counts as not set, so a renamed or removed checkout falls back to the published index.
-const PACK_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
+// holding a URL the pack wrote never shadows it, and reads the current index (CATALOG_URL), not an
+// older one the pack wrote (automagik-herdr's, before the pack moved into the monorepo). A local
+// path (no URL scheme) whose file is gone counts as not set, so a renamed or removed checkout
+// falls back to the published index.
+export const PACK_URLS = Object.freeze([
+  CATALOG_URL,
+  "https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/catalog/index.json",
+  "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json",
+  "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/catalog/index.json",
+]);
 export const isLocalCatalogPath = (url) => !/^[a-z][a-z0-9+.-]*:/i.test(url);
 export async function catalogUrl(io, appHome) {
   const found = [];
@@ -582,7 +590,7 @@ export async function catalogUrl(io, appHome) {
       if (newer?.code === 0) return mine[1].url;
     } catch {}
   }
-  return (mine[0] ?? found[0])?.url ?? CATALOG_URL;
+  return mine[0]?.url ?? CATALOG_URL;
 }
 
 export async function fetchCatalog(io, http, url = CATALOG_URL) {

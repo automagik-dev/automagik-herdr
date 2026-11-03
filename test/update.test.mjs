@@ -9,10 +9,20 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import {
-  LATEST_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, installUpdate, latestRelease, noticeText, parseSums,
+  POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
+  packOfPointer, parseSums, verifyPointer,
   markerOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/am-sidebar/update.mjs";
+import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { keys, pointerBytes, signatureOf } from "./pointer.mjs";
+
+/** The herdr-lane release serving the pointer to `version` (pointerBytes' options), signed with the test key. */
+const served = (version, opts = {}, { untrusted = false } = {}) => {
+  const bytes = pointerBytes(version, opts);
+  return { [POINTER_URL]: bytes, [POINTER_SIG_URL]: signatureOf(bytes, { untrusted }) };
+};
+const packOf = (version, opts) => packOfPointer(JSON.parse(pointerBytes(version, opts)));
 import { OLD_PACK_NAME } from "../mods/am-sidebar/release.js";
 
 const UPDATE = fileURLToPath(new URL("../mods/am-sidebar/update.mjs", import.meta.url));
@@ -54,14 +64,6 @@ function appHome(version, mods = MODS) {
   return { home, mods: modsDir };
 }
 const kept = (mods, m = "am-sidebar") => join(prevSetOf(mods), m);
-const release = (version, extra = {}) => ({
-  tag_name: `v${version}`, draft: false, prerelease: false, html_url: `https://github.com/x/releases/tag/v${version}`,
-  assets: [
-    { name: `automagik-herdr-pack-${version}.tgz`, browser_download_url: `https://dl.test/v${version}/automagik-herdr-pack-${version}.tgz` },
-    { name: "SHA256SUMS", browser_download_url: `https://dl.test/v${version}/SHA256SUMS` },
-  ],
-  ...extra,
-});
 /** fetch over a table url → body (string, Buffer, object for JSON, or a status number). */
 const fakeFetch = (table, calls = []) => async (url, init) => {
   calls.push({ url, init });
@@ -79,34 +81,77 @@ test("compareVersions orders by semver precedence", () => {
   assert.ok(Number.isNaN(compareVersions("v0.1.0", "0.1.0")));
 });
 
-test("pickUpdate offers only a newer, complete, published release", () => {
-  const up = pickUpdate("0.1.0", release("0.2.0"));
+test("the marker carries the pointer's sequence; an unknown or malformed one is none", () => {
+  const text = formatMarker({ version: "3.57.1", mods: ["am-sidebar"], sequence: 570001 });
+  assert.equal(text, "version=3.57.1\nmods=am-sidebar\nbefore=none\nsequence=570001\n");
+  assert.equal(parseMarker(text).sequence, 570001);
+  assert.equal(parseMarker("version=1.0.0\nmods=a\n").sequence, null);
+  assert.equal(parseMarker("version=1.0.0\nmods=a\nsequence=12x\n").sequence, null);
+  assert.doesNotMatch(formatMarker({ version: "1.0.0", mods: ["a"] }), /sequence/);
+});
+
+test("pickUpdate offers only a newer pack than the installed one", () => {
+  const up = pickUpdate("0.1.0", packOf("0.2.0"));
   assert.equal(up.version, "0.2.0");
   assert.equal(up.tarball.name, "automagik-herdr-pack-0.2.0.tgz");
-  assert.equal(up.sums.url, "https://dl.test/v0.2.0/SHA256SUMS");
-  assert.equal(pickUpdate("0.2.0", release("0.2.0")), null, "same version");
-  assert.equal(pickUpdate("0.3.0", release("0.2.0")), null, "older");
-  assert.equal(pickUpdate("0.1.0", release("0.2.0", { draft: true })), null);
-  assert.equal(pickUpdate("0.1.0", release("0.2.0", { prerelease: true })), null);
-  assert.equal(pickUpdate("0.1.0", release("0.2.0", { assets: [release("0.2.0").assets[0]] })), null, "no SHA256SUMS");
-  assert.equal(pickUpdate("0.1.0", release("0.2.0", { assets: [release("0.2.0").assets[1]] })), null, "no tarball");
-  assert.equal(pickUpdate("0.1.0", null), null);
-  assert.equal(pickUpdate("0.0.0", release("0.1.0")).version, "0.1.0", "an unreleased install takes the first release");
+  assert.match(up.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(up.page, "https://github.com/automagik-dev/automagik/releases/tag/v0.2.0");
+  assert.equal(pickUpdate("0.2.0", packOf("0.2.0")), null, "same version");
+  assert.equal(pickUpdate("0.3.0", packOf("0.2.0")), null, "older");
+  assert.equal(pickUpdate("0.1.0", null), null, "no pointer");
+  assert.equal(pickUpdate("0.0.0", packOf("0.1.0")).version, "0.1.0", "an unreleased install takes the first release");
+  assert.equal(pickUpdate("0.8.0", packOf("3.57.1")).version, "3.57.1", "an automagik-herdr v0.8.x install takes the monorepo's pack");
   assert.match(noticeText(up), /Automagik Herdr 0\.2\.0 is out/);
 });
 
-test("latestRelease asks /latest with GitHub's headers, honours AUTOMAGIK_HERDR_NO_UPDATE, null on 404", async () => {
+test("packOfPointer refuses what is not this pack's pointer", () => {
+  const bad = (extra, re) => assert.throws(() => packOfPointer({ ...JSON.parse(pointerBytes("3.57.1")), ...extra }), re);
+  bad({ schemaVersion: 2 }, /schema 2/);
+  bad({ part: "plugins" }, /part plugins/);
+  bad({ version: "3.57" }, /names version 3\.57/);
+  bad({ tarball: { name: "automagik-herdr-pack-3.57.2.tgz", url: "https://x/y", sha256: "a".repeat(64) } }, /not automagik-herdr-pack-3\.57\.1\.tgz/);
+  bad({ tarball: { name: "automagik-herdr-pack-3.57.1.tgz", url: "https://x/y", sha256: "nope" } }, /sha256/);
+  bad({ tarball: { name: "automagik-herdr-pack-3.57.1.tgz", sha256: "a".repeat(64) } }, /no tarball URL/);
+  bad({ sequence: undefined }, /has no sequence/);
+  bad({ sequence: "570001" }, /has no sequence/);
+  bad({ sequence: -1 }, /has no sequence/);
+  assert.equal(packOf("3.57.1").sequence, 570001);
+});
+
+test("fetchPointer: a good signature names the pack; a bad one, an untrusted key or no signature is refused", async () => {
+  assert.equal(POINTER_URL, "https://github.com/automagik-dev/automagik/releases/download/herdr-lane/pack.json");
+  assert.equal(POINTER_SIG_URL, `${POINTER_URL}.sig`);
   const calls = [];
-  const got = await latestRelease({ fetch: fakeFetch({ [LATEST_URL]: release("0.2.0") }, calls), env: {} });
-  assert.equal(got.tag_name, "v0.2.0");
-  assert.equal(calls[0].init.headers.accept, "application/vnd.github+json");
+  const got = await fetchPointer({ fetch: fakeFetch(served("3.57.1"), calls), env: {}, keys });
+  assert.equal(got.version, "3.57.1");
+  assert.deepEqual(calls.map((c) => c.url), [POINTER_URL, POINTER_SIG_URL], "the pointer and its signature: no search through releases");
   assert.equal(calls[0].init.headers["user-agent"], "automagik-herdr");
-  assert.ok(calls[0].init.signal instanceof AbortSignal);
+  // A bad signature (another key's, over the same bytes) is refused.
+  await assert.rejects(fetchPointer({ fetch: fakeFetch(served("3.57.1", {}, { untrusted: true })), env: {}, keys }), /signature does not match: refusing it/);
+  // A pointer changed after it was signed is refused.
+  const table = served("3.57.1");
+  table[POINTER_URL] = Buffer.from(table[POINTER_URL].toString().replace("3.57.1", "3.57.9"));
+  await assert.rejects(fetchPointer({ fetch: fakeFetch(table), env: {}, keys }), /signature does not match/);
+  // A key the pack does not list, and a pointer without its signature.
+  await assert.rejects(fetchPointer({ fetch: fakeFetch(served("3.57.1", { keyId: "someone-else" })), env: {}, keys }), /signed by someone-else, a key this pack does not trust/);
+  await assert.rejects(fetchPointer({ fetch: fakeFetch({ [POINTER_URL]: pointerBytes("3.57.1") }), env: {}, keys }), /404 for the pack pointer's signature/);
+  // No pointer yet (404): no pack released here, no update. Updates off: nothing is asked.
+  assert.equal(await fetchPointer({ fetch: fakeFetch({}), env: {}, keys }), null);
   const none = [];
-  assert.equal(await latestRelease({ fetch: fakeFetch({}, none), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" } }), null);
-  assert.equal(none.length, 0, "never asked");
-  assert.equal(await latestRelease({ fetch: fakeFetch({}), env: {} }), null, "no release yet");
-  await assert.rejects(latestRelease({ fetch: fakeFetch({ [LATEST_URL]: 403 }), env: {} }), /403/);
+  assert.equal(await fetchPointer({ fetch: fakeFetch(served("3.57.1"), none), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" }, keys }), null);
+  assert.equal(none.length, 0);
+  await assert.rejects(fetchPointer({ fetch: fakeFetch({ [POINTER_URL]: 500 }), env: {}, keys }), /500 for the pack pointer/);
+  assert.throws(() => verifyPointer(Buffer.from("not json"), "", keys), /not JSON/);
+});
+
+test("the trusted keys are the installed pack's pack-keys.json", async () => {
+  const shipped = JSON.parse(readFileSync(fileURLToPath(new URL("../mods/am-sidebar/pack-keys.json", import.meta.url)), "utf8")).keys;
+  assert.deepEqual(packKeys(), shipped);
+  for (const key of shipped) assert.doesNotMatch(key.publicKey, /PRIVATE/);
+  // Without a key passed, a pointer signed by a key the shipped file does not list is refused.
+  if (!shipped.some((k) => k.keyId === "herdr-pack-test")) {
+    await assert.rejects(fetchPointer({ fetch: fakeFetch(served("3.57.1")), env: {} }), /a key this pack does not trust/);
+  }
 });
 
 test("verifySha256 takes a match and refuses a mismatch or a missing name", () => {
@@ -114,20 +159,19 @@ test("verifySha256 takes a match and refuses a mismatch or a missing name", () =
   const sums = `${sha(buf)}  automagik-herdr-0.2.0.tgz\n${"0".repeat(64)} *other.tgz\n`;
   assert.equal(parseSums(sums).get("other.tgz"), "0".repeat(64));
   assert.equal(verifySha256(buf, sums, "automagik-herdr-0.2.0.tgz"), sha(buf));
-  assert.throws(() => verifySha256(Buffer.from("tampered"), sums, "automagik-herdr-0.2.0.tgz"), /does not match SHA256SUMS/);
-  assert.throws(() => verifySha256(buf, sums, "automagik-herdr-0.3.0.tgz"), /not in SHA256SUMS/);
+  assert.throws(() => verifySha256(Buffer.from("tampered"), sums, "automagik-herdr-0.2.0.tgz"), /does not match its \.sha256/);
+  assert.throws(() => verifySha256(buf, sums, "automagik-herdr-0.3.0.tgz"), /not in its \.sha256/);
 });
 
-test("downloadUpdate refuses a tarball whose checksum does not match, writing nothing", async () => {
+test("downloadUpdate refuses a tampered tarball (not the signed pointer's sha256), writing nothing", async () => {
   const t = tarball("0.2.0");
   const out = mkdtempSync(join(tmpdir(), "dl-"));
   try {
-    const up = pickUpdate("0.1.0", release("0.2.0"));
-    const bad = fakeFetch({ [up.sums.url]: `${"f".repeat(64)}  ${up.tarball.name}\n`, [up.tarball.url]: t.buf });
-    await assert.rejects(downloadUpdate(up, { fetch: bad, dir: out }), /does not match SHA256SUMS/);
+    const up = pickUpdate("0.1.0", packOf("0.2.0", { body: t.buf }));
+    const tampered = Buffer.concat([t.buf, Buffer.from("x")]);
+    await assert.rejects(downloadUpdate(up, { fetch: fakeFetch({ [up.tarball.url]: tampered }), dir: out }), /does not match the signed pointer/);
     assert.equal(existsSync(join(out, up.tarball.name)), false);
-    const good = fakeFetch({ [up.sums.url]: `${sha(t.buf)}  ${up.tarball.name}\n`, [up.tarball.url]: t.buf });
-    const path = await downloadUpdate(up, { fetch: good, dir: out });
+    const path = await downloadUpdate(up, { fetch: fakeFetch({ [up.tarball.url]: t.buf }), dir: out });
     assert.deepEqual(readFileSync(path), t.buf);
   } finally {
     rmSync(t.src, { recursive: true, force: true });
@@ -202,18 +246,19 @@ test("applyUpdate installs into an empty mods/ and refuses a linked checkout; ro
 test("checkForUpdate and installUpdate against a fake release", async () => {
   const { home, mods } = appHome("0.1.0");
   const t = tarball("0.2.0");
-  const rel = release("0.2.0");
-  const table = { [LATEST_URL]: rel, [rel.assets[0].browser_download_url]: t.buf, [rel.assets[1].browser_download_url]: `${sha(t.buf)}  automagik-herdr-pack-0.2.0.tgz\n` };
+  const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+  const table = { ...served("0.2.0", { url, body: t.buf }), [url]: t.buf };
   try {
-    const off = await checkForUpdate({ fetch: fakeFetch(table), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" }, modsDir: mods });
+    const off = await checkForUpdate({ fetch: fakeFetch(table), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" }, modsDir: mods, keys });
     assert.deepEqual(off, { current: "0.1.0", latest: null, update: null, disabled: true });
-    const found = await checkForUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods });
+    const found = await checkForUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
     assert.equal(found.current, "0.1.0");
     assert.equal(found.latest, "0.2.0");
     assert.equal(found.update.version, "0.2.0");
-    const done = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods });
+    const done = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
     assert.equal(done.installed.version, "0.2.0");
-    const again = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods });
+    assert.equal(readMarker(mods).sequence, 20000, "the update records the signed pointer's sequence");
+    const again = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
     assert.equal(again.update, null);
     assert.equal(again.installed, null);
   } finally {
@@ -636,7 +681,7 @@ test("update when already up to date (an older CLI did the update) still moves o
   mkdirSync(bin);
   for (const f of ["automagik-herdr", "automagik-herdr.mjs"]) writeFileSync(join(bin, f), "x\n");
   symlinkSync(join(bin, "automagik-herdr.mjs"), link);
-  const io = { modsDir: mods, binDir, env: {}, fetch: fakeFetch({ [LATEST_URL]: release("0.4.0") }) };
+  const io = { modsDir: mods, binDir, env: {}, keys, fetch: fakeFetch(served("0.4.0")) };
   assert.equal(await cmdUpdate({ check: true }, [], io), "Automagik Herdr 0.4.0 is installed; the latest release is 0.4.0. Up to date.");
   assert.equal(readlinkSync(link), join(bin, "automagik-herdr.mjs"), "--check changes nothing");
   assert.match(await cmdUpdate({}, [], io), /Up to date\. .*automagik-herdr now points at .*bin\/automagik-herdr\.$/);
@@ -683,8 +728,9 @@ function layoutHome() {
   writeFileSync(join(home, "layouts", "automagik.json"), LAYOUT_V1);
   writeFileSync(join(home, "automagik-herdr", "automagik.json"), LAYOUT_V1);
   const t = tarballWithLayout("0.2.0", LAYOUT_V2);
-  const rel = release("0.2.0");
-  const table = { [LATEST_URL]: rel, [rel.assets[0].browser_download_url]: t.buf, [rel.assets[1].browser_download_url]: `${sha(t.buf)}  automagik-herdr-pack-0.2.0.tgz\n` };
+  // The signed herdr-lane pointer to 0.2.0 and its tarball.
+  const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+  const table = { ...served("0.2.0", { url, body: t.buf }), [url]: t.buf };
   const live = () => readFileSync(join(home, "layouts", "automagik.json"), "utf8");
   const ref = () => readFileSync(join(home, "automagik-herdr", "automagik.json"), "utf8");
   const done = () => { rmSync(t.src, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); };
@@ -694,7 +740,7 @@ function layoutHome() {
 test("installUpdate places the release's layout over the last pack's own (what `automagik-herdr update` runs)", async () => {
   const h = layoutHome();
   try {
-    const r = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     assert.equal(r.installed.version, "0.2.0");
     assert.equal(r.installed.layout, "replaced");
     assert.equal(h.live(), LAYOUT_V2, "the status bar block names am-status now");
@@ -708,7 +754,7 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
   try {
     const mine = LAYOUT_V1.replace('"root"', '"mine"');
     writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
-    const r = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     assert.equal(r.installed.layout, "kept");
     assert.equal(h.live(), mine);
     assert.equal(h.ref(), LAYOUT_V2, "the pack's copy is still the reference");
@@ -716,7 +762,7 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
   const g = layoutHome();
   try {
     rmSync(join(g.home, "layouts", "automagik.json"));
-    const r = await installUpdate({ fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
+    const r = await installUpdate({ keys, fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
     assert.equal(r.installed.layout, "added");
     assert.equal(g.live(), LAYOUT_V2);
   } finally { g.done(); }
@@ -725,7 +771,7 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
 test("rollback puts the rolled-to pack's layout back (no layout naming a missing am-status), and a second rollback undoes it", async () => {
   const h = layoutHome();
   try {
-    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     const back = rollback({ modsDir: h.mods });
     assert.equal(back.version, "0.1.0");
     assert.equal(back.layout, "restored");
@@ -743,7 +789,7 @@ test("rollback puts the rolled-to pack's layout back (no layout naming a missing
 test("rollback keeps a layout the person edited after the update; a set kept before v0.9 (no layout) changes nothing", async () => {
   const h = layoutHome();
   try {
-    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     const mine = LAYOUT_V2.replace('"root"', '"mine"');
     writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
     const back = rollback({ modsDir: h.mods });
@@ -753,7 +799,7 @@ test("rollback keeps a layout the person edited after the update; a set kept bef
   } finally { h.done(); }
   const g = layoutHome();
   try {
-    await installUpdate({ fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
+    await installUpdate({ keys, fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
     rmSync(join(prevSetOf(g.mods), ".layout.json"));
     const back = rollback({ modsDir: g.mods });
     assert.equal(back.layout, null);
@@ -765,12 +811,12 @@ test("installUpdate with `expect`: a newer latest than the confirmed version dow
   const h = layoutHome();
   try {
     const calls = [];
-    const r = await installUpdate({ fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.1.5" });
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.1.5" });
     assert.equal(r.installed, null);
     assert.deepEqual(r.refused, { expected: "0.1.5", latest: "0.2.0" });
-    assert.deepEqual(calls.map((c) => c.url), [LATEST_URL], "only the release lookup: no tarball, no SHA256SUMS");
+    assert.deepEqual(calls.map((c) => c.url), [POINTER_URL, POINTER_SIG_URL], "only the signed pointer: no tarball");
     assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
-    const ok = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0" });
+    const ok = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0" });
     assert.equal(ok.installed.version, "0.2.0");
   } finally { h.done(); }
 });
@@ -780,4 +826,81 @@ test("node update.mjs apply --expect <v>: the flag takes a value; other commands
   assert.deepEqual(parseArgs(["apply", "--expect", "0.8.1", "--mods", "/m"]), { command: "apply", opts: { expect: "0.8.1", mods: "/m" } });
   assert.throws(() => parseArgs(["apply", "--expect"]), /usage/);
   assert.throws(() => parseArgs(["check", "--expect", "0.8.1"]), /usage/);
+});
+
+// ---- The bridge (RFC 0011 step 2): an installed 0.x takes the monorepo's 3.N.P through the signed pointer ----
+
+test("bridge: 0.15.0 -> 3.60.1 counts as an update, never a downgrade", () => {
+  assert.ok(compareVersions("3.60.1", "0.15.0") > 0);
+  assert.ok(compareVersions("0.15.0", "3.60.1") < 0);
+  const up = pickUpdate("0.15.0", packOf("3.60.1"));
+  assert.equal(up.version, "3.60.1");
+  assert.equal(up.sequence, 600001, "3.N.P's sequence is N·10000 + P");
+  assert.equal(up.page, "https://github.com/automagik-dev/automagik/releases/tag/v3.60.1");
+  assert.equal(pickUpdate("3.60.1", packOf("0.15.0")), null, "a pointer to a 0.x never replaces a 3.N.P");
+});
+
+test("bridge: an installed 0.15.0 updates to the 3.60.1 the signed pointer names; its sequence starts at the pointer's", async () => {
+  // A 0.15.0 install, as the 0.14.x updater put it in place (SHA256SUMS): its marker has no sequence.
+  const { home, mods } = appHome("0.15.0");
+  const t = tarball("3.60.1");
+  const url = "https://github.com/automagik-dev/automagik/releases/download/v3.60.1/automagik-herdr-pack-3.60.1.tgz";
+  const table = { ...served("3.60.1", { url, body: t.buf }), [url]: t.buf };
+  try {
+    assert.equal(readMarker(mods).sequence, null);
+    const found = await checkForUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
+    assert.deepEqual([found.current, found.latest, found.update.version], ["0.15.0", "3.60.1", "3.60.1"]);
+    const calls = [];
+    const done = await installUpdate({ fetch: fakeFetch(table, calls), env: {}, modsDir: mods, keys });
+    assert.deepEqual(calls.map((c) => c.url), [POINTER_URL, POINTER_SIG_URL, url], "the pointer, its signature, the tarball it names: nothing from automagik-herdr");
+    assert.equal(done.installed.version, "3.60.1");
+    assert.equal(readVersion(join(mods, "am-sidebar")), "3.60.1");
+    assert.equal(readMarker(mods).version, "3.60.1");
+    assert.equal(readMarker(mods).sequence, 600001, "the marker's sequence starts at the pointer's");
+    // The kept set is the 0.15.0 one, with no sequence: a rollback goes back to the bridge as it was.
+    assert.equal(readVersion(kept(mods)), "0.15.0");
+    const again = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
+    assert.equal(again.update, null, "up to date on 3.60.1");
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("bridge: a pointer that does not verify, or with a lower sequence than the installed one, is refused with a clear message", async () => {
+  const { home, mods } = appHome("3.60.1");
+  writeFileSync(join(home, "automagik-herdr", "installed-by-install.sh"), formatMarker({ version: "3.60.1", mods: MODS, sequence: 600001 }));
+  const before = readFileSync(join(mods, "am-sidebar", "VERSION"), "utf8");
+  const t = tarball("3.60.2");
+  const url = "https://dl.test/v3.60.2/automagik-herdr-pack-3.60.2.tgz";
+  try {
+    // Not verifying: another key's signature, a key this pack does not list, or no signature.
+    for (const [table, re] of [
+      [served("3.60.2", { url, body: t.buf }, { untrusted: true }), /signature does not match: refusing it/],
+      [served("3.60.2", { url, body: t.buf, keyId: "someone-else" }), /signed by someone-else, a key this pack does not trust/],
+      [{ [POINTER_URL]: pointerBytes("3.60.2", { url, body: t.buf }) }, /404 for the pack pointer's signature: refusing the pointer/],
+    ]) {
+      await assert.rejects(installUpdate({ fetch: fakeFetch({ ...table, [url]: t.buf }), env: {}, modsDir: mods, keys }), re);
+    }
+    // A re-posted older signed pointer (3.60.0, sequence 600000), and a newer version signed with a
+    // lower sequence: both refused, nothing downloaded.
+    for (const [version, opts] of [["3.60.0", {}], ["3.60.2", { sequence: 5 }]]) {
+      const calls = [];
+      await assert.rejects(installUpdate({ fetch: fakeFetch({ ...served(version, { url, body: t.buf, ...opts }), [url]: t.buf }, calls), env: {}, modsDir: mods, keys }),
+        new RegExp(`names ${version.replaceAll(".", "\\.")} \\(sequence \\d+\\), older than the installed sequence 600001: refusing to downgrade`));
+      assert.deepEqual(calls.map((c) => c.url), [POINTER_URL, POINTER_SIG_URL], "no tarball");
+    }
+    assert.equal(readFileSync(join(mods, "am-sidebar", "VERSION"), "utf8"), before, "nothing changed");
+    assert.equal(readMarker(mods).sequence, 600001);
+    // The CLI says it in one line, exit 1.
+    await assert.rejects(cmdUpdate({}, [], { modsDir: mods, env: {}, keys, fetch: fakeFetch(served("3.60.0")) }),
+      (e) => e.code === 1 && /^Not updated: the pack pointer names 3\.60\.0 \(sequence 600000\), older than the installed sequence 600001: refusing to downgrade/.test(e.message));
+    // The next pointer (higher sequence) is taken.
+    const ok = await installUpdate({ fetch: fakeFetch({ ...served("3.60.2", { url, body: t.buf }), [url]: t.buf }), env: {}, modsDir: mods, keys });
+    assert.equal(ok.installed.version, "3.60.2");
+    assert.equal(readMarker(mods).sequence, 600002);
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });

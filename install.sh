@@ -1,17 +1,20 @@
 #!/bin/sh
 # Automagik Herdr installer (A17): turns a plain Herdr into Automagik Herdr on a Mac.
 #
-#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
+#   ... | bash -s -- --version 3.58.0 a given release that carries the pack, instead of the newest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
 #   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
 #   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
-# downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
-# mod and layouts/automagik.json), checks the hash before anything is written, and installs every
+# reads the signed pointer to the newest pack (the herdr-lane release's pack.json and its ed25519
+# signature, checked against the keys embedded below: a desktop or plugin release carries no
+# pack, so nothing searches the releases), downloads its pack tarball (automagik-herdr-pack-<v>.tgz: every pack mod
+# and layouts/automagik.json), checks it against the sha256 the signed pointer names before
+# anything is written (a --version release against its own .sha256), and installs every
 # pack mod through the pack's own update.mjs: each folder staged, then swapped in, the replaced
 # ones kept together in <app home>/automagik-herdr/.prev. Its ownership record (the marker)
 # lists every folder it put in mods/; only those are ever replaced. Any other folder is left
@@ -32,10 +35,11 @@
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
 #
-# For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/latest/download/<file>
-# and <url>/download/v<version>/<file>) or a page of this repository on github.com; with a
-# file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty) and AUTOMAGIK_HERDR_APPS (default
-# /Applications). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
+# For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/download/<tag>/<file>,
+# the pointer at <url>/download/herdr-lane/pack.json) or a page of this repository on github.com;
+# with a file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty), AUTOMAGIK_HERDR_APPS (default
+# /Applications) and AUTOMAGIK_HERDR_PACK_KEYS (the trusted keys, as TRUSTED_KEYS: a test's own;
+# never honoured for a GitHub URL). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
 # releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
 
 main() {
@@ -43,8 +47,12 @@ main() {
   # Under `curl | bash` the script itself is stdin: every program it runs gets </dev/null, so
   # none can read (eat) the rest of the script; questions read the terminal instead.
 
-  REPO=automagik-dev/automagik-herdr
+  # The pack ships on the Automagik monorepo's releases (its herdr/), v<version> in its one version.
+  REPO=automagik-dev/automagik
   RELEASES=https://github.com/$REPO/releases
+  # The keys the pack pointer may be signed with: mods/am-sidebar/pack-keys.json, kept equal by a
+  # test (bun scripts/herdr-lane.ts keygen writes both).
+  TRUSTED_KEYS='{"keys":[{"keyId":"herdr-pack-2026-11","publicKey":"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAU4DbVpmwLMRaZhuWMHXjf0H6pSR8uZdLGplgc+Biy5w=\n-----END PUBLIC KEY-----\n"}]}'
   TTY=/dev/tty
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
@@ -102,7 +110,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
     esac
   fi
 
@@ -123,7 +131,8 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
+Herdr to the automagik layout). --version installs that Automagik release; it must carry the
+pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
 --no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone, here and on every linked
@@ -493,6 +502,36 @@ uninstall_meter() {
   fi
 }
 
+# The pack pointer: pack.json ($1) and its signature ($2), checked against TRUSTED_KEYS (ed25519, as
+# plugin-lane's lane.json.sig), then against what is installed: the marker's version ($3) and
+# sequence ($4), either may be empty. A pointer older than either is refused, so a re-posted older
+# pointer (signed, but replayed by someone who can write release assets) never downgrades; --version
+# is the way to install an older release on purpose. Prints `<version> <sha256> <sequence>`; on a
+# refusal prints why and returns 1. Node is checked before this runs.
+read_pointer() {
+  # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
+  node -e '
+    const fs = require("fs"), crypto = require("crypto");
+    const [file, sigFile, keysJson, haveVersion, haveSeq] = process.argv.slice(1);
+    const no = (why) => { console.log(why); process.exit(1); };
+    const bytes = fs.readFileSync(file);
+    let p, keys;
+    try { p = JSON.parse(bytes.toString("utf8")); keys = JSON.parse(keysJson).keys || []; } catch { no("it is not a pack pointer"); }
+    const key = keys.find((k) => k && k.keyId === (p && p.keyId));
+    if (!key) no(`it is signed by ${p && p.keyId}, a key this installer does not trust; nothing was installed`);
+    let ok = false;
+    try { ok = crypto.verify(null, bytes, crypto.createPublicKey(key.publicKey), Buffer.from(fs.readFileSync(sigFile, "utf8").trim(), "base64")); } catch {}
+    if (!ok) no("its signature does not match; nothing was installed");
+    const v = p.version, t = p.tarball || {};
+    if (p.schemaVersion !== 1 || p.part !== "herdr" || !/^\d+\.\d+\.\d+$/.test(v || "") || t.name !== `automagik-herdr-pack-${v}.tgz` || !/^[0-9a-f]{64}$/.test(t.sha256 || "") || !Number.isSafeInteger(p.sequence) || p.sequence < 0) no("it is not a pack pointer");
+    const older = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+    const refuse = (what) => no(`it names ${v} (sequence ${p.sequence}), older than the installed ${what}: refusing to downgrade; nothing was installed. To install ${v} on purpose: --version ${v}`);
+    if (/^\d+\.\d+\.\d+$/.test(haveVersion || "") && older(v, haveVersion)) refuse(haveVersion);
+    if (/^\d{1,15}$/.test(haveSeq || "") && p.sequence < Number(haveSeq)) refuse(`sequence ${haveSeq}`);
+    console.log(`${v} ${t.sha256} ${p.sequence}`);
+  ' "$1" "$2" "$TRUSTED_KEYS" "$3" "$4" </dev/null
+}
+
 node_ok() {
   command -v node >/dev/null 2>&1 || return 1
   node -e 'const [a, b] = process.versions.node.split(".").map(Number); const [x, y] = process.argv[1].split(".").map(Number); process.exit(a > x || (a === x && b >= y) ? 0 : 1)' "$NODE_MIN" </dev/null 2>/dev/null
@@ -537,16 +576,39 @@ install() {
   say "Herdr: ok."
 
   # ---- d. the pack ----
-  # Nothing is written into the app home before the tarball matches SHA256SUMS.
+  # Nothing is written into the app home before the tarball matches the signed pointer's sha256.
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
-  if [ -n "$WANT" ]; then base=$RELEASES/download/v$WANT; else base=$RELEASES/latest/download; fi
-  curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
-  # The release names its tarball automagik-herdr-pack-<version>.tgz; SHA256SUMS lists it.
-  TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-pack-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
-  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a sidebar-only release before v0.5.0?)."
-  VERSION=${TGZ#automagik-herdr-pack-}
-  VERSION=${VERSION%.tgz}
-  [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-pack-$WANT.tgz."
+  want=
+  SEQUENCE=
+  if [ -z "$WANT" ]; then
+    # The newest pack, named by the signed pointer: one file and its signature, never a search.
+    POINTER=$RELEASES/download/herdr-lane/pack.json
+    curl -fsSL --path-as-is "$POINTER" -o "$TMP/pack.json" </dev/null || fail "could not download $POINTER (is a pack released yet?)."
+    curl -fsSL --path-as-is "$POINTER.sig" -o "$TMP/pack.json.sig" </dev/null || fail "could not download $POINTER.sig: refusing the pointer."
+    signed=$(read_pointer "$TMP/pack.json" "$TMP/pack.json.sig" "$(mark_get version)" "$(mark_get sequence)") || fail "the pack pointer $POINTER: $signed"
+    WANT=${signed%% *}
+    SEQUENCE=${signed##* }
+    want=${signed#* }
+    want=${want%% *}
+    checked="the signed pointer"
+    say "Pack pointer: signed by a key this installer trusts; it names $WANT."
+  fi
+  case $WANT in
+    *[!0-9.]*|.*|*.|*..*) fail "--version takes a version like 3.58.0; not $WANT." ;;
+  esac
+  base=$RELEASES/download/v$WANT
+  TGZ=automagik-herdr-pack-$WANT.tgz
+  if [ -z "$want" ]; then
+    # --version: that release's own .sha256, which proves integrity, not who published it.
+    SUMS=$TGZ.sha256
+    curl -fsSL --path-as-is "$base/$SUMS" -o "$TMP/$SUMS" </dev/null \
+      || fail "could not download $base/$SUMS (does release v$WANT carry the pack? Not every Automagik release does)."
+    want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/$SUMS" | head -n 1 | tr 'A-F' 'a-f')
+    [ -n "$want" ] || fail "$base/$SUMS does not list $TGZ."
+    checked=$SUMS
+    say "Note: --version $WANT is checked against its release's .sha256 (integrity, not who published it); without --version the newest pack comes through the signed pointer."
+  fi
+  VERSION=$WANT
 
   installed=$(mark_get version)
   [ -n "$installed" ] || installed=none
@@ -560,8 +622,7 @@ install() {
   curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
   if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
   sum=${sum%% *}
-  want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
-  [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
+  [ "$sum" = "$want" ] || fail "$TGZ does not match $checked (sha256 $sum, expected $want): nothing was installed."
   say "Checksum: ok."
   # Only the installer's files come out here, to run them; update.mjs then lists every entry,
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
@@ -597,6 +658,8 @@ install() {
   fi
   if [ "$same" = no ]; then
     set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
+    # The pointer's sequence goes into the marker (a --version install records none).
+    if [ -n "$SEQUENCE" ]; then set -- "$@" --sequence "$SEQUENCE"; fi
     if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
     out=$(node "$TMP/x/$side/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
     if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
