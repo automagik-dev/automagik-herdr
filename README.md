@@ -109,7 +109,7 @@ The installer:
 - points the `automagik-herdr` link at `am-sidebar`'s command;
 - moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
   rewrote. A Claude session already running in one of those projects keeps the old hook and gets
-  no briefing until it is restarted or `/hooks` is run in it. A project the installer doesn't
+  no briefing until it is restarted: `automagik-herdr restart <bot>` (or the bot row's Restart). A project the installer doesn't
   know about keeps the old hook: `automagik-herdr start` or `attach` its bot, or open it as a
   space in Herdr and run the installer again.
 
@@ -170,7 +170,10 @@ a place in a team, and keeps that team in front of every agent and of you.
 The pack replaces Herdr's `spaces` sidebar with one that draws each project's team under its
 space: the main bot as a card, categories as headers, captains with their members folded
 under them, planned bots dimmed with their wave. Each bot shows its character, its role and
-model, its agent's icon and its status. Right-click a bot to edit, start or attach it.
+model, its agent's icon and its status. Right-click a bot to edit, start, restart or attach it:
+Restart runs `automagik-herdr restart` for it, and Restart on… restarts it on another installed
+agent (a new conversation; the bot's definition keeps its agent). A restart refused because the
+bot is mid-turn offers "Restart anyway".
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
@@ -195,11 +198,14 @@ automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
-automagik-herdr attach <bot> <terminal>
+automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
+automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
+automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
+       [--task ID [--lead BOT]]
 automagik-herdr update [--check | --rollback]
 ```
 
@@ -210,12 +216,92 @@ automagik-herdr update [--check | --rollback]
   checkout. A `--project` folder that isn't there is a usage mistake.
 - A bot is named by its id or by its name. A refusal exits 1, a usage mistake (such as a
   missing `--project` folder) exits 2, and nothing is written.
-- `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`. A member
-  whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
+- `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
+  in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
+  pane as its parent. A running bot is not started twice.
   The pane opens in the space showing the project; with none open, `start` opens one on the
   project folder (`--space`/`--tab` pick the place instead).
+- `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
+  space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
+  new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
+  its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
+  leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
+  running. It resumes the conversation: Claude by the session id on the pane (`agent.session`,
+  carried to the new pane), else the workers ledger's last session row for that terminal, else
+  `--continue` in the bot's folder, which is refused while another bot's Claude runs in that
+  folder (it could resume theirs; `--fresh` starts a new one); `codex resume --last`;
+  `--continue` for pi, omp, kimi, agy and hermes. Any other agent starts fresh, and says so.
+  `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
+  conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
+  A bot that isn't running is started. It is refused while the bot is working (it would cut the
+  turn in half) or has helpers, such as workers, that hc would end with its pane; `--force`
+  restarts anyway. The old pane is found in the attach ledger; once the new pane has stayed up,
+  the ledger moves the bot to it (the old binding detached, by `start`, reason `moved`; the new
+  terminal attached, by `start`), and a replacement that didn't make it writes no rows. A bot
+  restarting itself writes and prints everything before the kill that ends its own pane. It
+  prints the new terminal.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
-  project is refused.
+  project is refused, and so are a pane another bot plays and a bot another pane plays; the
+  refusal names the holder. `attach --move` moves a bot from its pane to this one.
+- `detach` unties a bot from its pane. `whois` says which bot a pane plays, or which pane a
+  bot plays.
+
+## The attach ledger
+
+Which pane plays which bot is recorded in one file, `<app home>/automagik-herdr/attach.jsonl`
+(beside the workers ledger), and nowhere else. Only `automagik-herdr` writes it: `start`,
+`attach` and `detach`, and any run that reads it and finds a pane ended. The sidebar's Start
+and Attach run the command line too. The `bot` label is a display hint: `hc label` changes
+no row, so relabelling a pane moves no bot.
+
+The file is made with mode 0600; one that is group- or world-writable is refused (every
+command that reads it exits 1, naming the fix: `chmod 600`). Each row is one line, written
+with one append, under the file's lock (`attach.jsonl.lock`), so two runs never attach one bot:
+
+```json
+{ "v": 1, "event": "attach", "bot": "b-…", "project": "/abs/main/checkout", "terminal": "t7",
+  "core": "<hc core id>", "created_ms": 1762100000000, "machine": null,
+  "at": "2026-11-02T10:00:00.000Z", "by": "start" }
+```
+
+- `event`: `attach`, `detach` or `end`. `bot`: a bot id (`b-…`) or a session (`session-…`).
+- `core`: `hc server status`'s `core.id`, the core's permanent id (reset only when hc's state is
+  wiped). `created_ms`: the terminal's, from `hc get`. A terminal is the triple
+  (`core`, `terminal`, `created_ms`), so an id hc hands out again is another terminal.
+- `by`: `start`, `attach`, `detach`, `sweep` (an end row) or `import` (see below). `reason`, on
+  some rows: `moved` (the detach of `attach --move`, written before its attach, in the same
+  run), `finished` (hc says the terminal finished, or doesn't know it) or `replaced` (its id
+  now has another `created_ms`). `machine` is `null`: every row is this computer's.
+
+**The fold.** Read the rows in order, skipping any line that isn't a well-formed row:
+
+1. `attach`: end any earlier binding of the same bot and of the same terminal, then bind the
+   terminal to the bot.
+2. `detach`: unbind the terminal if it is bound to that bot (a detach naming another bot does
+   nothing).
+3. `end`: unbind the terminal, whatever bot it holds.
+
+What is left binds each bot to at most one terminal. A binding counts only when hc confirms
+it: its `core` is this computer's, and `hc get <terminal>` says `live` with the same
+`created_ms`. Anything else reads as ended at once; the next command that reads the file
+appends its `end` row.
+
+**Looking it up** (the interface for other tools):
+
+```text
+automagik-herdr whois <terminal> --json
+  { "terminal", "core", "created_ms", "bot", "project", "since" }   or   { "terminal", "core", "created_ms", "bot": null }
+automagik-herdr whois --bot <bot> --json
+  the same, or { "terminal": null, "core", "created_ms": null, "bot", "project": null, "since": null }
+```
+
+`since` is the attach row's `at`; `created_ms` is hc's. Both forms fold and confirm with hc first.
+
+**The first run.** With no file yet, the first command that reads it imports today's labels
+once: each live pane on this computer carrying `bot=<id>` of a bot some project here defines
+becomes an attach row with `by: "import"` (one pane per bot: an agent in front, then the
+newest). The file is then made, even empty, so this happens once. The briefing hook reads the
+file and never writes it; before the file exists it goes by the label.
 
 ## Workers
 
@@ -224,6 +310,7 @@ pane:
 
 ```bash
 automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --effort high
+automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ../proj-gl-231
 ```
 
 - **Who:** the calling bot is read from `HC_TERMINAL_ID` and that terminal's `bot` label.
@@ -237,6 +324,25 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   checkout is never a worker's folder, and its HEAD is never moved. `/.claude/worktrees/` goes
   into the clone's own git exclude, so `git add -A` in the main checkout never picks a
   worktree up.
+- **Task (Genie's task contract):** `--task ID` is Genie's short task id, `^[a-z0-9][a-z0-9-]{0,40}$`
+  (`gn-42`, `gh-1415`, `gl-231`). An internal `t_…` id is refused with `internal Genie id; pass
+  the short id gn-N, gh-N or gl-N`; any other bad shape exits 2. With `--branch`, the branch
+  must contain the id as a whole token (`fix/gl-231-login` names `gl-231`, not `gl-23`); with
+  `--worktree`, Genie's flow, it isn't checked. The worker is named exactly `<id>-<role>`
+  (`gl-231-dev`, `gl-231-review`): a live terminal on this computer already named that is
+  refused and named, never suffixed; `--name` doesn't go with `--task`, and a name over hc's
+  32 characters is refused. Without `--task`, the worker is named after its branch.
+- **Lead:** `--lead BOT` is the task's lead bot, a bot id (`b-` plus 10 base32 characters) or a
+  Genie session (`session-<uuid>`), checked by shape only; it defaults to the calling bot. A
+  `reviewer` or `fixer` bot passing `--task` must pass `--lead`.
+- **Planned swaps:** a bot's `worker.swap` in `.herdr/bots.json` (`{ agent?, model?, effort? }`)
+  is the other arm its workers run on about one task in three, picked by rule: the first byte
+  of sha256(`<bot id>:<project>:<task id>`) mod 3 is 0. Only with `--task`, never for a template
+  worker, and the same for every worker of that bot on that task. On a swap task the arm
+  replaces the bot's worker defaults; a per-task `--agent`, `--model` or `--effort` is recorded
+  in the ledger (`override_requested`), not used, with one warning. Off a swap task they work
+  as below and the row says `override: true`. `show <bot>` prints the worker defaults and the
+  swap.
 - **Role:** `--role dev|test|review|fix` says what the worker does. Without it the role comes
   from the bot's rank: `tester` runs `test`, `reviewer` runs `review`, `fixer` runs `fix`,
   any other rank (or none) runs `dev`. A captain passes `--role`. Another value exits 2.
@@ -267,7 +373,10 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   whose command runs `claude` gets the session hook; when
   the command names no agent Herdr knows, the hook is skipped with a warning.
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled `worker.of=<bot id>`,
-  `task=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`, then
+  `branch=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`;
+  with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
+  (without it, no `task` label at all). A worker started before this release has no `branch`
+  label: its `task` label holds the branch, and Herdr's readers fall back to it. Then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
   on) start. An npm agent such as codex is a `#!/usr/bin/env node` script: when that PATH has
@@ -278,7 +387,7 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   command. The task text is always one argument, never part of a shell string. The worker has
   no `bot` label, so the sidebar folds it under its bot as a helper row showing its template,
   or its model and effort. Clicking that row focuses the worker's pane; without one, the
-  worker opens as a tab right after its bot's tab, named after its task branch. A bot with no
+  worker opens as a tab right after its bot's tab, named after its branch. A bot with no
   pane, or a worker on another machine, is peeked instead.
 - **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
   effort, or its template (`--json`: the same as data, with `role` and `template`).
@@ -287,10 +396,21 @@ automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --e
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
-  terminal, pid, botId, task, worktree, agent, model, effort, template, role, at }` (`at` is
-  ISO 8601; a seat's `task` is null). `template` is the hc template a worker runs, else null
-  (seats and agent workers). `role` is new in this release: the worker's role, null for a
-  seat. Rows written before a field have no such key.
+  terminal, pid, botId, task, worktree, agent, model, effort, template, role, branch, project,
+  lead, base, created, swap, override, override_requested, at }` (`at` is ISO 8601).
+  - `task`: Genie's task id (`--task`), else null; a seat's is null. `project`: the main
+    checkout's absolute path, the project key, on seats too. Usage joins to tasks on
+    **(project, task)**: task ids are unique per project only.
+  - `branch`: the worker's branch. `lead`: the task's lead bot. `worktree`: the worker's
+    folder as a real path. `base`: the commit the worktree started from (the base ref's SHA
+    when this command made it, else the branch's oldest reflog entry), or null. `created`:
+    this command made the worktree. `role`: the worker's role, null for a seat.
+  - `swap`: the task ran the bot's swap arm. `override`: the bot picked the agent, model,
+    effort or template itself. `override_requested`: on a swap task, what it asked for and
+    didn't get, else null.
+  - `template` is the hc template a worker runs, else null (seats and agent workers).
+  - Rows written before a field have no such key. A worker row with no `branch` key predates
+    the task contract: its `task` is the branch, not a Genie id.
   When a template runs, `agent`, `model` and `effort` are null: the template sets them. The
   briefing hook appends `{ event: "session", terminal, session, transcript, at }` and sets the terminal's `agent.session` label when a Claude session
   changes. A session row can repeat when the label write fails, so consumers dedupe session
@@ -341,15 +461,15 @@ stamp events with them (`actor.bot`, `actor.role`, `actor.squad`):
 | `category` | the category it shows under (a deeper member: its chain's category), when there is one |
 | `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, and `automagik-herdr.squad=<that squad>` records the copy. |
 
-Start sets them. Attach leaves the pane matching its bot: a `role=` or `category=` the bot
+They are a hint for display and for those tools; which pane plays which bot is the
+[attach ledger](#the-attach-ledger)'s answer. Start sets them. Attach leaves the pane matching its bot: a `role=` or `category=` the bot
 doesn't have (left by the pane's last bot) comes off. An edit that changes a bot's rank, lead or category, or a lead's
 captain status, rewrites the labels on the live panes of the bots it changes; a squad this
 pack copied (the pane's `squad` still equals its `automagik-herdr.squad`) follows a lead
 change, or comes off when the new lead's pane has none. Detach takes off `bot`, any `role`
 and any `category` (nothing else sets those two today), the `automagik-herdr.squad` mark,
 and `squad` only while it still equals the mark: a squad set after the copy stays. Only panes
-on this computer are labelled. The lead's pane is its live one with an agent in front, the
-newest when there are several.
+on this computer are labelled. The lead's pane is the one the attach ledger ties it to.
 
 ## Reference
 
@@ -419,10 +539,10 @@ break it. The installer and `automagik-herdr update` move
 older hooks onto it (each file backed up beside itself as `settings.local.json.am-backup`), a hook
 in the older `node` form is upgraded to it the next time the bot starts or attaches, and a
 rollback to a pack without the entry point moves the hooks back onto that folder's own
-`briefing.mjs`. It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
+`briefing.mjs`. It prints nothing outside a bot's pane (by the attach ledger), finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
-already running may need `/hooks` once to load the hook.
+already running may need a restart to load the hook: `automagik-herdr restart <bot>` (or the bot row's Restart).
 
 ### Requirements
 
@@ -468,8 +588,8 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
-`launchArgs.js`, `models.js`, `workers.js`, `formModel.js`, `release.js`, `updateCheck.js`,
-`workerTab.js`, `migrate.js`), so the tests
+`launchArgs.js`, `models.js`, `workers.js`, `attach.js`, `formModel.js`, `release.js`,
+`updateCheck.js`, `workerTab.js`, `migrate.js`, `restart.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are

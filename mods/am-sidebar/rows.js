@@ -7,7 +7,7 @@
 import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
 import { shownModel, defaultModelFrom } from "./models.js";
-import { TASK_LABEL } from "./workers.js";
+import { workerBranch, workerTaskId } from "./workers.js";
 
 /** Idle this long is asleep (Automagik's own threshold). */
 export const ASLEEP_MS = 10 * 60 * 1000;
@@ -89,7 +89,9 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
     const row = { terminal, name: t.name || t.template || t.program?.name || terminal, agent: t.program?.key ?? null,
       program: t.program ?? null, status: t.status ?? null, depth,
       model: t.labels?.["worker.model"] || null, effort: t.labels?.["worker.effort"] || null,
-      template: t.labels?.["worker.template"] || null, task: t.labels?.[TASK_LABEL] || null };
+      template: t.labels?.["worker.template"] || null,
+      // The branch label, else the task label of a worker started before the task contract.
+      branch: workerBranch(t.labels), task: workerTaskId(t.labels) };
     return [row, ...helpersOf(terminals, terminal, known, depth + 1, seen)];
   });
 }

@@ -350,7 +350,7 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const from = out.indexOf("IMPORTANT: the bots' briefing hook moved to a new path in 1 settings file:");
   assert.ok(from > 0, r.out);
   assert.equal(out[from + 1], `  ${proj}: ${projSettings}`);
-  assert.match(out[from + 2], /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/);
+  assert.match(out[from + 2], /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)/);
   assert.match(out[from + 3], /were not rewritten .*automagik-herdr start <bot>/);
   assert.ok(out.findIndex((l) => l.startsWith("Done: Automagik Herdr")) > from + 3, "after every step's output, before the closing lines");
   assert.ok(!r.out.includes("notice: "), "the tag never shows");
@@ -454,7 +454,7 @@ test("e2e: a project unknown at the upgrade keeps its hook and is warned about; 
   const lines = up.out.split("\n");
   const at = lines.findIndex((l) => l.startsWith("IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten"));
   assert.ok(at > 0, up.out);
-  assert.match(lines[at + 1], /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/);
+  assert.match(lines[at + 1], /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)/);
   assert.match(lines[at + 2], /were not rewritten .*open it as a space in Herdr and run the installer again/);
   assert.ok(lines.findIndex((l) => l.startsWith("Done: Automagik Herdr")) > at);
 
