@@ -1181,3 +1181,50 @@ test("restart: the bot attached elsewhere while the new pane came up: the new pa
   assert.equal(attachOf(s).some((x) => x.terminal === "t100"), false);
   assert.equal(foldRows(attachOf(s)).byBot.get(ID.main).terminal, "t9");
 });
+
+// ---- history (#85): what a bot did, by the two ledgers ----
+
+test("history: the bot's panes, starts, sessions (only while it held the pane) and workers; text and --json", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  const at = (m) => `2026-11-03T10:0${m}:00.000Z`;
+  const row = (event, b, terminal, m, by) => ({ v: 1, event, bot: b, project: s.project, terminal, core: "c1", created_ms: 1, machine: null, by, at: at(m) });
+  writeFileSync(attachFile(s.app), [row("attach", ID.dev, "t5", 1, "start"), row("detach", ID.dev, "t5", 3, "detach"), row("attach", ID.cap, "t5", 4, "attach")]
+    .map((r) => `${JSON.stringify(r)}\n`).join(""), { mode: 0o600 });
+  writeFileSync(ledgerPath(s.app), [
+    { event: "start", kind: "seat", terminal: "t5", botId: ID.dev, agent: "claude", model: null, at: at(1) },
+    { event: "session", terminal: "t5", session: "11111111-aaaa", transcript: "/x/dev.jsonl", at: at(2) },
+    { event: "start", kind: "worker", terminal: "t8", botId: ID.dev, branch: "fix-x", role: "dev", agent: "codex", at: at(2) },
+    { event: "session", terminal: "t5", session: "22222222-bbbb", transcript: "/x/captain.jsonl", at: at(5) },
+  ].map((r) => `${JSON.stringify(r)}\n`).join(""));
+  const json = s.cli(["history", "Dev", "--json"]);
+  assert.equal(json.code, 0, json.err);
+  const h = json.json();
+  assert.equal(h.id, ID.dev);
+  assert.equal(h.name, "Dev");
+  assert.deepEqual(h.attach.map((r) => r.event), ["attach", "detach"]);
+  assert.deepEqual(h.starts.map((r) => r.terminal), ["t5"]);
+  assert.deepEqual(h.workers.map((r) => r.branch), ["fix-x"]);
+  assert.deepEqual(h.sessions.map((r) => r.session), ["11111111-aaaa"], "Captain's later session in t5 isn't Dev's");
+  assert.equal(h.transcript, "/x/dev.jsonl");
+  const text = s.cli(["history", "Dev"]);
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /^Dev \(b-cccccccccc\)\n {2}what happened\n {4}2026-11-03 10:03 detached from t5 · by detach\n/);
+  assert.match(text.out, / {2}workers\n {4}2026-11-03 10:02 fix-x · dev · codex · t8\n/);
+  assert.match(text.out, / {2}transcript {3}\/x\/dev\.jsonl/);
+  // The ledgers are only read.
+  assert.equal(attachOf(s).length, 3);
+  assert.equal(ledgerOf(s).length, 4);
+});
+
+test("history: no ledgers is an empty history; a removed bot by its bare id; an unknown name is refused", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  assert.match(s.cli(["history", "Studio"]).out, /nothing recorded on this computer/);
+  const gone = s.cli(["history", "b-zzzzzzzzzz", "--json"]);
+  assert.equal(gone.code, 0, gone.err);
+  assert.deepEqual(gone.json(), { id: "b-zzzzzzzzzz", name: null, bot: "b-zzzzzzzzzz", attach: [], starts: [], workers: [], sessions: [], transcript: null });
+  assert.match(s.cli(["history", "nobody"]).err, /No bot "nobody"/);
+  assert.equal(s.cli(["history"]).code, 2);
+});

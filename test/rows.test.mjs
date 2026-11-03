@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk, argvEntry,
+  secondLine, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -262,10 +262,10 @@ test("argvToAsk: live known-bot panes without a command line, not read for the s
     T("box/t6", { labels: { bot: "b-d" }, created_ms: 60 }),
     T("t7", { labels: { bot: "b-e" }, created_ms: 70 }),
   ];
-  assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [] });
+  assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [], next: 0 });
   // Read already for the same pane: skipped; a new pane at an old address: asked again.
   const cached = new Map([["t1", { argv: ["claude"], created: 10, settled: true }], ["t2", { argv: ["claude"], created: 19, settled: true }], ["t9", { argv: ["x"], created: 1, settled: true }]]);
-  assert.deepEqual(argvToAsk(rows, known, cached), { ask: ["t2", "box/t6", "t7"], gone: ["t9"] });
+  assert.deepEqual(argvToAsk(rows, known, cached), { ask: ["t2", "box/t6", "t7"], gone: ["t9"], next: 0 });
   assert.deepEqual(argvToAsk(rows, known, cached, 1).ask, ["t2"]);
 });
 
@@ -290,4 +290,182 @@ test("clickActionOf: a terminal with a pane is focused; a parked one (no pane) i
   assert.deepEqual(clickActionOf("box/t9", panes), { command: "terminal.peek", args: { terminal: "box/t9" } });
   assert.deepEqual(clickActionOf("t4", panes), { command: "terminal.peek", args: { terminal: "t4" } }, "a local t4 is not box/t4");
   assert.deepEqual(clickActionOf("t1", null), { command: "terminal.peek", args: { terminal: "t1" } });
+});
+
+// The t21v case: herdr-core lists the pane by its shell (program.agent false, no report) while
+// claude runs in the foreground; only `hc get` shows that foreground.
+test("liveFrom: an agent in the foreground counts when the program table says shell", () => {
+  const shell = { key: "shell", name: "zsh", agent: false, shell: true };
+  const rows = [
+    T("t1", { labels: { bot: "b-mainmainma" }, program: shell, foreground: { argv: ["claude", "--resume", "x"] } }),
+    T("t2", { labels: { bot: "b-captaincap" }, program: shell }), // argv only from hc get
+    T("t3", { labels: { bot: "b-devdevdevd" }, program: shell }), // hc get: a shell in front
+    T("t4", { labels: { bot: "b-testtestte" }, program: shell }), // hc get: the sh -c wrapper
+    T("t5", { labels: { bot: "b-loneloneln" }, program: shell }), // not read yet
+  ];
+  const read = { t2: ["claude", "--model", "opus"], t3: ["-zsh"], t4: ["sh", "-c", "claude"] };
+  const live = liveFrom(rows, null, (a) => read[a] ?? null);
+  assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-mainmainma"]);
+  assert.deepEqual(live["b-mainmainma"].argv, ["claude", "--resume", "x"]);
+  assert.deepEqual(live["b-captaincap"].argv, ["claude", "--model", "opus"], "the hc get command line is carried");
+  // Without the hc get reads only the row's own foreground counts; a non-array read is ignored.
+  assert.deepEqual(Object.keys(liveFrom(rows)), ["b-mainmainma"]);
+  assert.deepEqual(Object.keys(liveFrom(rows, null, () => "claude")), ["b-mainmainma"]);
+  // The main bot's card reads as running, not "Main bot · not running".
+  const [tree] = buildTree({ projects: [{ key: KEY, file }], live, terminals: rows, now: NOW });
+  assert.equal(tree.main.live.terminal, "t1");
+  assert.match(secondLine({ kind: "main", node: tree.main }, tree), /^Main bot · (?!not running)/);
+});
+
+test("argvToAsk: a settled pane the program table calls no agent is read again, after the unread ones", () => {
+  const known = new Set(["b-a", "b-b", "b-c"]);
+  const shell = { key: "shell", agent: false };
+  const rows = [
+    T("t1", { labels: { bot: "b-a" }, created_ms: 10, program: shell }),
+    T("t2", { labels: { bot: "b-b" }, created_ms: 20 }),
+    T("t3", { labels: { bot: "b-c" }, created_ms: 30 }),
+  ];
+  const settled = (created) => ({ argv: ["claude"], created, settled: true });
+  // t1 and t2 settled: t2 (table says agent) is skipped, t1 (table says shell) is read again.
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", settled(10)], ["t2", settled(20)]])).ask, ["t3", "t1"]);
+  assert.deepEqual(argvToAsk(rows, known, new Map([["t1", settled(10)], ["t2", settled(20)]]), 1).ask, ["t3"]);
+});
+
+test("heldTerminalOf: a bot's live terminal for its row's click, shown in a pane first, then newest", async () => {
+  const { heldTerminalOf } = await import("../mods/am-sidebar/rows.js");
+  const rows = [
+    T("t1", { labels: { bot: "b-a" }, created_ms: 10 }),
+    T("t2", { labels: { bot: "b-a" }, created_ms: 30 }),
+    T("t3", { labels: { bot: "b-a" }, created_ms: 99, state: "exited" }),
+    T("t4", { labels: { bot: "b-b" }, created_ms: 5 }),
+  ];
+  assert.equal(heldTerminalOf("b-a", rows), "t2", "newest live");
+  assert.equal(heldTerminalOf("b-a", rows, [{ pane: "p1", terminal: "t1" }]), "t1", "a pane shows it");
+  assert.equal(heldTerminalOf("b-b", rows, null), "t4");
+  assert.equal(heldTerminalOf("b-c", rows), null, "no live terminal");
+  assert.equal(heldTerminalOf("b-a", [T("t3", { labels: { bot: "b-a" }, state: "exited" })]), null);
+  assert.equal(heldTerminalOf(null, rows), null);
+});
+
+test("argvToAsk: panes that never settle can't starve a stale re-read; the cursor goes round", () => {
+  const shell = { key: "shell", agent: false };
+  const known = new Set(["b-1", "b-2", "b-3", "b-4", "b-5"]);
+  // Four bot panes sitting at zsh (read, never settled) and one read as claude that has since
+  // quit back to zsh: the table says shell for all five.
+  const rows = ["t1", "t2", "t3", "t4", "t5"].map((a, n) => T(a, { labels: { bot: `b-${n + 1}` }, created_ms: n, program: shell }));
+  const cached = new Map(rows.map((k) => [k.address, argvEntry({ foreground: { argv: ["-zsh"] } }, k.created_ms)]));
+  cached.set("t5", argvEntry({ foreground: { argv: ["claude"] } }, 4));
+  const argvOf = (a) => cached.get(a)?.argv ?? null;
+  assert.ok(liveFrom(rows, known, argvOf)["b-5"], "live on the old read");
+  const first = argvToAsk(rows, known, cached);
+  assert.deepEqual(first.ask, ["t1", "t2", "t3"]);
+  const second = argvToAsk(rows, known, cached, 3, first.next);
+  assert.ok(second.ask.includes("t5"), "the stale pane is read on the next call");
+  // That read finds zsh: the bot stops counting.
+  cached.set("t5", argvEntry({ foreground: { argv: ["-zsh"] } }, 4));
+  assert.equal(liveFrom(rows, known, argvOf)["b-5"], undefined);
+  // The cursor wraps and never asks a pane twice in one call.
+  assert.deepEqual(argvToAsk(rows.slice(0, 2), known, cached, 3, 7).ask.sort(), ["t1", "t2"]);
+  assert.deepEqual(argvToAsk([], known, cached, 3, 5), { ask: [], gone: [...cached.keys()], next: 0 });
+});
+
+test("argvToAsk: a row with no program is re-read too, so a quit agent stops counting", () => {
+  const known = new Set(["b-a"]);
+  const rows = [T("t1", { labels: { bot: "b-a" }, created_ms: 10, program: null })];
+  const cached = new Map([["t1", argvEntry({ foreground: { argv: ["claude"] } }, 10)]]);
+  assert.ok(liveFrom(rows, known, (a) => cached.get(a)?.argv)["b-a"]);
+  assert.deepEqual(argvToAsk(rows, known, cached).ask, ["t1"]);
+  // With program.agent true the table answers; a settled read isn't asked again.
+  assert.deepEqual(argvToAsk([{ ...rows[0], program: { agent: true } }], known, cached).ask, []);
+});
+
+test("argvToAsk: a pane never read is asked first, ahead of the shell-held rotation", () => {
+  const shell = { key: "shell", agent: false };
+  const known = new Set(["b-1", "b-2", "b-3", "b-4", "b-5", "b-6"]);
+  const held = ["t1", "t2", "t3", "t4", "t5"].map((a, n) => T(a, { labels: { bot: `b-${n + 1}` }, created_ms: n, program: shell }));
+  const cached = new Map(held.map((k) => [k.address, argvEntry({ foreground: { argv: ["-zsh"] } }, k.created_ms)]));
+  const fresh = T("t6", { labels: { bot: "b-6" }, created_ms: 50, program: shell }); // just started
+  const rows = [...held, fresh];
+  for (const start of [0, 1, 2, 3, 4]) {
+    const r = argvToAsk(rows, known, cached, 3, start);
+    assert.equal(r.ask[0], "t6", `start ${start}`);
+    assert.equal(r.ask.length, 3);
+  }
+  // The rotation of the rest still moves on: two slots each call.
+  const a = argvToAsk(rows, known, cached), b = argvToAsk(rows, known, cached, 3, a.next);
+  assert.deepEqual([a.ask, b.ask], [["t6", "t1", "t2"], ["t6", "t3", "t4"]]);
+  // A new pane at an old address counts as never read.
+  const reborn = held.map((k) => (k.address === "t3" ? { ...k, created_ms: 99 } : k));
+  assert.equal(argvToAsk(reborn, known, cached, 3, 4).ask[0], "t3");
+});
+
+test("argvAfter: a failed or empty read marks the pane read, keeps an earlier read of the same pane", () => {
+  const claude = argvEntry({ foreground: { argv: ["claude"] } }, 10);
+  assert.deepEqual(argvAfter(undefined, null, 10), { argv: null, created: 10, settled: false }, "failed first read");
+  assert.deepEqual(argvAfter(undefined, {}, 10), { argv: null, created: 10, settled: false }, "no argv");
+  assert.equal(argvAfter(claude, null, 10), claude, "a failed ask keeps the read before");
+  assert.deepEqual(argvAfter(claude, null, 11), { argv: null, created: 11, settled: false }, "not for a new pane");
+  assert.deepEqual(argvAfter(claude, { foreground: { argv: ["-zsh"] } }, 10).argv, ["-zsh"], "a read replaces it");
+});
+
+test("argvToAsk: panes whose reads fail join the rotation; a quit agent is re-read; a new pane is read", () => {
+  const shell = { key: "shell", agent: false };
+  const known = new Set(["b-1", "b-2", "b-3", "b-4", "b-5"]);
+  // Three remote panes on a machine that is down: every hc get fails. One quit agent.
+  const down = ["box/t1", "box/t2", "box/t3"].map((a, n) => T(a, { labels: { bot: `b-${n + 1}` }, created_ms: n, program: shell }));
+  const quit = T("t4", { labels: { bot: "b-4" }, created_ms: 40, program: shell });
+  const rows = [...down, quit];
+  const cached = new Map([["t4", argvEntry({ foreground: { argv: ["claude"] } }, 40)]]);
+  // Simulate readBotArgv: ask, then store what each read gives (the remote ones fail).
+  const reads = { t4: { foreground: { argv: ["-zsh"] } } };
+  let start = 0, askedT4 = false;
+  for (let tick = 0; tick < 3 && !askedT4; tick++) {
+    const { ask, next } = argvToAsk(rows, known, cached, 3, start);
+    start = next;
+    askedT4 = ask.includes("t4");
+    for (const a of ask) cached.set(a, argvAfter(cached.get(a), reads[a] ?? null, rows.find((k) => k.address === a).created_ms));
+  }
+  assert.ok(askedT4, "the quit agent is re-read despite three failing panes");
+  assert.equal(liveFrom(rows, known, (a) => cached.get(a)?.argv)["b-4"], undefined, "and stops counting");
+  // Even before any failed read is cached, one slot stays with the rotation.
+  const none = new Map([["t4", argvEntry({ foreground: { argv: ["claude"] } }, 40)]]);
+  assert.deepEqual(argvToAsk(rows, known, none).ask, ["box/t1", "box/t2", "t4"]);
+  // A fourth, new pane is read on the next call: the failed ones are no longer "never read".
+  const fresh = T("t5", { labels: { bot: "b-5" }, created_ms: 50, program: shell });
+  assert.ok(argvToAsk([...rows, fresh], known, cached, 3, start).ask.includes("t5"));
+  for (const a of ["box/t1", "box/t2", "box/t3"]) cached.set(a, argvAfter(cached.get(a), null, rows.find((k) => k.address === a).created_ms));
+  assert.equal(argvToAsk([...rows, fresh], known, cached, 3, start).ask[0], "t5", "first once all three have failed");
+});
+
+test("argvReader: a read counts only for the pane it was made of; a reused address doesn't count a shell", () => {
+  const shell = { key: "shell", agent: false };
+  const cache = new Map([["t1", argvEntry({ foreground: { argv: ["claude"] } }, 10)]]);
+  const read = argvReader(cache);
+  assert.deepEqual(read("t1", 10), ["claude"]);
+  assert.equal(read("t1", 11), null, "another pane at t1");
+  assert.equal(read("t9", 10), null);
+  assert.equal(argvReader(new Map([["t1", { argv: null, created: 10, settled: false }]]))("t1", 10), null);
+  // t1 reborn as a shell (created_ms 11) with the old claude read still cached: not live.
+  const reborn = [T("t1", { labels: { bot: "b-a" }, created_ms: 11, program: shell })];
+  assert.equal(liveFrom(reborn, null, read)["b-a"], undefined);
+  const same = [T("t1", { labels: { bot: "b-a" }, created_ms: 10, program: shell })];
+  assert.deepEqual(liveFrom(same, null, read)["b-a"].argv, ["claude"]);
+});
+
+test("liveFrom: the cached read is used only when the row has no foreground.argv", () => {
+  const shell = { key: "shell", agent: false };
+  const claude = () => ["claude"];
+  // The row says a shell is in front now: an older cached claude read doesn't override it.
+  const atShell = [T("t1", { labels: { bot: "b-a" }, program: shell, foreground: { argv: ["-zsh"] } })];
+  assert.equal(liveFrom(atShell, null, claude)["b-a"], undefined);
+  const noArgv = [T("t1", { labels: { bot: "b-a" }, program: shell })];
+  assert.ok(liveFrom(noArgv, null, claude)["b-a"]);
+});
+
+test("heldClickOf: decided at click time; nothing when the bot holds no live terminal any more", () => {
+  const rows = [T("t1", { labels: { bot: "b-a" }, created_ms: 1 })];
+  assert.deepEqual(heldClickOf("b-a", rows, [{ pane: "p1", terminal: "t1" }]), { command: "agent.focus", args: { terminal: "t1" } });
+  assert.deepEqual(heldClickOf("b-a", rows, []), { command: "terminal.peek", args: { terminal: "t1" } });
+  assert.equal(heldClickOf("b-a", [{ ...rows[0], state: "exited" }], []), null, "gone since the render");
+  assert.equal(heldClickOf("b-a", [], null), null);
 });

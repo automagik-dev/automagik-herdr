@@ -385,3 +385,268 @@ test("a focused folder with its own bots.json, or in a git worktree, is keyed wi
   assert.equal(tree.form.key, repo);
   assert.ok(!nodes.has("bot-project-own"));
 });
+
+// ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
+
+test("Bot settings (pick) draws the sidebar's known bots before discovery answers, then the fresh list", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([MAIN, OMP]);
+  const cx = makeCx();
+  const known = [{ key: project, machine: null, file: { version: 1, categories: [], bots: [MAIN] } },
+    { key: "/x/elsewhere", machine: "box", file: { version: 1, categories: [], bots: [KIMI] } }];
+  const form = new BotForm({ overlay: "o9", form: "pick", known }, cx);
+  index(form.render(cx)); // before cx.settle(): nothing has answered yet
+  assert.doesNotMatch(textOf(nodes.get("bot-form-body")), /Finding bots/);
+  assert.ok(nodes.has(`pick-${MAIN.id}`), "the known bot shows at once");
+  assert.ok(!nodes.has(`pick-${KIMI.id}`), "another machine's project is left out");
+  await cx.settle();
+  index(form.render(cx));
+  assert.ok(nodes.has(`pick-${MAIN.id}`) && nodes.has(`pick-${OMP.id}`), "the refreshed list replaces it");
+});
+
+test("Attach draws the sidebar's known bots at once too; with nothing known it still says it is looking", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([MAIN]);
+  const cx = makeCx();
+  const form = new BotForm({ overlay: "o9", form: "attach", terminal: "t1", known: [{ key: project, machine: null, file: { bots: [MAIN] } }] }, cx);
+  index(form.render(cx));
+  assert.ok(nodes.has(`pick-${MAIN.id}`));
+  await cx.settle();
+  const bare = new BotForm({ overlay: "o9", form: "attach", terminal: "t1" }, makeCx());
+  assert.match(textOf(index(bare.render(cx))), /Finding bots/, "no known list (an older caller): as before");
+});
+
+// ---- #85: a bot row's menu ----
+
+// The CLI as runCli runs it (sh <app home>/mods/am-sidebar/bin/run.sh <cli> <args> --json): a
+// stand-in that logs its arguments and prints `answer` (exits `code`).
+function fakeCli(answer, code = 0) {
+  const bin = join(state.appHome, "mods/am-sidebar/bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "answer.json"), JSON.stringify(answer));
+  writeFileSync(join(bin, "run.sh"), `shift\nprintf '%s\\n' "$*" >> "${bin}/args.log"\ncat "${bin}/answer.json"\nexit ${code}\n`);
+  return () => readFileSync(join(bin, "args.log"), "utf8").trim().split("\n");
+}
+const menu = (extra = {}) => open({ form: "menu", bot: OMP.id, name: OMP.name, planned: false, machine: null, terminal: null, live: null, ...extra });
+
+test("menu, bot without a pane: Configure, Prompt, Start, Restart, Restart on…, Inspect; no Focus or Detach", async () => {
+  seed([MAIN, OMP]);
+  const { draw } = await menu({ terminal: "t3" });
+  draw();
+  for (const id of ["menu-configure", "menu-prompt", "menu-start", "menu-restart", "menu-restart-on", "menu-attach", "menu-inspect"]) assert.ok(nodes.has(id), id);
+  for (const id of ["menu-focus", "menu-detach", "menu-restart-fresh"]) assert.ok(!nodes.has(id), id);
+});
+
+test("menu, running bot: Focus (its pane), Restart with a new conversation, Detach; Attach only to another pane", async () => {
+  seed([MAIN, OMP]);
+  const { draw } = await menu({ live: "t5", terminal: "t5" });
+  draw();
+  for (const id of ["menu-focus", "menu-restart", "menu-restart-fresh", "menu-restart-on", "menu-detach"]) assert.ok(nodes.has(id), id);
+  assert.ok(!nodes.has("menu-start") && !nodes.has("menu-attach"));
+  assert.match(textOf(nodes.get("menu-focus")), /t5/);
+});
+
+test("menu, planned bot: Configure, Prompt and Inspect, no Run item", async () => {
+  seed([MAIN, OMP]);
+  const { draw } = await menu({ planned: true, terminal: "t3" });
+  const text = textOf(draw());
+  assert.ok(nodes.has("menu-configure") && nodes.has("menu-prompt") && nodes.has("menu-inspect"));
+  for (const id of ["menu-start", "menu-focus", "menu-restart", "menu-restart-on", "menu-attach", "menu-detach"]) assert.ok(!nodes.has(id), id);
+  assert.doesNotMatch(text, /RUN/);
+});
+
+test("menu Configure opens the Edit form for the bot and closes the menu", async () => {
+  seed([MAIN, OMP]);
+  const { draw, click } = await menu();
+  draw();
+  state.opened = [];
+  await click("menu-configure");
+  assert.deepEqual(state.opened, [{ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: OMP.id, project } }]);
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu Focus: the bot's pane by agent.focus when Herdr shows it", async () => {
+  seed([MAIN, OMP]);
+  state.panes = [{ terminal: "t5" }];
+  try {
+    const { draw, click } = await menu({ live: "t5" });
+    draw();
+    await click("menu-focus");
+  } finally { state.panes = []; }
+  assert.deepEqual(state.runs.at(-1), ["agent.focus", { terminal: "t5" }]);
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu Prompt: the instructions edited in place and saved as the Edit form saves, every other field kept", async () => {
+  const before = { ...OMP, instructions: "old words", worker: { agent: "codex" } };
+  seed([MAIN, before]);
+  const { form, cx, draw, click } = await menu();
+  draw();
+  await click("menu-prompt");
+  draw();
+  assert.ok(nodes.has("menu-prompt-text"));
+  assert.equal(form.prompt.value(), "old words");
+  form.prompt.type("new words\nline two", cx);
+  draw();
+  await click("menu-prompt-save");
+  const saved = stored().bots.find((b) => b.id === OMP.id);
+  assert.equal(saved.instructions, "new words\nline two");
+  assert.deepEqual({ ...saved, instructions: "old words" }, before, "nothing else changed");
+  assert.ok(state.runs.some(([name]) => name === "am-sidebar.refresh"));
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu Prompt: over the limit is not saved, and an edit since it opened is refused as stale", async () => {
+  seed([MAIN, OMP]);
+  const { form, cx, draw, click } = await menu();
+  draw();
+  await click("menu-prompt");
+  form.prompt.type("x".repeat(100_000), cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.match(form.error, /^Not saved: Instructions are/);
+  assert.equal(stored().bots.find((b) => b.id === OMP.id).instructions, "");
+  form.prompt.type("fine", cx);
+  seed([MAIN, { ...OMP, role: "changed elsewhere" }]);
+  draw();
+  await click("menu-prompt-save");
+  assert.match(form.error, /changed since this menu opened/);
+  assert.equal(stored().bots.find((b) => b.id === OMP.id).role, "changed elsewhere", "the other edit is kept");
+  assert.deepEqual(state.closed, []);
+});
+
+test("menu Detach: the CLI's detach for the bot and its project; a refusal is shown", async () => {
+  seed([MAIN, OMP]);
+  const args = fakeCli({ id: OMP.id, detached: ["t5"] });
+  const { draw, click } = await menu({ live: "t5" });
+  draw();
+  await click("menu-detach");
+  assert.deepEqual(args(), [`detach ${OMP.id} --project ${project} --json`]);
+  assert.deepEqual(state.closed, ["o9"]);
+  state.closed = [];
+  fakeCli({}, 1);
+  const again = await menu({ live: "t5" });
+  again.draw();
+  await again.click("menu-detach");
+  assert.match(again.form.error, /detach failed \(exit 1\)/);
+  assert.deepEqual(state.closed, []);
+});
+
+test("menu Inspect: what happened, by automagik-herdr history: timeline, transcript (a click copies it), workers, helpers", async () => {
+  seed([MAIN, OMP]);
+  const at = (m) => `2026-11-03T10:0${m}:00.000Z`;
+  const args = fakeCli({ id: OMP.id, bot: OMP.id,
+    attach: [{ v: 1, event: "attach", bot: OMP.id, terminal: "t5", by: "start", at: at(1) }],
+    starts: [{ event: "start", kind: "seat", terminal: "t5", botId: OMP.id, agent: "omp", at: at(1) }],
+    workers: [{ event: "start", kind: "worker", terminal: "t8", botId: OMP.id, branch: "fix-x", role: "dev", agent: "codex", at: at(3) }],
+    sessions: [], transcript: "/x/sessions/one.jsonl" });
+  const { cx, draw, click } = await menu({ live: "t5", helpers: [{ terminal: "t8", name: "fix-x" }] });
+  draw();
+  await click("menu-inspect");
+  const text = textOf(draw());
+  assert.deepEqual(args(), [`history ${OMP.id} --project ${project} --json`]);
+  assert.match(text, /2026-11-03 10:01 attached to t5 · by start/);
+  assert.match(text, /started in t5 · omp/);
+  assert.match(text, /fix-x · dev · codex · t8/);
+  assert.ok(nodes.has("menu-helper-t8"));
+  await click("menu-transcript");
+  assert.equal(cx.clip, "/x/sessions/one.jsonl");
+  assert.doesNotMatch(text, /spend|cost/i, "no spend line: usagemeter has no per-bot figure");
+});
+
+test("menu Inspect: a CLI failure is shown in place, not a blank section", async () => {
+  seed([MAIN, OMP]);
+  const { form, draw, click } = await menu();
+  draw();
+  await click("menu-inspect");
+  draw();
+  assert.ok(form.history.error);
+  assert.ok(nodes.has("menu-history"));
+});
+
+test("Attach with an empty known list says it is looking until discovery answers, then that there are none", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([]);
+  const cx = makeCx();
+  const form = new BotForm({ overlay: "o9", form: "attach", terminal: "t1", known: [] }, cx);
+  assert.match(textOf(index(form.render(cx))), /Finding bots/);
+  await cx.settle();
+  assert.match(textOf(index(form.render(cx))), /No bots on this computer yet/);
+});
+
+// ---- #88 review: pick while discovering, a failed prompt read, Focus as the row's click, busy labels ----
+
+test("Bot settings (pick) with an empty known list says it is looking, never New bot alone, until discovery answers", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([MAIN]);
+  const cx = makeCx();
+  const form = new BotForm({ overlay: "o9", form: "pick", known: [] }, cx);
+  assert.match(textOf(index(form.render(cx))), /Finding bots/);
+  assert.ok(!nodes.has("pick-new"), "no New bot while the bots may still be found: a duplicate risk");
+  await cx.settle();
+  index(form.render(cx));
+  assert.ok(nodes.has(`pick-${MAIN.id}`) && !nodes.has("pick-new"));
+  seed([]);
+  const empty = new BotForm({ overlay: "o9", form: "pick", known: [] }, cx);
+  await cx.settle();
+  index(empty.render(cx));
+  assert.ok(nodes.has("pick-new"), "discovery answered with no bot: New bot");
+});
+
+test("menu Prompt: a failed read is shown in the section, not Reading… forever", async () => {
+  seed([MAIN]); // the menu's bot isn't in the file (removed since the row was drawn)
+  const { form, draw, click } = await menu();
+  draw();
+  await click("menu-prompt");
+  const text = textOf(draw());
+  assert.ok(nodes.has("menu-prompt-error"));
+  assert.match(text, /Can't read the prompt: .*has no bot b-ompaaaaaaa/);
+  assert.doesNotMatch(text, /Reading…/);
+  assert.equal(form.promptBase, null);
+});
+
+test("menu Focus does what the row's click does: a kept pane with no pane opens as a tab after its starter's", async () => {
+  seed([MAIN, OMP]);
+  state.panes = [{ terminal: "t1", tab: "tab1" }];
+  state.spaces = [{ id: "s1", folder: project, machine: null, tabs: [{ id: "tab1", index: 1 }] }];
+  // Herdr gives the kept terminal its pane in a new tab.
+  state.runFault = (name) => { if (name === "terminal.keep") state.panes.push({ terminal: "t5", tab: "tab2" }); };
+  try {
+    const { draw, click } = await menu({ live: "t5", worker: { terminal: "t5", botTerminal: "t1", name: OMP.name } });
+    draw();
+    await click("menu-focus");
+  } finally { state.runFault = null; state.panes = []; }
+  const names = state.runs.map(([name]) => name);
+  assert.deepEqual(names.slice(0, 3), ["space.select", "tab.select", "terminal.keep"]);
+  assert.deepEqual(state.runs[2], ["terminal.keep", { terminal: "t5", place: "tab" }]);
+  assert.ok(!names.includes("terminal.peek"), "not a peek");
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu Focus with no pane and no starter's tab peeks, as the row's click does", async () => {
+  seed([MAIN, OMP]);
+  const { draw, click } = await menu({ live: "t5", worker: { terminal: "t5", botTerminal: null, name: OMP.name } });
+  draw();
+  await click("menu-focus");
+  assert.deepEqual(state.runs.at(-1), ["terminal.peek", { terminal: "t5" }]);
+  assert.deepEqual(state.closed, ["o9"]);
+});
+
+test("menu busy labels: only the running action's item changes", async () => {
+  seed([MAIN, OMP]);
+  fakeCli({ id: OMP.id, detached: ["t5"] });
+  const { form, cx, draw } = await menu({ live: "t5", terminal: "t9" });
+  form.detach(cx); // its spawn hasn't run yet: Detach is in progress
+  draw();
+  assert.equal(textOf(nodes.get("menu-detach")), "Detaching…");
+  for (const [id, label] of [["menu-restart", "Restart"], ["menu-restart-fresh", "Restart with a new conversation"], ["menu-attach", "Attach to the focused pane (t9)"]]) {
+    assert.equal(textOf(nodes.get(id)), label, id);
+  }
+  await cx.settle();
+  const r = await menu({ terminal: "t9" });
+  r.form.restart({ key: project }, { id: OMP.id }, r.cx, { fresh: true });
+  r.draw();
+  assert.equal(textOf(nodes.get("menu-start")), "Start");
+  assert.equal(textOf(nodes.get("menu-restart")), "Restart", "a fresh restart leaves plain Restart's label");
+  await r.cx.settle();
+});
