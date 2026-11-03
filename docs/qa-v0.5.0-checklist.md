@@ -15,9 +15,10 @@ herdr-app do layout.switch '{"name":"automagik"}'
    bar on top. No mod shows an error banner or an empty red block.
 2. **The sidebar body.** Your spaces and their bots are listed. There is **no "+ New bot" row**.
 3. **The footer's Bots tab** (robot icon, first in the rail). A small menu opens with **New bot**
-   and **Bot settings**. Esc closes it.
+   and **Bot settings**. Esc closes it. With no bot on this computer, the menu shows only
+   **New bot**.
    - **New bot** opens the Create form (about 1000×840).
-   - **Bot settings** opens the bot picker. With no bot on this computer it shows one "New bot" line.
+   - **Bot settings** opens the bot picker (about 560 wide, 85% of the window's height).
 4. **The rest of the rail**, in this order after Bots: Mods, Automations, Quota, Settings, Add
    machine. **Pocket Link** shows only if Pocket Link is installed.
    - **Mods** (or `⌘⇧M`) opens the mod table, with all eight `am-*` mods on and checked.
