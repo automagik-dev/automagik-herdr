@@ -838,11 +838,16 @@ async function cmdStart(opts, [ref]) {
   const parent = parentArgs(file, bot.id, (id) => (id === lead ? leadLive : null));
   const labels = paneLabels(file, bot.id, {}, lead ? leadPane(await liveRows(lead))?.labels ?? null : null); // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
+  // As a worker (cmdWorker): the agent gets this PATH, not herdr-core's, with an npm agent's
+  // interpreter (#!/usr/bin/env node) put first when this PATH lacks it (#56).
+  const runPath = interpreterPath(agent.run[0], process.env.PATH);
   const argv = [...agent.run, ...modelArgs(bot.agent, bot.model)];
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : await placementOf(key);
-  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: place?.space, tab: place?.tab, parent, argv, labels });
+  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: place?.space, tab: place?.tab, parent, argv, labels,
+    path: runPath.path });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = bot.agent === "claude" ? await writeBriefingHook(bot, key) : { written: false, warnings: [] };
+  if (runPath.note) hook.warnings.unshift(runPath.note);
   report(hook.warnings);
   const r = await hc(args);
   if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);

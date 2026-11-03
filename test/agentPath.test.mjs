@@ -88,7 +88,7 @@ test("node missing, codex reached through a link to nvm's bin: nvm's bin goes fi
   const got = interpreterPath("codex", path, s.env);
   assert.equal(got.path, `${join(prefix, "bin")}:${path}`);
   assert.equal(pathOf(got.path), `${join(prefix, "bin")}:${path}`);
-  assert.equal(got.note, `codex runs under node, which isn't on the worker's PATH: ${join(prefix, "bin")} put first on it.`);
+  assert.equal(got.note, `codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it.`);
 });
 
 test("node missing and not beside the agent: run.sh's order, nvm's newest 22.7+ before Homebrew's", (t) => {
@@ -228,7 +228,11 @@ test("a binary, a #!/bin/sh script or an agent not on PATH: PATH unchanged, noth
   for (const program of ["claude", "agy", "codex"]) assert.deepEqual(interpreterPath(program, s.empty, s.env), { path: s.empty, note: null });
 });
 
-test("worker CLI: a codex the pane reaches without node starts under env PATH=<nvm bin>:<pane PATH>, and says so", (t) => {
+/**
+ * A scratch project for the CLI: codex on PATH only as a link into a fake nvm prefix (node beside
+ * it, nowhere on PATH), the fake hc, git, and a live t1 playing Dev. `extra` bots join the file.
+ */
+function codexProject(t, extra = []) {
   const s = scratch(t);
   const prefix = npmPrefix(s.root);
   const bin = join(s.root, "bin");
@@ -245,6 +249,7 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
   writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify({ version: 1, categories: [], bots: [
     { id: "b-aaaaaaaaaa", name: "Genie", kind: "main", look, role: "r", instructions: "i", agent: "claude" },
     { id: "b-cccccccccc", name: "Dev", kind: "member", look, role: "r", instructions: "i", agent: "claude", worker: { agent: "codex" } },
+    ...extra.map((b) => ({ look, role: "r", instructions: "i", ...b })),
   ] }));
   const app = join(s.root, "app");
   mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
@@ -256,9 +261,32 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
   writeFileSync(log, "");
   const path = `${bin}:${s.empty}`;
   const env = { ...s.env, PATH: path, HERDR_APP_HOME: app, HC_FAKE_STATE: state, HC_FAKE_LOG: log, HC_TERMINAL_ID: "t1" };
-  const r = spawnSync(process.execPath, [CLI, "worker", "fix it", "--branch", "feat/x"], { cwd: project, env, encoding: "utf8" });
+  const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
+  const run = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((c) => c[0] === "run");
+  return { s, prefix, path, cli, run };
+}
+
+test("worker CLI: a codex the pane reaches without node starts under env PATH=<nvm bin>:<pane PATH>, and says so", (t) => {
+  const { prefix, path, cli, run: runCall } = codexProject(t);
+  const r = cli("worker", "fix it", "--branch", "feat/x");
   assert.equal(r.status, 0, r.stderr);
-  const run = readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((c) => c[0] === "run");
+  const run = runCall();
   assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}`, "codex"]);
-  assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on the worker's PATH: ${join(prefix, "bin")} put first on it\\.`));
+  assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
+});
+
+test("start CLI (#56): a codex bot whose node is only in nvm starts under env PATH=<nvm bin>:<PATH>, and the command runs", (t) => {
+  const { prefix, path, cli, run: runCall } = codexProject(t, [{ id: "b-dddddddddd", name: "Maint", kind: "member", agent: "codex" }]);
+  const r = cli("start", "Maint", "--json");
+  assert.equal(r.status, 0, r.stderr);
+  const run = runCall();
+  const argv = run.slice(run.indexOf("--") + 1);
+  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}`, "codex"]);
+  assert.deepEqual(JSON.parse(r.stdout).argv, ["codex"]);
+  assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
+  // The seat's command as hc would run it: with the caller's PATH alone, env finds no node (127); as started, it runs.
+  const bare = spawnSync("codex", [], { env: { PATH: path }, encoding: "utf8" });
+  assert.equal(bare.status, 127, bare.stderr);
+  const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
+  assert.equal(seat.status, 0, seat.stderr);
 });

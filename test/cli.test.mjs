@@ -409,8 +409,10 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().terminal, "t100");
   const run = runCall(s.calls());
+  // The agent gets the caller's PATH (as a worker does), not herdr-core's; this claude needs no interpreter.
   assert.deepEqual(run, ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
-    "--", "claude", "--model", "claude-opus-5-5"]);
+    "--", "/usr/bin/env", `PATH=${join(s.root, "bin")}:${process.env.PATH}`, "claude", "--model", "claude-opus-5-5"]);
+  assert.deepEqual(r.json().argv, ["claude", "--model", "claude-opus-5-5"]);
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
   const settings = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
