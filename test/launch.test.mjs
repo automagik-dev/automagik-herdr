@@ -161,6 +161,27 @@ test("startBot: a member with a live lead runs under it, in the project's space 
   assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: main, machine: null }]);
 });
 
+test("startBot: no space shows the project -> space.new on its folder (the name given), and the bot starts in it", async (t) => {
+  reset();
+  const { main } = await project(t);
+  state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] }];
+  // Herdr makes the space a moment after run(): it shows up in spaces() on the second look.
+  let looks = 0;
+  const sleep = async () => {
+    if (++looks === 2) state.spaces = [...state.spaces, { id: "s5", folder: main, machine: null, active: true, tabs: [{ id: "t5", active: true }] }];
+  };
+  assert.deepEqual(await startBot(main, ID.main, { sleep, name: "automagik" }), { terminal: "t42" });
+  assert.deepEqual(state.runs, [["space.new", { name: "automagik", folder: main, machine: "" }]]);
+  const runArgs = state.hcCalls.find((a) => a[0] === "run");
+  assert.ok(runArgs.includes("herdr.space=s5") && runArgs.includes("herdr.tab=t5"));
+  // Unnamed, the space is called after the folder; one that never shows: the shown space, as before.
+  reset();
+  state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] }];
+  await startBot(main, ID.main, { sleep: async () => {}, waitMs: 0 });
+  assert.deepEqual(state.runs[0], ["space.new", { name: "proj", folder: main, machine: "" }]);
+  assert.ok(state.hcCalls.find((a) => a[0] === "run").includes("herdr.space=s0"));
+});
+
 test("startBot: lead down -> --no-parent; a live bot is focused, not started; planned refused", async (t) => {
   reset();
   const { main } = await project(t);

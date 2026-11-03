@@ -89,14 +89,26 @@ export async function modelTexts() {
 }
 
 // Where a started bot opens: the first space of this computer whose folder keys to the
-// project, else the shown space; in that space's active tab.
-async function placeFor(projectKey) {
-  const mine = spaces().filter((s) => !s.machine);
+// project, else a new space on the project (space.new, named `name` or after the folder;
+// run() answers nothing, so it is looked for in spaces() for up to waitMs), else the shown
+// space; in that space's active tab.
+async function placeFor(projectKey, { sleep = null, name = null, waitMs = 5000, stepMs = 100 } = {}) {
+  const mine = () => spaces().filter((s) => !s.machine);
   let space = null;
-  for (const s of mine) {
+  for (const s of mine()) {
     try { if (s.folder && (await keyOf(s.folder)) === projectKey) { space = s; break; } } catch {}
   }
-  space ??= mine.find((s) => s.id === focused()?.space) ?? mine.find((s) => s.active) ?? null;
+  if (!space) {
+    const before = new Set(mine().map((s) => s.id));
+    let asked = true;
+    try { run("space.new", { name: name || projectKey.replace(/\/+$/, "").split("/").pop(), folder: projectKey, machine: "" }); } catch { asked = false; }
+    for (let waited = 0; asked; waited += stepMs) {
+      space = mine().find((s) => !before.has(s.id) && s.folder === projectKey) ?? null;
+      if (space || !sleep || waited >= waitMs) break;
+      await sleep(stepMs);
+    }
+  }
+  space ??= mine().find((s) => s.id === focused()?.space) ?? mine().find((s) => s.active) ?? null;
   const tab = space?.tabs?.find((t) => t.active) ?? null;
   return { space: space?.id ?? null, tab: tab?.id ?? null };
 }
@@ -110,15 +122,15 @@ const STARTED_GRACE = 60_000;
 /**
  * Starts a bot as a new pane on this computer, or focuses its live pane. Refuses a planned
  * bot, one with no agent, a project folder that doesn't key to itself, and a bot already
- * being started.
+ * being started. `place`: { sleep, name } for a space it opens (placeFor).
  */
-export async function startBot(projectKey, botId) {
+export async function startBot(projectKey, botId, place = {}) {
   if (starting.has(botId)) return { refused: `${botId} is already starting.` };
   starting.add(botId);
-  try { return await startOnce(projectKey, botId); } finally { starting.delete(botId); }
+  try { return await startOnce(projectKey, botId, place); } finally { starting.delete(botId); }
 }
 
-async function startOnce(projectKey, botId) {
+async function startOnce(projectKey, botId, place) {
   let file;
   try { file = await readProject(projectKey); } catch (e) { return { refused: `Can't read ${projectKey}/${BOTS_PATH}: ${e?.message ?? e}` }; }
   if (!file) return { refused: `No ${BOTS_PATH} in ${projectKey}.` };
@@ -150,7 +162,7 @@ async function startOnce(projectKey, botId) {
   // A16: role, category and the lead pane's squad as labels on the new pane.
   const labels = paneLabels(file, botId, {}, lead ? leadPane(rowsOfBot(lead))?.labels ?? null : null);
   const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
-  const { space, tab } = await placeFor(projectKey);
+  const { space, tab } = await placeFor(projectKey, place);
   // A12: a pinned model goes to the agent with its own flag, as the CLI passes it; a pin the
   // agent doesn't list (an old free-text model) is skipped, and the owner told.
   let pin = [];

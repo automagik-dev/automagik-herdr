@@ -19,10 +19,13 @@ One scrolling column, `chrome` background, 13 px text.
   A row is a fold arrow (shown on hover only, no count), the character in a pose for its
   status, the name in its colour's ink over `role · model` (`Main bot · model · project` for the
   main bot, `not running · role` for a stopped bot), the agent's Herdr icon and the status mark.
-  A planned bot is dimmed and dashed, asleep, with its note and a `Wave n` pill. A project the CLI
-  listed with no open space draws its tree at the end, under the project's name. Plain agents with
-  no bot still list as they always did.
-- **Collapsed**, the rail shows numbers and status glyphs only.
+  A planned bot is dimmed and dashed, asleep, with its note and a `Wave n` pill. A project with
+  no open space (its last space closed, or the CLI listed it) keeps its tree where its space
+  was, else right after the open spaces, under the project's name and a Start button that
+  opens a space on the project and starts the main bot there. Plain agents with no bot still
+  list as they always did.
+- **Collapsed**, the rail shows numbers and status glyphs, and a spaceless project as its main
+  bot's character (a click starts it).
 
 ## How it behaves
 

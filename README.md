@@ -212,6 +212,8 @@ automagik-herdr update [--check | --rollback]
   missing `--project` folder) exits 2, and nothing is written.
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`. A member
   whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
+  The pane opens in the space showing the project; with none open, `start` opens one on the
+  project folder (`--space`/`--tab` pick the place instead).
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
   project is refused.
 

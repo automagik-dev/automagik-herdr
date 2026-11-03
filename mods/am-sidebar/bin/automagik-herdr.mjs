@@ -21,7 +21,8 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, attachRefusal, attachWords, detachWords, hcName, isClaude, labelMoves, leadIdOf, leadPane, paneLabels,
-  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, startArgs, startRefusal, youngPane } from "../launchArgs.js";
+  paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spacePlace, startArgs, startRefusal,
+  youngPane } from "../launchArgs.js";
 import { interpreterPath } from "../agentPath.mjs";
 import { installHook, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
@@ -34,7 +35,7 @@ import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { plan as tidyPlan, planText } from "../tidy.js";
-import { fixNonVisual, readState } from "./state.mjs";
+import { fixNonVisual, readState, spacesOf } from "./state.mjs";
 
 /** A refusal or a usage mistake: printed on stderr, exit `code`. */
 export class CliError extends Error {
@@ -794,6 +795,40 @@ async function placementOf(key) {
   return null;
 }
 
+/** `herdr-app ls` as State spaces (spacesOf) and each folder's key, or null: no herdr-app, no window. */
+async function windowSpaces() {
+  const r = await runProgram("herdr-app", ["ls"]);
+  let spaces;
+  try { spaces = r.code === 0 ? spacesOf(JSON.parse(r.stdout)) : null; } catch { spaces = null; }
+  if (!spaces) return null;
+  const keys = new Map();
+  await Promise.all([...new Set(spaces.map((s) => s.folder).filter(Boolean))].map(async (f) => {
+    try { keys.set(f, await keyOf(f)); } catch { /* a folder gone: not this project */ }
+  }));
+  return { spaces, keys };
+}
+
+/**
+ * Where a start with no --space goes: a project terminal's place (placementOf) while the window
+ * still shows that space, else a window space on the project, else a new one (herdr-app do
+ * space.new, named after the folder). With no window to ask, the terminal's place, or null.
+ */
+async function windowPlace(key, labelled = null) {
+  const seen = await windowSpaces();
+  if (!seen) return labelled;
+  if (labelled && seen.spaces.some((s) => s.id === labelled.space)) return labelled;
+  const open = spacePlace(seen.spaces, seen.keys, key);
+  if (open) return open;
+  const name = key.replace(/\/+$/, "").split("/").pop();
+  const r = await runProgram("herdr-app", ["do", "space.new", JSON.stringify({ name, folder: key, machine: "" })]);
+  if (r.code !== 0) return null;
+  let id = null;
+  try { id = JSON.parse(r.stdout)?.space ?? null; } catch { /* the ids are read from ls instead */ }
+  const now = await windowSpaces();
+  const made = now && spacePlace(now.spaces.filter((s) => !id || s.id === id), now.keys, key, new Set(seen.spaces.map((s) => s.id)));
+  return made || (typeof id === "string" ? { space: id, tab: null, from: null } : null);
+}
+
 async function cmdStart(opts, [ref]) {
   if (opts.tab && !opts.space) throw new CliError("--tab needs --space (the space that tab is in).", 2);
   const project = await projectFor(opts);
@@ -826,7 +861,7 @@ async function cmdStart(opts, [ref]) {
   const labels = paneLabels(file, bot.id, {}, lead ? leadPane(await liveRows(lead))?.labels ?? null : null); // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   const argv = [...agent.run, ...modelArgs(bot.agent, bot.model)];
-  const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : await placementOf(key);
+  const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : await windowPlace(key, await placementOf(key));
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd: key, space: place?.space, tab: place?.tab, parent, argv, labels });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = bot.agent === "claude" ? await writeBriefingHook(bot, key) : { written: false, warnings: [] };

@@ -1,6 +1,7 @@
 // automagik-herdr, the command line (A11): every subcommand run as a program against scratch git
 // projects under $TMPDIR, with a fake `hc` first on PATH (test/fake-hc.mjs) that records
-// each call and answers from a state file. The real hc is never run.
+// each call and answers from a state file, and a fake `herdr-app` (test/fake-herdr-app.mjs; no
+// window unless a test opens one). The real hc and window are never touched.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
@@ -15,13 +16,14 @@ const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.ur
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
 const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
 /** A scratch world: a git project, a fake hc, a fake home and app home. */
-function scene(t, { terminals = [], briefing = true } = {}) {
+function scene(t, { terminals = [], briefing = true, window = { down: true } } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
@@ -31,6 +33,7 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
@@ -43,7 +46,11 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals, next: 100 }));
   writeFileSync(logPath, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
+  const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
+  writeFileSync(appState, JSON.stringify(window));
+  writeFileSync(appLog, "");
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
   delete env.HC_TERMINAL_ID;
   const cli = (args, { cwd = project, input } = {}) => {
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
@@ -51,10 +58,12 @@ function scene(t, { terminals = [], briefing = true } = {}) {
   };
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
+  const appCalls = () => readFileSync(appLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
   const seed = (file) => { mkdirSync(join(project, ".herdr"), { recursive: true }); writeFileSync(botsPath, `${JSON.stringify(file, null, 2)}\n`); };
-  return { root, project, app, home, cli, calls, hcState, bots, botsPath, seed };
+  return { root, project, app, home, cli, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
 }
 
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -602,12 +611,46 @@ test("start places the pane in the space of a live terminal in the project; with
   const run = runCall(s.calls());
   assert.ok(run.includes("herdr.space=sp9") && run.includes("herdr.tab=tb3"));
   assert.doesNotMatch(r.err, /unseen/);
-  // No terminal of the project carries a space: started, with the warning.
+  // No terminal of the project carries a space and no window answers: started, with the warning.
   const s2 = scene(t);
   s2.seed(team());
   const r2 = s2.cli(["start", "Genie"]);
   assert.equal(r2.code, 0, r2.err);
   assert.match(r2.err, /No open Herdr space shows .*, so Herdr gives t100 no pane: it runs, unseen\. Watch it with hc attach t100/);
+});
+
+test("start with no space showing the project opens one on its folder and starts the bot in it; an open one is used", (t) => {
+  const s = scene(t, { window: { spaces: [{ id: "sp1", name: "Other", folder: "/elsewhere", machine: null, active: true,
+    tabs: [{ id: "tb1", name: "1", active: true, terminals: [] }] }] } });
+  s.seed(team());
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const made = s.appCalls().find((c) => c[0] === "do");
+  assert.deepEqual(made && [made[1], JSON.parse(made[2])], ["space.new", { name: "proj", folder: s.project, machine: "" }]);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", "tb-new1"]);
+  const run = runCall(s.calls());
+  assert.ok(run.includes("herdr.space=sp-new1") && run.includes("herdr.tab=tb-new1"));
+  assert.doesNotMatch(r.err, /unseen/);
+  // That space is open now: the next bot starts in it, and no second space is made.
+  assert.equal(s.cli(["start", "Captain"]).code, 0);
+  assert.equal(s.appCalls().filter((c) => c[0] === "do").length, 1);
+  assert.equal(s.windowNow().spaces.length, 2);
+  assert.ok(runCall(s.calls().filter((c) => c.includes("bot=" + ID.cap))).includes("herdr.space=sp-new1"));
+  // A project terminal still labelled with a space the window no longer shows (its last
+  // pane closed): that label is passed over and a space is opened.
+  const s3 = scene(t, { window: { spaces: [] } });
+  s3.seed(team());
+  const stale = term("t20", { cwd: s3.project, argv: ["zsh"], app: "zsh" });
+  stale.labels = { "herdr.space": "sp9", "herdr.tab": "tb3" };
+  writeFileSync(join(s3.root, "hc.json"), JSON.stringify({ terminals: [stale], next: 100 }));
+  const r3 = s3.cli(["start", "Genie", "--json"]);
+  assert.equal(r3.code, 0, r3.err);
+  assert.deepEqual([r3.json().space, r3.json().tab], ["sp-new1", "tb-new1"]);
+  // --space still picks the place: the window isn't asked.
+  const s2 = scene(t, { window: { spaces: [] } });
+  s2.seed(team());
+  assert.equal(s2.cli(["start", "Genie", "--space", "sp7"]).code, 0);
+  assert.deepEqual(s2.appCalls(), []);
 });
 
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {
