@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -202,4 +202,31 @@ test("names differing only in case: Pocket-Link, Demo and Main.json never touch 
   for (const k of Object.keys(after)) if (k.startsWith("automagik-herdr/")) delete after[k];
   for (const k of Object.keys(before)) if (k.startsWith("automagik-herdr/")) delete before[k];
   assert.deepEqual(after, before, "the person's mods and layouts are byte-identical");
+});
+
+test("catalogUrl: a local catalog path whose file is gone falls back to the published index", async (t) => {
+  const home = scratch(t);
+  const put = (dir, url) => {
+    mkdirSync(join(home, "data", dir), { recursive: true });
+    writeFileSync(join(home, "data", dir, "catalog.json"), JSON.stringify({ url }));
+  };
+  const gone = join(home, "renamed", "catalog", "index.json");
+  put("am-mods", gone);
+  assert.equal(await core.catalogUrl(ioOf(), home), core.CATALOG_URL, "the only candidate is dead");
+  const nullIo = { ...ioOf(), readText: async (p) => (existsSync(p) ? readFileSync(p, "utf8") : null) };
+  assert.equal(await core.catalogUrl(nullIo, home), core.CATALOG_URL, "a readText that returns null on a missing file");
+  put("mod-manager", core.CATALOG_URL);
+  assert.equal(await core.catalogUrl(ioOf(), home), core.CATALOG_URL, "the pack's URL in the old folder");
+  put("mod-manager", "https://example.test/index.json");
+  assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/index.json", "the person's other URL wins");
+  mkdirSync(dirname(gone), { recursive: true });
+  writeFileSync(gone, JSON.stringify({ mods: [] }));
+  // Both the person's now: the one changed last wins. Explicit mtimes, as `[ -nt ]` compares
+  // whole seconds in macOS sh and nanoseconds in Linux dash.
+  const at = (dir, secs) => utimesSync(join(home, "data", dir, "catalog.json"), secs, secs);
+  at("am-mods", 2_000_000); at("mod-manager", 1_000_000);
+  assert.equal(await core.catalogUrl(ioOf(), home), gone, "a local path that is there counts again");
+  at("am-mods", 1_000_000); at("mod-manager", 2_000_000);
+  assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/index.json", "and loses to a newer one");
+  // No case for file:// URLs: nothing reads them, so which one wins is not a contract.
 });

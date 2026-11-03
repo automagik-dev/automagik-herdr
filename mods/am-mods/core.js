@@ -467,15 +467,23 @@ export function parseCatalog(json) {
 // and read as the fallback; the mod's own catalog.json is the copy in a checkout,
 // and the published index is the fallback. A URL the person set wins wherever it is, the most
 // recently changed one when both data folders hold one (else data/am-mods first): a copy still
-// holding a URL the pack wrote never shadows it.
+// holding a URL the pack wrote never shadows it. A local path (no URL scheme) whose file is gone
+// counts as not set, so a renamed or removed checkout falls back to the published index.
 const PACK_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
+export const isLocalCatalogPath = (url) => !/^[a-z][a-z0-9+.-]*:/i.test(url);
 export async function catalogUrl(io, appHome) {
   const found = [];
   for (const path of [`${appHome}/data/am-mods/catalog.json`, `${appHome}/data/mod-manager/catalog.json`, `${appHome}/mods/am-mods/catalog.json`]) {
     try {
       const raw = await io.readText(path);
       const url = raw ? JSON.parse(raw)?.url : null;
-      if (typeof url === "string" && url) found.push({ path, url });
+      if (typeof url !== "string" || !url) continue;
+      if (isLocalCatalogPath(url)) {
+        let text = null;
+        try { text = await io.readText(url); } catch {}
+        if (!text) continue;
+      }
+      found.push({ path, url });
     } catch {}
   }
   const mine = found.filter((f) => !PACK_URLS.includes(f.url));
