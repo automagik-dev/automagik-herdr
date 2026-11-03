@@ -1,3 +1,7 @@
+> **Moved to [automagik-dev/automagik](https://github.com/automagik-dev/automagik/tree/dev/herdr) (`herdr/`).
+> This repo is archived.** Installs update on their own since v0.15.0; new installs:
+> `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash`
+
 # Automagik Herdr
 
 Autonomous teams of coding agents across harnesses (Claude Code, Codex, Antigravity, Kimi, Oh My Pi…)
