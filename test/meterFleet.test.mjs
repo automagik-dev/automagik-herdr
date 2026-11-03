@@ -127,10 +127,10 @@ test("hc exec --json is decoded: base64 output, a timeout or no JSON is a failur
 
 test("the record: usagemeter-machines and usagemeter-scope round-trip; junk is dropped; recordAfter", () => {
   const base = { version: "1.0.0", mods: ["am-sidebar"], layout: "added" };
-  const text = formatMarker({ ...base, usagemeter: V, usagemeterOn: { lin: V, "vm7.b": "0.2.0" }, usagemeterScope: "local" });
-  assert.match(text, new RegExp(`\nusagemeter-machines=lin:${V.replace(/\./g, "\\.")},vm7\\.b:0\\.2\\.0\nusagemeter-scope=local\n$`));
+  const text = formatMarker({ ...base, usagemeter: V, usagemeterOn: { lin: V, "far.b": "0.2.0" }, usagemeterScope: "local" });
+  assert.match(text, new RegExp(`\nusagemeter-machines=lin:${V.replace(/\./g, "\\.")},far\\.b:0\\.2\\.0\nusagemeter-scope=local\n$`));
   const back = parseMarker(text);
-  assert.deepEqual(back.usagemeterOn, { lin: V, "vm7.b": "0.2.0" });
+  assert.deepEqual(back.usagemeterOn, { lin: V, "far.b": "0.2.0" });
   assert.equal(back.usagemeterScope, "local");
   assert.equal(formatMarker(back), text);
   assert.deepEqual(parseMarker(`${formatMarker(base)}usagemeter-machines=../x:1.0.0,ok:junk,ok2:1.2.3\nusagemeter-scope=everywhere\n`),
@@ -370,11 +370,11 @@ test("sync fan-out: this computer, then each connected linked machine in turn; f
   assert.deepEqual(syncTargets(machines, "none", ["lin"]), []);
   assert.deepEqual(syncTargets(machines, "none"), []);
   const calls = [];
-  const exec = async (bin, args, opts) => { calls.push([bin, args, opts?.on ?? null]); if (opts?.on === "vm7") throw new Error("unreachable"); return { code: 0 }; };
+  const exec = async (bin, args, opts) => { calls.push([bin, args, opts?.on ?? null]); if (opts?.on === "far") throw new Error("unreachable"); return { code: 0 }; };
   const state = {};
-  const r = await syncMeter({ exec, bin: "/h/.local/bin/usagemeter", state, machines: ["lin", "vm7"] });
-  assert.deepEqual(calls, [["/h/.local/bin/usagemeter", ["sync"], null], ["sh", ["-c", SYNC], "lin"], ["sh", ["-c", SYNC], "vm7"]]);
-  assert.deepEqual(r.on, { lin: 0, vm7: null });
+  const r = await syncMeter({ exec, bin: "/h/.local/bin/usagemeter", state, machines: ["lin", "far"] });
+  assert.deepEqual(calls, [["/h/.local/bin/usagemeter", ["sync"], null], ["sh", ["-c", SYNC], "lin"], ["sh", ["-c", SYNC], "far"]]);
+  assert.deepEqual(r.on, { lin: 0, far: null });
   assert.equal(r.ran, true);
   assert.equal(state.busy, false);
   // A missing binary here still syncs the machines; no machines: the run is as before.
