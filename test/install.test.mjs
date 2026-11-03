@@ -64,7 +64,13 @@ if [ "$1" = status ]; then
 fi
 `);
   const show = (name) => writeFileSync(shownFile, name);
-  const extraEnv = {};
+  // A fake hc with no linked machine (linkMachines adds two): install.sh's `meter install --linked`
+  // never reaches the real hc, wherever node and hc are installed.
+  const hcState = join(root, "hc.json"), hcLog = join(root, "hc.log");
+  writeFileSync(hcState, JSON.stringify({ terminals: [], machines: [] }));
+  writeFileSync(hcLog, "");
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${join(ROOT, "test", "fake-hc.mjs")}" "$@"\n`);
+  const extraEnv = { HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog };
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
@@ -1121,13 +1127,10 @@ test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left w
 
 /** A fake hc (test/fake-hc.mjs) on install.sh's PATH: `lin` (Linux x86_64, connected), `off` (not). */
 const linkMachines = (s) => {
-  const lin = join(s.root, "m-lin"), log = join(s.root, "hc.log"), state = join(s.root, "hc.json");
+  const lin = join(s.root, "m-lin"), log = s.extraEnv.HC_FAKE_LOG;
   mkdirSync(lin);
-  writeFileSync(log, "");
-  writeFileSync(state, JSON.stringify({ terminals: [], machines: [
+  writeFileSync(s.extraEnv.HC_FAKE_STATE, JSON.stringify({ terminals: [], machines: [
     { name: "lin", state: "connected", uname: "Linux x86_64", home: lin }, { name: "off", state: "disconnected", uname: "Linux aarch64", home: lin }] }));
-  exe(join(s.bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${join(dirname(INSTALL), "test", "fake-hc.mjs")}" "$@"\n`);
-  Object.assign(s.extraEnv, { HC_FAKE_STATE: state, HC_FAKE_LOG: log });
   return {
     meter: join(lin, ".local", "bin", "usagemeter"),
     execs: () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a[0] === "exec"),

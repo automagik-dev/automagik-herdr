@@ -178,11 +178,20 @@ fi
     exe(join(meter, name), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${USAGEMETER.version}"\nexit 0\n`);
     return `${sha(readFileSync(join(meter, name)))}  ${name}\n`;
   }).join(""));
+  // The fakes are not the real builds: a file:// release's pin hook names theirs.
+  const meterPin = join(root, "meter-pin");
+  writeFileSync(meterPin, readFileSync(join(meter, "SHA256SUMS")));
+  // A fake hc with no linked machine: install.sh's `meter install --linked` never reaches a real one.
+  const hcState = join(root, "hc.json"), hcLog = join(root, "hc.log");
+  writeFileSync(hcState, JSON.stringify({ terminals: [], machines: [] }));
+  writeFileSync(hcLog, "");
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${join(ROOT, "test", "fake-hc.mjs")}" "$@"\n`);
 
   const appHome = join(home, ".config", "herdr-app");
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
+    AUTOMAGIK_HERDR_METER_PIN: meterPin, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog,
   };
   return {
     launcher, root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),

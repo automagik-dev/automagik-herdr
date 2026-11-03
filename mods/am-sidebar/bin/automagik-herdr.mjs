@@ -2111,7 +2111,8 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
     throw new CliError(results.map(resultLine).join("\n").replace(/^Warning: /, ""));
   }
   if (opts.json) return { results, notes };
-  return [...results.map(resultLine), ...notes].join("\n") || "usagemeter: no linked machine has the pack's usagemeter.";
+  return [...results.map(resultLine), ...notes].join("\n")
+    || (verb === "install" ? "usagemeter: no connected linked machine (hc machine ls)." : "usagemeter: no linked machine has the pack's usagemeter.");
 }
 
 /**

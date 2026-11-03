@@ -231,7 +231,24 @@ test("meter install --machine: a disconnected machine exits 1, an unknown one 2;
   assert.deepEqual(s.execs(), []);
 });
 
+test("meter install --local: this computer only (update's path), recorded, no machine asked", (t) => {
+  const s = fleet(t);
+  const r = s.cli("meter", "install", "--local");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, new RegExp(`usagemeter ${V.replace(/\./g, "\\.")} on this computer: installed \\(checksum ok\\)\\.`));
+  const here = join(s.home, ".local", "bin", "usagemeter");
+  assert.equal(spawnSync(here, ["--version"], { encoding: "utf8" }).stdout.trim(), `usagemeter ${V}`);
+  assert.equal(s.mark().usagemeter, V);
+  assert.deepEqual(s.execs(), []);
+  // The last pin's v0.2.0 here is upgraded the same way.
+  writeFileSync(here, "#!/bin/sh\necho 'usagemeter 0.2.0'\n");
+  assert.match(s.cli("meter", "install", "--local").out, /on this computer: installed/);
+  assert.equal(spawnSync(here, ["--version"], { encoding: "utf8" }).stdout.trim(), `usagemeter ${V}`);
+});
+
 test("meter install with no hc: this computer only, the machines a note", (t) => {
+  // The CLI also looks beside node for hc: a real one there would be found, so the case can't be made.
+  if (existsSync(join(dirname(process.execPath), "hc"))) { t.skip("an hc sits beside node"); return; }
   const s = fleet(t);
   rmSync(join(s.root, "bin", "hc"));
   const r = s.cli("meter", "install", "--linked");

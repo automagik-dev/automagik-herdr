@@ -448,6 +448,9 @@ mark_scope() {
 fleet() {
   cli=$PACK/bin/automagik-herdr.mjs
   [ -f "$cli" ] || { say "Warning: usagemeter on linked machines: $cli is missing; skipped."; return 0; }
+  # A release from before this command (--version <older>) has no meter: nothing to run.
+  HERDR_APP_HOME=$APP_HOME node "$cli" help </dev/null 2>/dev/null | grep -q '^  meter install' \
+    || { say "usagemeter on linked machines: skipped (this release's automagik-herdr has no meter install)."; return 0; }
   HERDR_APP_HOME=$APP_HOME node "$cli" meter "$@" </dev/null 2>&1 \
     || say "Warning: usagemeter on linked machines did not finish; 'automagik-herdr meter install' retries it."
 }
