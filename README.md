@@ -604,7 +604,7 @@ If you ran `herdr-bots` from a clone, use `automagik-herdr` in its place.
 No build step and no dependencies. The checks CI runs:
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
@@ -723,7 +723,7 @@ test/        the bot work's pure-module tests (node --test)
 ## Develop
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done
+node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do node --check "$f" || exit 1; done
 ```
 
 The pure rules (project key, schema, leads, ids, looks) live in `mods/am-sidebar/model.js`

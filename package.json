@@ -10,6 +10,6 @@
   },
   "scripts": {
     "test": "node --test 'test/*.test.mjs'",
-    "check": "for f in mods/am-sidebar/*.js mods/am-sidebar/*.mjs mods/am-sidebar/bin/*.mjs scripts/*.mjs; do node --check \"$f\" || exit 1; done && node scripts/version.mjs check"
+    "check": "for f in mods/am-sidebar/*.js mods/am-sidebar/*.mjs mods/am-sidebar/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do node --check \"$f\" || exit 1; done && node scripts/version.mjs check"
   }
 }
