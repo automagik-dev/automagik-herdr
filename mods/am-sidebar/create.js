@@ -337,19 +337,21 @@ export class BotForm {
   // Restart (the CLI's `restart`, run by herdr-core): the bot's agent again in its pane's
   // place, the old pane ended once the new one is up; `agent` swaps it (Restart on…). A
   // refusal --force overrides (a turn in progress) is offered once more as "Restart anyway".
-  restart(project, bot, cx, { agent = null, force = false } = {}) {
+  restart(project, bot, cx, { agent = null, force = false, fresh = false } = {}) {
     if (this.busy) return;
     this.busy = true;
     this.error = null;
     this.forceable = null;
+    this.freshable = null;
     cx.spawn(async (cx) => {
       let r;
-      try { r = restartAnswer(await hc(restartCall({ appHome: appHome(), botId: bot.id, projectKey: project.key, agent, force }))); }
+      try { r = restartAnswer(await hc(restartCall({ appHome: appHome(), botId: bot.id, projectKey: project.key, agent, force, fresh }))); }
       catch (e) { r = { refused: `Restart failed: ${e?.message ?? e}` }; }
       this.busy = false;
       if (r.refused) {
         this.error = r.refused;
         this.forceable = r.forceable ? { project, bot, agent } : null;
+        this.freshable = r.freshable ? { project, bot } : null;
       } else {
         if (r.warnings.length) notify({ title: "Bots", level: "warning", timeout: 15000, body: r.warnings.join("\n") });
         run("am-sidebar.refresh");
@@ -415,6 +417,8 @@ export class BotForm {
       .when(!this.p.planned, (el) => el.child(item("menu-restart", this.busy ? "Restarting…" : "Restart", (cx) => this.restart(project, bot, cx))))
       .when(Boolean(this.forceable), (el) => el.child(item("menu-restart-force", "Restart anyway (ends what it is doing)",
         (cx) => this.restart(this.forceable.project, this.forceable.bot, cx, { agent: this.forceable.agent, force: true }))))
+      .when(Boolean(this.freshable), (el) => el.child(item("menu-restart-fresh", "Restart with a new conversation",
+        (cx) => this.restart(this.freshable.project, this.freshable.bot, cx, { fresh: true }))))
       .when(!this.p.planned, (el) => el.child(item("menu-restart-on", `Restart on… ${this.swapOpen ? "▾" : "▸"}`, (cx) => this.toggleSwap(cx))))
       .when(!this.p.planned && this.swapOpen, (el) => el.children(!this.swapAgents ? [div().px(22).h(26).text_size(12).text_color(t.muted).child("Finding agents…")]
         : this.swapAgents.map((a) => item(`menu-restart-on-${a.key}`, `    ${a.name ?? a.key}`, (cx) => this.restart(project, bot, cx, { agent: a.key })))))

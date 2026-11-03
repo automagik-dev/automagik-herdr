@@ -320,6 +320,7 @@ export const canResume = (agentKey) => Boolean(RESUME[agentKey]);
  * Null when the agent has no resume (Restart then starts it fresh, and says so).
  */
 export function resumeArgs(agentKey, session = null) {
-  const s = typeof session === "string" && session.trim() ? session.trim() : null;
+  // Never a value that reads as a flag (the CLI passes only UUIDs; restart.js sessionId).
+  const s = typeof session === "string" && session.trim() && !session.trim().startsWith("-") ? session.trim() : null;
   return RESUME[agentKey] ? RESUME[agentKey](s) : null;
 }

@@ -5,7 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { canResume, resumeArgs } from "../mods/am-sidebar/models.js";
-import { carriedLabels, planText, restartAnswer, restartCall, restartPlan, restartRefusal, sessionOf } from "../mods/am-sidebar/restart.js";
+import { carriedLabels, continueRefusal, ledgerSession, planText, restartAnswer, restartCall, restartPlan, restartRefusal, sessionId, sessionOf } from "../mods/am-sidebar/restart.js";
+
+const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 
 const claude = { agent: "claude", model: "claude-opus-5-5" };
 
@@ -22,10 +24,10 @@ test("resumeArgs: claude by session id, else --continue; codex resume --last; --
 });
 
 test("restartPlan resume: claude with the pane's session and the bot's pin; --continue without one; codex resume before its model flag", () => {
-  const withId = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: "s-9" });
+  const withId = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID });
   assert.equal(withId.mode, "resume");
-  assert.deepEqual(withId.argv, ["claude", "--resume", "s-9", "--model", "claude-opus-5-5"]);
-  assert.equal(planText(withId, "s-9"), "resuming session s-9");
+  assert.deepEqual(withId.argv, ["claude", "--resume", SID, "--model", "claude-opus-5-5"]);
+  assert.equal(planText(withId, SID), `resuming session ${SID}`);
   const latest = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude" });
   assert.deepEqual(latest.argv, ["claude", "--continue", "--model", "claude-opus-5-5"]);
   assert.match(planText(latest, null), /--continue/);
@@ -37,25 +39,25 @@ test("restartPlan resume: claude with the pane's session and the bot's pin; --co
 });
 
 test("restartPlan fresh: --fresh, an agent with no resume, a pane running another agent (each says why)", () => {
-  const fresh = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: "s-9", fresh: true });
+  const fresh = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID, fresh: true });
   assert.deepEqual([fresh.mode, fresh.argv, fresh.note], ["fresh", ["claude", "--model", "claude-opus-5-5"], null]);
   const amp = restartPlan({ bot: { agent: "amp" }, run: ["amp"], runningAgent: "amp" });
   assert.equal(amp.mode, "fresh");
   assert.deepEqual(amp.argv, ["amp"]);
   assert.match(amp.note, /amp has no resume this pack knows/);
   assert.match(planText(amp), /a new conversation \(amp has no resume/);
-  const crossed = restartPlan({ bot: claude, run: ["claude"], runningAgent: "codex", session: "s-9" });
+  const crossed = restartPlan({ bot: claude, run: ["claude"], runningAgent: "codex", session: SID });
   assert.equal(crossed.mode, "fresh");
   assert.match(crossed.note, /runs codex, not claude/);
 });
 
 test("restartPlan swap: --agent starts fresh on the agent's default (the old pin left behind); --model alone keeps the agent; always new", () => {
-  const toCodex = restartPlan({ bot: claude, run: ["codex"], runningAgent: "claude", session: "s-9", agent: "codex" });
+  const toCodex = restartPlan({ bot: claude, run: ["codex"], runningAgent: "claude", session: SID, agent: "codex" });
   assert.deepEqual([toCodex.mode, toCodex.agent, toCodex.model, toCodex.argv], ["swap", "codex", null, ["codex"]]);
   const pinned = restartPlan({ bot: claude, run: ["codex"], agent: "codex", model: "gpt-5.5" });
   assert.deepEqual(pinned.argv, ["codex", "--model", "gpt-5.5"]);
   assert.equal(planText(pinned), "on codex (gpt-5.5), a new conversation");
-  const sonnet = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: "s-9", model: "claude-sonnet-5-5" });
+  const sonnet = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID, model: "claude-sonnet-5-5" });
   assert.deepEqual([sonnet.mode, sonnet.argv], ["swap", ["claude", "--model", "claude-sonnet-5-5"]]);
   // An empty model (the CLI's "no pin") starts on the default.
   assert.deepEqual(restartPlan({ bot: claude, run: ["claude"], agent: "claude", model: "" }).argv, ["claude"]);
@@ -82,7 +84,8 @@ test("carriedLabels keeps the old pane's squad and its mark; sessionOf reads age
     { squad: "s1", "automagik-herdr.squad": "s1" });
   assert.deepEqual(carriedLabels({ labels: { squad: "theirs" } }), { squad: "theirs" });
   assert.deepEqual(carriedLabels(null), {});
-  assert.equal(sessionOf({ labels: { "agent.session": "s-1" } }), "s-1");
+  assert.equal(sessionOf({ labels: { "agent.session": SID } }), SID);
+  assert.equal(sessionOf({ labels: { "agent.session": "s-1" } }), null, "not UUID-shaped");
   assert.equal(sessionOf({ labels: {} }), null);
   assert.equal(sessionOf(null), null);
 });
@@ -91,11 +94,32 @@ test("the sidebar's Restart: hc exec of the pack's CLI in herdr-core's environme
   assert.deepEqual(restartCall({ appHome: "/a", botId: "b-1", projectKey: "/p" }), ["exec", "--env", "HERDR_APP_HOME=/a", "--cwd", "/p", "--timeout", "120", "--",
     "sh", "/a/mods/am-sidebar/bin/run.sh", "/a/mods/am-sidebar/bin/automagik-herdr.mjs", "restart", "b-1", "--project", "/p", "--json"]);
   assert.deepEqual(restartCall({ appHome: "/a", botId: "b-1", projectKey: "/p", agent: "codex", force: true }).slice(-3), ["--agent", "codex", "--force"]);
+  assert.equal(restartCall({ appHome: "/a", botId: "b-1", projectKey: "/p", fresh: true }).at(-1), "--fresh");
   assert.deepEqual(restartAnswer({ code: 0, stdout: JSON.stringify({ terminal: "t100", replaced: "t5", warnings: ["w"] }), stderr: "" }),
     { terminal: "t100", replaced: "t5", warnings: ["w"] });
   const working = restartAnswer({ code: 1, stdout: "", stderr: "automagik-herdr: a warning\nautomagik-herdr: Genie is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.\n" });
   assert.match(working.refused, /^Genie is working in t5/);
   assert.equal(working.forceable, true);
-  assert.deepEqual(restartAnswer({ code: 1, stdout: "", stderr: "automagik-herdr: No bot x in this project.\n" }), { refused: "No bot x in this project.", forceable: false });
-  assert.deepEqual(restartAnswer({ code: 127, stdout: "", stderr: "" }), { refused: "Restart failed (exit 127).", forceable: false });
+  assert.equal(restartAnswer({ code: 1, stderr: "automagik-herdr: Genie has no recorded Claude session ... restart with --fresh for a new conversation.\n" }).freshable, true);
+  assert.deepEqual(restartAnswer({ code: 1, stdout: "", stderr: "automagik-herdr: No bot x in this project.\n" }), { refused: "No bot x in this project.", forceable: false, freshable: false });
+  assert.deepEqual(restartAnswer({ code: 127, stdout: "", stderr: "" }), { refused: "Restart failed (exit 127).", forceable: false, freshable: false });
+});
+
+test("session ids: only UUID-shaped ones resume; a flag-like value never reaches --resume; the ledger's last row for the terminal stands in", () => {
+  assert.equal(sessionId(` ${SID} `), SID);
+  for (const bad of ["-rf", "--dangerously-skip-permissions", "s-1", "", null, 7]) assert.equal(sessionId(bad), null, String(bad));
+  assert.deepEqual(restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: "--print" }).argv, ["claude", "--continue", "--model", "claude-opus-5-5"]);
+  assert.deepEqual(resumeArgs("claude", "-x"), ["--continue"]);
+  const other = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+  const rows = [{ event: "session", terminal: "t5", session: other, transcript: "/a.jsonl" }, { event: "start", terminal: "t5" },
+    { event: "session", terminal: "t5", session: SID }, { event: "session", terminal: "t6", session: other }, { event: "session", terminal: "t5", session: "junk" }];
+  assert.deepEqual(ledgerSession(rows, "t5"), { session: SID, transcript: null });
+  assert.equal(ledgerSession(rows, "t7"), null);
+  assert.equal(ledgerSession(null, "t5"), null);
+});
+
+test("continueRefusal: refused only when another bot's Claude shares the folder", () => {
+  assert.equal(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p" }), null);
+  assert.match(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "Captain" }, { address: "t8", name: "Dev" }] }),
+    /Genie has no recorded Claude session \(t5 has no agent.session label .*\), and Captain \(t9\), Dev \(t8\) also run Claude in \/p, so --continue could resume theirs\. Nothing was started; restart with --fresh/);
 });

@@ -9,6 +9,13 @@ import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
 const SESSION = "agent.session";
 
+// A Claude session id is a UUID; anything else (a value starting with "-" would read as a
+// flag) is not passed to --resume.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `s` trimmed when it is a session id Restart may resume (UUID-shaped), else null. */
+export const sessionId = (s) => (typeof s === "string" && UUID.test(s.trim()) ? s.trim() : null);
+
 /**
  * What the replacement runs. `bot`: { agent, model } as stored; `run`: the target agent's
  * `run` (Herdr's table, programs.json applied); `runningAgent`: the agent key the old pane's
@@ -28,15 +35,39 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   if (fresh) return plan("fresh");
   if (runningAgent && runningAgent !== key) return plan("fresh", [], `its pane runs ${runningAgent}, not ${key}, and a conversation doesn't cross agents`);
   if (!canResume(key)) return plan("fresh", [], `${key} has no resume this pack knows`);
-  const id = key === "claude" && typeof session === "string" && session.trim() ? session.trim() : null;
+  const id = key === "claude" ? sessionId(session) : null;
   return plan("resume", resumeArgs(key, id));
 }
 
-/** The old pane's Claude session id (its agent.session label), or null. */
-export const sessionOf = (get) => {
-  const s = get?.labels?.[SESSION];
-  return typeof s === "string" && s.trim() ? s.trim() : null;
-};
+/** The old pane's Claude session id (its agent.session label, UUID-shaped), or null. */
+export const sessionOf = (get) => sessionId(get?.labels?.[SESSION]);
+
+/**
+ * The last Claude session the workers ledger ties to `terminal` (its session rows, workers.js
+ * readLedger): { session, transcript }, or null. For a pane whose label is missing.
+ */
+export function ledgerSession(rows, terminal) {
+  for (let i = (rows?.length ?? 0) - 1; i >= 0; i -= 1) {
+    const r = rows[i];
+    if (r?.event !== "session" || r.terminal !== terminal) continue;
+    const session = sessionId(r.session);
+    if (session) return { session, transcript: typeof r.transcript === "string" ? r.transcript : null };
+  }
+  return null;
+}
+
+/**
+ * Why Restart won't resume with claude --continue, or null: it takes the folder's latest
+ * conversation, which may be a teammate's when another bot's Claude pane runs in that folder.
+ * `sharers`: those panes as { address, name }.
+ */
+export function continueRefusal({ name, old, cwd, sharers = [] }) {
+  if (!sharers.length) return null;
+  const who = sharers.map((x) => `${x.name} (${x.address})`).join(", ");
+  return `${name} has no recorded Claude session (${old.address} has no agent.session label and the ledger has no session row for it), `
+    + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} Claude in ${cwd}, so --continue could resume theirs. Nothing was started; `
+    + `restart with --fresh for a new conversation.`;
+}
 
 /**
  * Why a restart of `old` (hc get of the bot's live pane) is refused, or null. `name`: the
@@ -84,18 +115,19 @@ export function planText(plan, session) {
  * The `hc` arguments the sidebar's Restart runs: `hc exec` of this pack's CLI (bin/run.sh
  * finds node) in herdr-core's environment, whose PATH is the one `hc run` starts agents with,
  * so the CLI finds hc and the agent as Start does. `agent`: Restart on… (a swap); `force`:
- * past a working pane or its helpers.
+ * past a working pane or its helpers; `fresh`: a new conversation.
  */
-export function restartCall({ appHome, botId, projectKey, agent = null, force = false }) {
+export function restartCall({ appHome, botId, projectKey, agent = null, force = false, fresh = false }) {
   const bin = `${appHome}/mods/am-sidebar/bin`;
   return ["exec", "--env", `HERDR_APP_HOME=${appHome}`, "--cwd", projectKey, "--timeout", "120", "--",
     "sh", `${bin}/run.sh`, `${bin}/automagik-herdr.mjs`, "restart", botId, "--project", projectKey, "--json",
-    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : [])];
+    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
 }
 
 /**
  * What the CLI's answer to restartCall means: { terminal, replaced, warnings } on success,
- * else { refused, forceable } (`forceable`: the refusal is one --force overrides).
+ * else { refused, forceable, freshable } (the refusal is one --force overrides, or one a new
+ * conversation, --fresh, avoids).
  */
 export function restartAnswer(r) {
   if (r?.code === 0) {
@@ -107,5 +139,5 @@ export function restartAnswer(r) {
   const lines = String(r?.stderr || r?.stdout || "").split("\n").map((l) => l.replace(/^automagik-herdr: /, "").trim()).filter(Boolean);
   // The CLI's refusal is its last stderr line (warnings come before it).
   const refused = lines.pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
-  return { refused, forceable: /pass --force/.test(refused) };
+  return { refused, forceable: /pass --force/.test(refused), freshable: /--fresh\b/.test(refused) };
 }
