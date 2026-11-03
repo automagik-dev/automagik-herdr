@@ -22,12 +22,13 @@ you already use stays yours), points the mod manager at this repository's catalo
 `herdr-app check` on each mod.
 
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
-holds eight mod folders and one layout, and nothing else:
+holds nine mod folders and one layout, and nothing else:
 
 | Folder | What you get |
 |---|---|
 | `am-sidebar` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
 | `am-footer` | the footer rail (Bots, Mods, Automations, Quota, Settings, Add machine) |
+| `am-status` | the bottom status bar, with the pack's version and its update check |
 | `am-tabs` | the tab bar |
 | `am-new-menu` | the `+` menu (a space row's `+` and the tab bar's `+`) |
 | `am-markdown` | the terminal's right-click menu with its Markdown files |
@@ -40,11 +41,11 @@ Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar alo
 old folder name, see [From v0.2 to v0.4.x](#from-v02-to-v04x)), with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
 checksum and a version number don't tell the two apart; the folder list does. After installing,
 the installer prints `Installed the pack <v> in <mods>: <folders>`; that list must name all
-eight. To check an install later:
+nine. To check an install later:
 
 ```bash
 sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh
-# am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs
+# am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-status,am-tabs
 ```
 
 It never touches anything it did not install:
@@ -130,8 +131,8 @@ Install Automagik Herdr on this Mac and set up my first bot.
 2. Verify, don't assume: a version and a checksum don't say what was installed. All must hold:
    automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
    sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
-   am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs;
-   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those eight mods.
+   am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-status,am-tabs;
+   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those nine mods.
    If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
    found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
@@ -618,6 +619,7 @@ with its own `RECIPE.md`:
 | Mod | Derived from | What it does |
 |---|---|---|
 | `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Quota, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
+| `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `automagik-herdr update` does. |
 | `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
 | `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
@@ -669,7 +671,9 @@ copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's
 5. a block `{ "id": "automations-panel", "content": { "mod": "am-automations" }, "size":
    { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
    it;
-6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles.
+6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles;
+7. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
+   `workspace-status`.
 
 `am-new-menu` (opened by the sidebar's and the tab bar's `+`) and `am-mods` (`⌘⇧M`, the rail's
 Mods tab) need no block.

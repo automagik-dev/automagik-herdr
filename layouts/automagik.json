@@ -182,7 +182,7 @@
           "id": "status",
           "type": "block",
           "content": {
-            "mod": "workspace-status"
+            "mod": "am-status"
           },
           "size": {
             "px": 28

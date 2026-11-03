@@ -10,7 +10,8 @@ Nothing of its own: the pack is what it installs. The main mod is **`am-sidebar`
 sidebar and the Bots in it (a project's main bot and its team, Automagik's characters, the
 Create/Edit form, Start/Attach, the per-turn briefing, and `bin/automagik-herdr.mjs`); its own
 `RECIPE.md` describes it. Beside it are the pieces that make the sidebar usable — `am-footer`
-(the footer rail), `am-tabs` (the tab bar), `am-new-menu` (the `+` menu), `am-markdown`
+(the footer rail), `am-status` (the bottom status bar, with the pack's version and update
+check), `am-tabs` (the tab bar), `am-new-menu` (the `+` menu), `am-markdown`
 (Markdown straight from a terminal — the menu and the preview in one mod), `am-automations`
 (scheduled agent prompts), `am-quota` (the quota panel) — and **`am-mods`**, the table at
 `⌘⇧M` that lists every installed mod with on/off switches, `herdr-app check` results, versions,

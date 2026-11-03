@@ -23,7 +23,7 @@ export const OLD_PACK_NAME = "spaces-agents";
  * never one of them: automagik-pocket owns it.
  */
 export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markdown", "am-mods", "am-new-menu", "am-quota",
-  "am-sidebar", "am-tabs"]);
+  "am-sidebar", "am-status", "am-tabs"]);
 export const POCKET_LINK = "pocket-link";
 /**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for

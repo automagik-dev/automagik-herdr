@@ -224,6 +224,7 @@ layout_notes() {
     grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$f" || continue
     lacks=
     for s in 'am-footer:the footer rail (am-footer)' 'am-tabs:the tab bar (am-tabs)' \
+      'am-status:the status bar with the pack version (am-status)' \
       'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the quota panel (am-quota)'; do
       # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
       # "am-quota-panel" or a mention elsewhere doesn't count.

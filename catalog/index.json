@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-03T04:51:40.258Z",
-  "modCount": 9,
+  "generatedAt": "2026-11-03T05:04:46.739Z",
+  "modCount": 10,
   "repositoryCount": 3,
   "source": "automagik-herdr",
   "mods": [
@@ -25,11 +25,12 @@
         "am-new-menu",
         "am-quota",
         "am-sidebar",
+        "am-status",
         "am-tabs"
       ],
       "hasKeys": true,
       "hasPreview": false,
-      "recipeBytes": 5208,
+      "recipeBytes": 5287,
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
@@ -67,6 +68,11 @@
           "name": "am-sidebar",
           "title": "Automagik Sidebar",
           "blurb": "The sidebar of Automagik Herdr, and the bots in it: each project's main bot and its team, drawn with Automagik's characters, created and edited in one form, started on or attached to any coding agent, labelled for the agent event envelope, and briefed before every Claude turn. De"
+        },
+        {
+          "name": "am-status",
+          "title": "Automagik Status",
+          "blurb": "The window's bottom status bar, with the installed Automagik Herdr version and its update check beside \"commands\". Derived from Herdr's shipped `workspace-status`."
         },
         {
           "name": "am-tabs",

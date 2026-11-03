@@ -19,7 +19,8 @@ import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
-import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
+import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, busyOf, checkPatch, claim, finish,
+  nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
 import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
@@ -168,10 +169,12 @@ export default class Spaces extends View {
     });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); });
+    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); this.updateRequest(cx); });
     // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
-    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js).
-    this.updates = { node: null };
+    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js). The
+    // status bar (am-status) shows the answer and asks for a look or an install (REQUEST_KEY);
+    // a request saved before this load was someone else's to answer.
+    this.updates = { node: null, seen: stateFrom(shared(REQUEST_KEY)).id ?? null };
     // The Automagik theme, selected once (theme.js): now, then on the 15-second timer until done.
     this.applyTheme(cx);
     cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
@@ -436,22 +439,65 @@ export default class Spaces extends View {
   }
 
   // One update look through `node <pack>/update.mjs check` (Herdr's runtime has no fetch),
-  // one notice per new version, then the next look scheduled by what it found.
-  checkUpdates(cx) {
+  // one notice per new version, then the next look scheduled by what it found (`scheduled`;
+  // a look the status bar asked for schedules nothing). One look or install at a time across
+  // sidebar copies (claim): a timer that finds one running looks again after RETRY_MS.
+  checkUpdates(cx, scheduled = true, request = null) {
+    const id = claim(shared, setShared, "check", Date.now(), request ? { request } : {});
+    if (id === null) {
+      if (scheduled) cx.timer.after(RETRY_MS, (cx) => this.checkUpdates(cx));
+      return;
+    }
     cx.spawn(async (cx) => {
-      let check = { kind: "retry" };
+      let patch = { kind: "retry", why: "the check did not run", at: Date.now() };
       try {
         const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
         const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
           { mods: `${appHome()}/mods`, sleep });
         if (node) this.updates.node = node;
-        check = readCheck(result);
+        patch = checkPatch(result, Date.now());
       } catch {}
+      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
       // The version already announced is shared, so a reload or a second view stays quiet.
-      try { announce(check, shared, setShared, notify); } catch {}
-      const wait = nextCheckIn(check.kind);
-      if (wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
+      try { announce(patch, shared, setShared, notify); } catch {}
+      const wait = nextCheckIn(patch.kind);
+      if (scheduled && wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
     });
+  }
+
+  // The status bar's install: `node <pack>/update.mjs apply`, the path `automagik-herdr update`
+  // takes (checksum checked, the replaced pack kept for --rollback), then a notice to reload.
+  applyUpdates(cx, request) {
+    const before = stateFrom(shared(STATE_KEY));
+    const id = claim(shared, setShared, "apply", Date.now(), { request, to: before.update?.version ?? before.latest ?? null });
+    if (id === null) return false;
+    cx.spawn(async (cx) => {
+      let patch = { applyError: "the install did not run", at: Date.now() };
+      try {
+        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
+          { mods: `${appHome()}/mods`, command: "apply" });
+        if (node) this.updates.node = node;
+        patch = applyPatch(result, before, Date.now());
+      } catch (e) { patch = { applyError: String(e?.message ?? e), at: Date.now() }; }
+      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
+      const note = applyNotice(patch);
+      if (note) try { notify(note); } catch {}
+    });
+    return true;
+  }
+
+  // On the 250 ms timer: a new request from the status bar. A look asked for while one runs is
+  // answered by it, an install asked for while one runs is that one; an install waits for a
+  // running look (the request stays fresh for REQUEST_FRESH_MS).
+  updateRequest(cx) {
+    const value = shared(REQUEST_KEY);
+    const what = requestDue(value, this.updates.seen, Date.now());
+    if (!what) return;
+    const { id } = value;
+    if (what === "check") {
+      this.updates.seen = id;
+      if (!busyOf(stateFrom(shared(STATE_KEY)), Date.now())) this.checkUpdates(cx, false, id);
+    } else if (busyOf(stateFrom(shared(STATE_KEY)), Date.now())?.what === "apply" || this.applyUpdates(cx, id)) this.updates.seen = id;
   }
 
   // One due `usagemeter sync` through Herdr's exec, then the next look when meter.js says.
