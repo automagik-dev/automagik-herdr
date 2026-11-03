@@ -6,13 +6,22 @@
 //   node scripts/privacy-check.mjs              scan every tracked and untracked, not-ignored file
 //   node scripts/privacy-check.mjs --hash TERM  print a deny entry for TERM (add it to the list)
 //
-// Prints `file:line: rule: match` per hit and exits 1 when there is any. The private names are
-// never written in the tree: scripts/privacy-list.json keeps them as sha256 hashes of the
-// lowercased term, and a line matches when one of its words, or a run of up to four words
-// joined by `.`, `-` or `_` (`a-b`, `a.b.c`), hashes to one of them. The same file lists what is
-// not personal data: placeholder user names (`users`), placeholder emails (`emails`), and exact
-// text allowed in one named file (`lines`); only that text is cut out of the line, the rest of
-// the line is still scanned. No file is exempt.
+// Prints `file:line: rule: match` per hit and exits 1 when there is any.
+//
+// The private names are never written in the tree: scripts/privacy-list.json keeps each one as
+// the sha256 of its normal form (lowercased, separators — space, tab, `.`, `-`, `_`, `=` —
+// removed). Each word of a line, and each run of up to four words joined by separators, is
+// normalised the same way and hashed, so `a-b`, `a_b`, `a b`, `a.b`, `AB` and `A - B` all match
+// an entry made from any of them. An entry may be `exact` (one word as written, never one
+// joined from several: `a b` does not match it) and `lowercaseOnly` (`A` does not match it),
+// for short names that are also ordinary words or labels. Where hits overlap, the longest wins.
+//
+// The hashes keep the names out of grep and out of this file; they do not keep them secret.
+// The list is short and the names are short, so anyone can recover them by hashing guesses.
+//
+// The same file lists what is not personal data: placeholder user names (`users`), placeholder
+// emails (`emails`), and exact text allowed in one named file (`lines`); only that text is cut
+// out of the line, the rest of the line is still scanned. No file is exempt.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -34,38 +43,58 @@ const SECRETS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
 ];
 const DB_FILE = /(?:^|\/)(?:genie\.db|[^/]+\.(?:db|sqlite|sqlite3|db-wal|db-shm))$/i;
-const WORDS = /[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*/g;
+const SEPARATORS = /[ \t._=-]+/g;
+const RUNS = /[A-Za-z0-9]+(?:[ \t._=-]+[A-Za-z0-9]+)*/g;
 const MAX_PARTS = 4;
 
-/** The deny-list hash of a term: sha256 of the lowercased term, hex. */
-export const hashTerm = (term) => createHash("sha256").update(term.toLowerCase()).digest("hex");
+/** A term's normal form: lowercased, separators removed. */
+export const normalise = (term) => term.toLowerCase().replace(SEPARATORS, "");
 
-/** Every word and joined run of up to MAX_PARTS words in a line, with its offset. */
+/** The deny-list hash of a term: sha256 of its normal form, hex. */
+export const hashTerm = (term) => createHash("sha256").update(normalise(term)).digest("hex");
+
+/** Every word and joined run of up to MAX_PARTS words in a line: `{ text, index, single }`. */
 function candidates(line) {
   const out = [];
-  for (const m of line.matchAll(WORDS)) {
-    const parts = [...m[0].matchAll(/[A-Za-z0-9]+/g)];
-    for (let i = 0; i < parts.length; i++) {
-      for (let j = i; j < Math.min(parts.length, i + MAX_PARTS); j++) {
-        const start = parts[i].index, end = parts[j].index + parts[j][0].length;
-        out.push({ text: m[0].slice(start, end), index: m.index + start });
+  for (const m of line.matchAll(RUNS)) {
+    const words = [...m[0].matchAll(/[A-Za-z0-9]+/g)];
+    for (let i = 0; i < words.length; i++) {
+      for (let j = i; j < Math.min(words.length, i + MAX_PARTS); j++) {
+        const start = words[i].index, end = words[j].index + words[j][0].length;
+        out.push({ text: m[0].slice(start, end), index: m.index + start, single: i === j });
       }
     }
   }
   return out;
 }
 
-/** A matcher over deny entries `{ sha256, lowercaseOnly? }`; hashes are memoized per word. */
+/**
+ * A matcher over deny entries `{ sha256, exact?, lowercaseOnly? }` for one candidate:
+ * true when its normal form hashes to an entry whose flags it meets. Hashes are memoized.
+ */
 export function denyMatcher(deny = []) {
   const entries = new Map(deny.map((d) => [d.sha256, d]));
   const memo = new Map();
-  return (word) => {
-    const key = word.toLowerCase();
+  return ({ text, single = true }) => {
+    const key = normalise(text);
     let sha = memo.get(key);
     if (sha === undefined) memo.set(key, (sha = hashTerm(key)));
     const entry = entries.get(sha);
-    return Boolean(entry) && (!entry.lowercaseOnly || word === key);
+    if (!entry) return false;
+    if (entry.exact && !single) return false;
+    return !entry.lowercaseOnly || text === text.toLowerCase();
   };
+}
+
+/** The denied candidates of a line, longest first where they overlap, in line order. */
+function deniedNames(line, denied) {
+  const kept = [];
+  const found = candidates(line).filter(denied).sort((a, b) => b.text.length - a.text.length);
+  for (const c of found) {
+    const end = c.index + c.text.length;
+    if (!kept.some((k) => c.index < k.index + k.text.length && k.index < end)) kept.push(c);
+  }
+  return kept.sort((a, b) => a.index - b.index);
 }
 
 /** `text` with every allowed span cut out (replaced by a space, so words do not join). */
@@ -86,7 +115,7 @@ export function scan(file, text, list = {}, denied = denyMatcher(list.deny)) {
     const line = cutAllowed(raw, spans);
     const hit = (rule, match) => hits.push({ file, line: i + 1, rule, match });
     for (const m of line.matchAll(HOME)) if (!users.has(m[1])) hit("home-path", m[0]);
-    for (const c of candidates(line)) if (denied(c.text)) hit("private-name", c.text);
+    for (const c of deniedNames(line, denied)) hit("private-name", c.text);
     for (const m of line.matchAll(EMAIL)) if (!EMAIL_OK.test(m[1]) && !emails.has(m[0])) hit("email", m[0]);
     for (const re of SECRETS) for (const m of line.matchAll(re)) hit("secret", `${m[0].slice(0, 8)}…`);
   });
@@ -154,6 +183,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [flag, term] = process.argv.slice(2);
   if (flag === "--hash") {
     if (!term) { console.error("usage: privacy-check.mjs --hash TERM"); process.exit(2); }
+    // Add `"exact": true` and/or `"lowercaseOnly": true` by hand for a short or common word.
     console.log(JSON.stringify({ sha256: hashTerm(term), kind: "machine" }));
     process.exit(0);
   }

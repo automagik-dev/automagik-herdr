@@ -14,9 +14,11 @@ const mail = (user, domain) => user + "@" + domain;
 const DENY = [
   { sha256: hashTerm("quokkanet"), kind: "machine" },
   { sha256: hashTerm("tapir-lab"), kind: "machine" },
-  { sha256: hashTerm("mango"), kind: "host" },
-  { sha256: hashTerm("wombat.io"), kind: "host" },
-  { sha256: hashTerm("q7"), kind: "machine", lowercaseOnly: true },
+  { sha256: hashTerm("zq470"), kind: "machine" },
+  { sha256: hashTerm("mango.wombat.io"), kind: "host" },          // joined forms only:
+  { sha256: hashTerm("model_provider=mango"), kind: "host" },     // "mango" alone is a word
+  { sha256: hashTerm("kestrel"), kind: "machine", exact: true, lowercaseOnly: true },
+  { sha256: hashTerm("q7"), kind: "machine", exact: true, lowercaseOnly: true },
 ];
 const rules = (file, text, list = {}) => scan(file, text, { deny: DENY, ...list }).map((h) => `${h.rule}:${h.match}`);
 
@@ -28,12 +30,25 @@ test("absolute home paths are hits unless the user is a placeholder", () => {
   assert.deepEqual(rules("a.md", "~/workspace and $HOME/.config and /home is a word"), []);
 });
 
-test("deny-listed names match by hash, as a word or a joined run, in any case", () => {
-  assert.deepEqual(rules("a.md", "terminals on tapir-lab/t2, QuokkaNet and q7/t8"),
-    ["private-name:tapir-lab", "private-name:QuokkaNet", "private-name:q7"]);
-  assert.deepEqual(rules("a.md", "url: https://mango.wombat.io and model_provider=mango"),
-    ["private-name:mango", "private-name:wombat.io", "private-name:mango"]);
-  assert.deepEqual(rules("a.md", "tapir and lab apart, wombat.iox, Q7, mangoes, xq7"), []);
+test("deny-listed names match by hash in every joined form and in any case", () => {
+  const forms = (text) => rules("a.md", text).map((r) => r.replace("private-name:", ""));
+  for (const form of ["tapir-lab", "tapir_lab", "tapir lab", "tapir.lab", "TapirLab", "Tapir - Lab", "TAPIR\tLAB"])
+    assert.deepEqual(forms(`on ${form}/t2`), [form], form);
+  for (const form of ["zq470", "zq-470", "zq 470", "ZQ_470", "zq.470", "Zq470"]) assert.deepEqual(forms(`${form}/t18`), [form], form);
+  for (const form of ["quokkanet", "QuokkaNet", "quokka net", "quokka-net"]) assert.deepEqual(forms(form), [form], form);
+  assert.deepEqual(forms("a run of five: x tapir y lab z, and tapir/lab"), [], "not adjacent, or joined by a non-separator");
+});
+
+test("a name listed only in joined form leaves the plain word alone; the longest hit wins", () => {
+  assert.deepEqual(rules("a.md", "url: https://mango.wombat.io/v1"), ["private-name:mango.wombat.io"]);
+  assert.deepEqual(rules("a.md", "-c model_provider=mango, or model-provider = Mango"),
+    ["private-name:model_provider=mango", "private-name:model-provider = Mango"]);
+  assert.deepEqual(rules("a.md", "orange mango, a mango box, wombat.io"), []);
+});
+
+test("an exact, lowercase-only name matches only that word as written", () => {
+  assert.deepEqual(rules("a.md", "kestrel/t3 and q7/t8 and hx_q7"), ["private-name:kestrel", "private-name:q7", "private-name:q7"]);
+  assert.deepEqual(rules("a.md", "a Kestrel 9 CPU, KESTREL, kes trel, kes-trel, Q7, q 7, q-7, e.g. 7, xq7"), []);
 });
 
 test("the deny list in the tree holds hashes only", () => {
@@ -41,7 +56,7 @@ test("the deny list in the tree holds hashes only", () => {
   assert.ok(list.deny.length > 0);
   for (const d of list.deny) {
     assert.match(d.sha256, /^[0-9a-f]{64}$/);
-    assert.deepEqual(Object.keys(d).filter((k) => !["sha256", "kind", "lowercaseOnly"].includes(k)), []);
+    assert.deepEqual(Object.keys(d).filter((k) => !["sha256", "kind", "exact", "lowercaseOnly"].includes(k)), []);
   }
 });
 

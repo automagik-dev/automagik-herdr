@@ -13,34 +13,38 @@
       "kind": "machine"
     },
     {
-      "sha256": "7f93529cc8438b0c7fa8f5a6bfd0c1f72bfc2019fac445b8d76f94168059817d",
+      "sha256": "ceb224ebb1b9458f62192b12b157e38901595511d4f906c191d8520bc9c197ad",
       "kind": "machine"
     },
     {
-      "sha256": "d20f33bfd12744af7d78830648f2244e9b5520632085ece272bd098bd5280f64",
-      "kind": "machine"
+      "sha256": "7f93529cc8438b0c7fa8f5a6bfd0c1f72bfc2019fac445b8d76f94168059817d",
+      "kind": "machine",
+      "lowercaseOnly": true,
+      "exact": true
+    },
+    {
+      "sha256": "00d060262511fc0834412cf60b2b362861c7255f2d18937c477a2554454a1203",
+      "kind": "machine",
+      "lowercaseOnly": true,
+      "exact": true
+    },
+    {
+      "sha256": "d8ac81dbad9116c9bfb8c1bbe9e0998522beb422830ccce5dfcedd3b3b7a41c3",
+      "kind": "machine",
+      "lowercaseOnly": true,
+      "exact": true
     },
     {
       "sha256": "36b2b94220c8859f95396ddb9469eede2663c25ac0df427ca1e568e579b3250e",
       "kind": "host"
     },
     {
-      "sha256": "31fd85ff1c546903140297865e17563c6e226a8f95b8e2bc0956968fca144982",
+      "sha256": "134d7814934132cd6772668c00e452ce98b87c3ff9ba6d3bad9a8bf200dfb7ef",
       "kind": "host"
     },
     {
-      "sha256": "a5ad895656074bb12930374348bf903460016bcf430bf7039d7e34f0c505a7b1",
+      "sha256": "eb6fca7947324fe3e04526d7e0f80092a1ae60fabe89473021ec0e04f36f43a5",
       "kind": "host"
-    },
-    {
-      "sha256": "00d060262511fc0834412cf60b2b362861c7255f2d18937c477a2554454a1203",
-      "kind": "machine",
-      "lowercaseOnly": true
-    },
-    {
-      "sha256": "d8ac81dbad9116c9bfb8c1bbe9e0998522beb422830ccce5dfcedd3b3b7a41c3",
-      "kind": "machine",
-      "lowercaseOnly": true
     }
   ],
   "users": [
@@ -49,7 +53,8 @@
     "someone",
     "you",
     "me",
-    "runner"
+    "runner",
+    "u"
   ],
   "emails": [],
   "lines": [
