@@ -12,7 +12,7 @@ The panel reads two files and does not create either of them:
   moves the app home) — JSON with one key for this panel:
 
   ```json
-  { "url": "https://juice.lembr.ai" }
+  { "url": "https://proxy.example.com" }
   ```
 
   `url` is the CLIProxyAPI base URL, `https` (plain `http` is accepted only for `localhost` /

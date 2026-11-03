@@ -92,7 +92,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
 }
 /** hc's templates in the scenes: one Codex seat with its own provider, one hc can't place. */
 const TEMPLATES = [
-  { name: "dev-sol", command: 'env PATH="$HOME/.bun/bin:$PATH" codex -c model_provider=juice -m gpt-6.1-sol -c model_reasoning_effort=high' },
+  { name: "dev-sol", command: 'env PATH="$HOME/.bun/bin:$PATH" codex -c model_provider=proxy -m gpt-6.1-sol -c model_reasoning_effort=high' },
   { name: "opus-rev", command: "claude --dangerously-skip-permissions --model claude-opus-5-5" },
   { name: "mystery", command: "./run-something.sh" },
 ];

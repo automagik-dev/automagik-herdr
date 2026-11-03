@@ -24,7 +24,7 @@ test("codex: -m from the vendored binary path; -c model_* settings are not the m
   const argv = ["/n/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex",
     "--no-daemon", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=high"];
   assert.equal(detectModel(argv, "codex"), "gpt-6.1-sol");
-  assert.equal(detectModel(["codex", "-c", "model_provider=juice", "-c", "model_reasoning_effort=high"], "codex"), null);
+  assert.equal(detectModel(["codex", "-c", "model_provider=proxy", "-c", "model_reasoning_effort=high"], "codex"), null);
   assert.equal(detectModel(["codex", "-c", 'model="o3"'], "codex"), "o3");
   assert.equal(detectModel(["codex", "--config", "model=gpt-6-astra"], "codex"), "gpt-6-astra");
   assert.equal(detectModel(["codex", "--model", "gpt-6-luna"], "codex"), "gpt-6-luna");

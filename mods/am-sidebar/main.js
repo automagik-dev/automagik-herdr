@@ -21,7 +21,9 @@ import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, applyRefusal, busyOf, checkPatch, claim,
   coolingDown, finish, nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
-import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
+import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
+import { parseMarker } from "./release.js";
+import { meterScope } from "./meterFleet.js";
 import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -254,7 +256,7 @@ export default class Spaces extends View {
   }
 
   // The core terminal behind a pane: by address; else, for a machine renamed in the app
-  // whose terminals still carry its old name (server/t2 behind hx470/t2), the one with
+  // whose terminals still carry its old name (server/t2 behind host-b/t2), the one with
   // the same local id and the core's own herdr.tab label for that pane's tab.
   coreTerminal(p) {
     if (!p?.terminal) return null;
@@ -523,12 +525,20 @@ export default class Spaces extends View {
     } else if (this.applyUpdates(cx, id, value.to)) this.updates.seen = id;
   }
 
-  // One due `usagemeter sync` through Herdr's exec, then the next look when meter.js says.
+  // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine
+  // the person agreed to (meterScope "all", or one a meter install --machine put it on), then the next look.
   meterTick(cx) {
     cx.spawn(async (cx) => {
       let wait = METER_EVERY_MS;
       try {
-        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter }));
+        let scope = null, owned = [];
+        try {
+          const record = parseMarker(await readTextFile(`${appHome()}/automagik-herdr/installed-by-install.sh`));
+          scope = meterScope(record);
+          owned = Object.keys(record?.usagemeterOn ?? {});
+        } catch {}
+        const machines = syncTargets(this.machines, scope, owned);
+        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines, sleep: sleepOf(cx) }));
       } catch {}
       cx.timer.after(wait, (cx) => this.meterTick(cx));
     });

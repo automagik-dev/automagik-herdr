@@ -33,8 +33,9 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
 import { carriedLabels, continueRefusal, ledgerSession, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
-import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
-import { NO_UPDATE_ENV } from "../release.js";
+import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
+import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
+import { OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -553,6 +554,7 @@ const OPTIONS = {
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
   task: { type: "string" }, bot: { type: "string" }, move: { type: "boolean" },
   fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" },
+  machine: { type: "string" }, linked: { type: "boolean" }, local: { type: "boolean" },
 };
 
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
@@ -607,7 +609,18 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 pass it) is the task's lead bot. A bot with a worker.swap
                                 runs it on about one task in three, by rule
   update [--check | --rollback] install the latest release (checksum verified), only report
-                                current and latest (--check), or put the replaced pack back
+                                current and latest (--check), or put the replaced pack back;
+                                an update then runs meter install where you agreed to it
+                                (install.sh, or an earlier meter install); nobody asked: nowhere
+  meter install [--machine M | --linked | --local]
+                                the pinned usagemeter (v${USAGEMETER.version}, hash-checked on each
+                                machine, never a downgrade) in ~/.local/bin on this computer and
+                                every connected linked machine (hc machine ls); --machine: that
+                                one, e.g. one linked later; --linked: the machines only; --local:
+                                this computer only. A machine that fails is a warning. Running
+                                it records your yes (--local: this computer only) for updates
+  meter uninstall               remove it from the linked machines the pack put it on (the
+                                install record says which), only where it is still that version
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -2034,11 +2047,12 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     throw failed(opts.check ? "Couldn't check for updates" : "Not updated", e);
   }
   const { relinked, note } = opts.check ? { relinked: null, note: "" } : relink();
-  if (opts.json) return opts.check ? r : { ...r, relinked };
+  const meter = r.installed ? await meterAfterUpdate(io) : null;
+  if (opts.json) return opts.check ? r : { ...r, relinked, ...(meter ? { meter: meter.results } : {}) };
   const current = r.current ?? "not installed";
   if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}${hooksLines(r.installed.hooks?.hooks)}`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}${hooksLines(r.installed.hooks?.hooks)}${meter.lines.map((l) => `\n${l}`).join("")}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
@@ -2066,9 +2080,118 @@ async function tidyQuietly() {
 }
 const TIDIES = new Set(["start", "restart", "attach", "create"]);
 
+// ---- usagemeter on every linked machine (meterFleet.js) ----
+
+const hcProgram = () => programPath("hc");
+/** meterFleet.js's runner: on a linked machine through `hc exec`, else here from the home folder. */
+const meterRun = (argv, { on, timeout }) => (on
+  ? runProgram(hcProgram() ?? "hc", hcExecArgs(on, argv, timeout), { timeout: (timeout + 15) * 1000 }).then((r) => decodeExec(r, timeout))
+  : runProgram(argv[0], argv.slice(1), { cwd: home(), timeout: timeout * 1000 }));
+
+/** The linked machines (`{ name, connected }`), or `{ why }` when hc can't say. */
+async function meterMachines() {
+  if (!hcProgram()) return { why: "hc (herdr-core) is not on PATH" };
+  const r = await runProgram(hcProgram(), ["machine", "ls", "--json"], { timeout: 20000 });
+  if (r.code !== 0) return { why: `hc machine ls failed: ${(r.stderr || r.stdout).trim().split("\n")[0]}` };
+  return { machines: linkedMachines(r.stdout) };
+}
+
+/**
+ * The install record after `results` (only a v2 one install.sh wrote; none: nothing is noted), and
+ * the scope an explicit `meter install` agreed to (`scope`: all, or local; never narrower than all).
+ */
+function noteMeter(modsDir, results, scope = null) {
+  const record = readMarker(modsDir);
+  if (!record || record.v1) return;
+  const usagemeterScope = scope === "all" || (scope === "local" && record.usagemeterScope !== "all") ? scope : record.usagemeterScope;
+  const here = results.find((r) => r.machine === null);
+  const usagemeter = here?.status === "installed" ? here.version : ["newer", "link", "unknown"].includes(here?.status) ? null : record.usagemeter;
+  const usagemeterOn = recordAfter(record.usagemeterOn, results);
+  if (usagemeter === record.usagemeter && usagemeterScope === record.usagemeterScope
+    && JSON.stringify(usagemeterOn) === JSON.stringify(record.usagemeterOn)) return;
+  writeMarker(modsDir, { ...record, usagemeter, usagemeterOn, usagemeterScope });
+}
+
+/**
+ * `meter install` / `meter uninstall`. One machine at a time; a machine that fails is a warning
+ * line, and the command still succeeds (but `--machine M` failing exits 1).
+ */
+export async function cmdMeter(opts, [verb, ...rest], io = {}) {
+  const modsDir = io.modsDir ?? defaultModsDir(process.env);
+  if (rest.length) throw new CliError(`meter ${verb} takes no arguments (got ${rest.join(" ")}).`, 2);
+  const results = [], notes = [];
+  if (verb === "install") {
+    if ([opts.machine !== undefined, opts.linked, opts.local].filter(Boolean).length > 1) throw new CliError("Give one of --machine, --linked and --local.", 2);
+    const releases = meterReleases(process.env);
+    const pins = meterPins(process.env, (path) => readFileSync(path, "utf8"));
+    if (opts.machine === undefined && !opts.linked) results.push(await installOn(meterRun, null, { releases, pins }));
+    if (!opts.local) {
+      const found = await meterMachines();
+      if (found.why) {
+        if (opts.machine !== undefined) throw new CliError(`usagemeter on ${opts.machine}: ${found.why}.`);
+        notes.push(`usagemeter on linked machines: skipped (${found.why}).`);
+      }
+      let list = found.machines ?? [];
+      if (opts.machine !== undefined) {
+        list = list.filter((m) => m.name === opts.machine);
+        if (!list.length) throw new CliError(`No linked machine "${opts.machine}" (hc machine ls).`, 2);
+      }
+      for (const m of list) results.push(m.connected ? await installOn(meterRun, m.name, { releases, pins }) : { machine: m.name, status: "disconnected" });
+    }
+  } else if (verb === "uninstall") {
+    if (opts.machine !== undefined || opts.linked || opts.local) throw new CliError("meter uninstall takes no --machine, --linked or --local.", 2);
+    const owned = readMarker(modsDir)?.usagemeterOn ?? {};
+    const names = Object.keys(owned);
+    const pocket = join(modsDir, POCKET_LINK);
+    const found = names.length && !existsSync(pocket) ? await meterMachines() : {};
+    for (const name of names) {
+      const m = found.machines?.find((k) => k.name === name);
+      if (existsSync(pocket)) results.push({ machine: name, status: "kept", why: `Pocket Link (${pocket}) runs it too` });
+      else if (found.why) results.push({ machine: name, status: "kept", why: found.why });
+      else if (!m?.connected) results.push({ machine: name, status: "kept", why: m ? "the machine is not connected" : "no such linked machine any more" });
+      else results.push(await uninstallOn(meterRun, name, owned[name]));
+    }
+  } else {
+    throw new CliError(`meter needs install or uninstall${verb ? `, not "${verb}"` : ""}.`, 2);
+  }
+  // An explicit `meter install` is the person's yes (install.sh's own run passes --linked
+  // and records its scope itself; `update` asks only within the scope already agreed).
+  const agreed = verb === "install" && !opts.linked && opts.machine === undefined ? (opts.local ? "local" : "all") : null;
+  try { noteMeter(modsDir, results, agreed); } catch (e) { notes.push(`usagemeter: the install record could not note it (${e?.message ?? e}).`); }
+  if (opts.machine !== undefined && results.some((r) => r.status === "failed" || r.status === "disconnected")) {
+    throw new CliError(results.map(resultLine).join("\n").replace(/^Warning: /, ""));
+  }
+  if (opts.json) return { results, notes };
+  return [...results.map(resultLine), ...notes].join("\n")
+    || (verb === "install" ? "usagemeter: no connected linked machine (hc machine ls)." : "usagemeter: no linked machine has the pack's usagemeter.");
+}
+
+/**
+ * After `update` installed a pack: that pack's own `meter install` (its release.js may pin a newer
+ * usagemeter than this running CLI's), as install.sh's scope says. Lines to print; never throws.
+ */
+export async function meterAfterUpdate(io) {
+  const modsDir = io.modsDir ?? defaultModsDir(io.env ?? process.env);
+  const scope = meterScope(readMarker(modsDir));
+  if (scope === "none") return { lines: ["usagemeter: skipped (install.sh --no-usagemeter)."], results: [] };
+  // Nobody asked (an older install.sh recorded no --no-usagemeter): nowhere, and how to opt in.
+  if (!scope) return { lines: [OPT_IN], results: [] };
+  const args = ["meter", "install", "--json", ...(scope === "local" ? ["--local"] : [])];
+  let r;
+  if (io.meter) r = await io.meter(args);
+  else if (io.modsDir) return { lines: [], results: [] };
+  else r = await runProgram(process.execPath, [join(modsDir, PACK_NAME, "bin", "automagik-herdr.mjs"), ...args], { timeout: 30 * 60 * 1000 });
+  try {
+    const out = JSON.parse(r.stdout);
+    return { lines: [...out.results.map(resultLine), ...(out.notes ?? [])], results: out.results };
+  } catch {
+    return { lines: [`Warning: usagemeter was not checked: ${(r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop()}. Run \`automagik-herdr meter install\` to retry.`], results: [] };
+  }
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker };
+  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

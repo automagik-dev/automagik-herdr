@@ -5,7 +5,7 @@ The decisions this mod is built on, so the panel cannot drift from them. `policy
 (`test/am-quota-*.test.mjs`); `main.js` is the panel that wires them. `RECIPE.md` is the
 person-facing version.
 
-## Where the facts come from (measured against `https://juice.lembr.ai`, 2026-11-01)
+## Where the facts come from (measured against a private CLIProxyAPI deployment, 2026-11-01)
 
 | Call | Gives |
 |---|---|
@@ -32,7 +32,7 @@ had no quota.
 
 **A `CLAUDE_CONFIG_DIR` has its own Keychain item.** Measured on the installed CLI 2.1.316 with
 `CLAUDE_CONFIG_DIR=/tmp/cc-scratch` and a `security` shim on `PATH`, the CLI ran
-`find-generic-password -a feliperosa -w -s "Claude Code-credentials-bde599a8"`, then
+`find-generic-password -a <login user> -w -s "Claude Code-credentials-bde599a8"`, then
 `… -s "Claude Code-bde599a8"`, and `sha256("/tmp/cc-scratch")[:8]` is `bde599a8`. The digest is of
 the directory **as given** — no `~` expansion, no trailing-slash trimming — and the item the CLI
 actually keeps is the *credentials* one, suffixed. Writing the unsuffixed item there would replace

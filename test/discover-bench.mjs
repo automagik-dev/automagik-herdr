@@ -1,15 +1,15 @@
 // Timing bench for the sidebar's bot discovery (bots.js), not a test: a fake Herdr
 // (discover-bench-herdr.mjs) with per-call latency, a synthetic window of 25 spaces (15 on
-// this computer: 8 repos, 2 worktrees, 5 folders outside git 5 deep; 10 on felipe, g10, g9
-// and hx470, a third of them outside git), and the sidebar's refresh path (main.js
+// this computer: 8 repos, 2 worktrees, 5 folders outside git 5 deep; 10 on vm1, vm2, vm3
+// and vm4, a third of them outside git), and the sidebar's refresh path (main.js
 // refreshBots: now, then every 15 s). Reports one discovery on its own, when the local and
 // all reachable bot rows first show, and (current code) a restart drawn from the snapshot.
 //
 //   node test/discover-bench.mjs [reach|hang|fail] [checkout]
-//     reach: every machine answers; hang: hx470 never answers; fail: hx470 errors after 10 s
+//     reach: every machine answers; hang: vm4 never answers; fail: vm4 errors after 10 s
 //     checkout: another checkout to time (default this one), e.g. the code before the fix:
 //       git worktree add /tmp/before b717da5 && node test/discover-bench.mjs reach /tmp/before
-//   LAT='{"null":25,"felipe":28,...}' sets each machine's ms per call (default 300 here,
+//   LAT='{"null":25,"vm1":28,...}' sets each machine's ms per call (default 300 here,
 //   1500 elsewhere); SCALE=1 runs in real time (default 0.1: times are reported unscaled).
 import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -30,7 +30,7 @@ for (let i = 1; i <= 8; i++) { world.repos[`null|/Users/me/repos/r${i}`] = `/Use
 for (let i = 1; i <= 6; i++) world.files[`null|/Users/me/repos/r${i}/.herdr/bots.json`] = bots;
 world.repos["null|/Users/me/repos/r1-wt"] = "/Users/me/repos/r1/.git/worktrees/r1-wt";
 world.repos["null|/Users/me/repos/r2-wt"] = "/Users/me/repos/r2/.git/worktrees/r2-wt";
-const remotes = { felipe: 3, g10: 3, g9: 2, hx470: 2 };
+const remotes = { vm1: 3, vm2: 3, vm3: 2, vm4: 2 };
 // interleave as a real sidebar would: local and remote spaces mixed
 const local = [...Array.from({ length: 8 }, (_, i) => `/Users/me/repos/r${i + 1}`), "/Users/me/repos/r1-wt", "/Users/me/repos/r2-wt",
   ...Array.from({ length: 5 }, (_, i) => `/Users/me/notes/a/b/c${i + 1}`)];
@@ -44,10 +44,10 @@ for (const [m, count] of Object.entries(remotes)) {
 world.files[`null|/Users/me/.config/herdr-app/am-sidebar-projects.json`] = JSON.stringify(["/Users/me/repos/r1", "/Users/me/repos/r7"]);
 for (let i = 0; i < 15; i++) { space(null, local[i]); if (remote[i]) space(remote[i][0], remote[i][1]); }
 world.spaces = sp;
-world.latency = process.env.LAT ? JSON.parse(process.env.LAT) : { null: 300, felipe: 1500, g10: 1500, g9: 1500, hx470: 1500 };
+world.latency = process.env.LAT ? JSON.parse(process.env.LAT) : { null: 300, vm1: 1500, vm2: 1500, vm3: 1500, vm4: 1500 };
 if (process.env.SCALE) world.scale = Number(process.env.SCALE);
-if (scenario === "hang") world.latency.hx470 = Infinity;
-if (scenario === "fail") world.failAfter.hx470 = 10_000;
+if (scenario === "hang") world.latency.vm4 = Infinity;
+if (scenario === "fail") world.failAfter.vm4 = 10_000;
 
 const LOCAL = 6; // local projects with bots
 const REMOTE = scenario === "reach" ? 4 : 3;

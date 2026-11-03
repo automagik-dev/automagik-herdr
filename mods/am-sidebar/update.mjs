@@ -302,7 +302,7 @@ export function restoreLayout({ modsDir, body, log = () => {} }) {
   return placed;
 }
 
-const writeMarker = (modsDir, record) => {
+export const writeMarker = (modsDir, record) => {
   const path = markerOf(modsDir);
   writeFileSync(`${path}.tmp`, formatMarker(record));
   renameSync(`${path}.tmp`, path);
@@ -430,6 +430,7 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     const record = {
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
       migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
+      usagemeterOn: { ...(before?.usagemeterOn ?? {}) }, usagemeterScope: before?.usagemeterScope ?? null,
       // When the pack was put in place (the mod manager's INSTALLED); a repair keeps the date.
       installed: (repair ? before?.installed : null) ?? new Date().toISOString(),
     };

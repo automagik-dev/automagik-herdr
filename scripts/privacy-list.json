@@ -1,0 +1,67 @@
+{
+  "deny": [
+    {
+      "sha256": "4607ff2a9a3b64ee8d877b73939982b4384fcd21ee01e5c055f77a2101cdfd59",
+      "kind": "account"
+    },
+    {
+      "sha256": "2bd2d3a31934d76198acc030caca4c31965474fe5fa48f35fef79d0fd74ee1b2",
+      "kind": "machine"
+    },
+    {
+      "sha256": "fee7ca9d208e1e56c76a8dff70bb430d86c9078ea62a6837e21117ff3096c7b5",
+      "kind": "machine"
+    },
+    {
+      "sha256": "ceb224ebb1b9458f62192b12b157e38901595511d4f906c191d8520bc9c197ad",
+      "kind": "machine"
+    },
+    {
+      "sha256": "7f93529cc8438b0c7fa8f5a6bfd0c1f72bfc2019fac445b8d76f94168059817d",
+      "kind": "machine",
+      "lowercaseOnly": true,
+      "exact": true
+    },
+    {
+      "sha256": "00d060262511fc0834412cf60b2b362861c7255f2d18937c477a2554454a1203",
+      "kind": "machine",
+      "lowercaseOnly": true,
+      "exact": true
+    },
+    {
+      "sha256": "d8ac81dbad9116c9bfb8c1bbe9e0998522beb422830ccce5dfcedd3b3b7a41c3",
+      "kind": "machine",
+      "lowercaseOnly": true,
+      "exact": true
+    },
+    {
+      "sha256": "36b2b94220c8859f95396ddb9469eede2663c25ac0df427ca1e568e579b3250e",
+      "kind": "host"
+    },
+    {
+      "sha256": "134d7814934132cd6772668c00e452ce98b87c3ff9ba6d3bad9a8bf200dfb7ef",
+      "kind": "host"
+    },
+    {
+      "sha256": "eb6fca7947324fe3e04526d7e0f80092a1ae60fabe89473021ec0e04f36f43a5",
+      "kind": "host"
+    }
+  ],
+  "users": [
+    "x",
+    "ada",
+    "someone",
+    "you",
+    "me",
+    "runner",
+    "u"
+  ],
+  "emails": [],
+  "lines": [
+    {
+      "file": ".genie/wishes/herdr-bots/WISH.md",
+      "text": "`wish/herdr-bots-g10`",
+      "why": "a branch name: wish group 10, not a machine"
+    }
+  ]
+}
