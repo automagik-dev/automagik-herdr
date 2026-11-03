@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
+import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
@@ -314,7 +315,7 @@ test("ls --json: kind, lead, category, planned, agent, model detected → pinned
   assert.match(s.cli(["show", "nobody"]).err, /No bot "nobody"/);
 });
 
-test("ls: a shell in front is not live; two live panes: the newest counts, flagged duplicate; --all adds remembered projects", (t) => {
+test("ls by the ledger: a shell pane shows no agent in front; the import takes the newest agent pane; --all adds remembered projects", (t) => {
   const s = scene(t, { terminals: [
     term("t1", { bot: ID.main, argv: ["zsh"] }),
     term("t2", { bot: ID.cap, created: 5 }), term("t3", { bot: ID.cap, created: 9, argv: ["claude", "--model", "opus"] }),
@@ -325,8 +326,10 @@ test("ls: a shell in front is not live; two live panes: the newest counts, flagg
   writeFileSync(join(other, ".herdr/bots.json"), JSON.stringify({ version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] }));
   writeFileSync(join(s.app, "shared.json"), JSON.stringify({ "spaces-agents.projects": [{ key: other, machine: null }, { key: join(s.root, "gone"), machine: null }, { key: "/r", machine: "vps" }] }));
   const by = Object.fromEntries(s.cli(["ls", "--json"]).json().projects[0].bots.map((b) => [b.name, b]));
-  assert.equal(by.Genie.status, "not running");
-  assert.deepEqual([by.Captain.terminal, by.Captain.duplicate, by.Captain.model], ["t3", true, "opus"]);
+  // The first run imports the labels: Genie's only pane, though a shell is in front; of
+  // Captain's two, the newest with an agent in front. The ledger then ties one pane each.
+  assert.deepEqual([by.Genie.terminal, by.Genie.status], ["t1", "no agent in front"]);
+  assert.deepEqual([by.Captain.terminal, by.Captain.duplicate, by.Captain.model], ["t3", false, "opus"]);
   const all = s.cli(["ls", "--all", "--json"]).json().projects;
   assert.deepEqual(all.map((p) => p.project), [s.project, other]);
 });
@@ -432,9 +435,11 @@ test("start a member: parent is its lead's live terminal, outliving it; else --n
   const run = runCall(s.calls());
   assert.deepEqual(run.slice(run.indexOf("--parent"), run.indexOf("--")), ["--parent", "t7", "--outlive-parent"]);
   assert.ok(run.includes("herdr.space=sp1") && run.includes("herdr.tab=tb2"));
-  // Captain is live in t7: reported, not started twice. Studio-less Genie's pane has only a
-  // shell in front, so it isn't live: Genie starts, with no parent.
+  // Captain is attached to t7 (imported from its label): reported, not started twice. So is
+  // Genie in t8, a shell in front or not: the ledger ties it. Detached, Genie starts, with no parent.
   assert.match(s.cli(["start", "Captain"]).out, /already running in t7/);
+  assert.match(s.cli(["start", "Genie"]).out, /already running in t8/);
+  assert.equal(s.cli(["detach", "Genie"]).code, 0);
   assert.equal(s.cli(["start", "Genie"]).code, 0);
   const runs = s.calls().filter((c) => c[0] === "run");
   assert.equal(runs.length, 2);
@@ -494,7 +499,7 @@ test("attach refuses another bot's pane and a pane that isn't live; a planned bo
   assert.deepEqual(labelCalls(s.calls()), []);
 });
 
-test("attach moves the label: off the old pane first, then onto the new one; the hook goes in the session folder", (t) => {
+test("attach of a bot attached elsewhere is refused, naming the holder; --move moves it, labels following", (t) => {
   const s = scene(t);
   const sub = join(s.project, "pkg");
   mkdirSync(sub);
@@ -502,7 +507,11 @@ test("attach moves the label: off the old pane first, then onto the new one; the
   st.terminals[1].foreground.cwd = sub;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
   s.seed(team());
-  const r = s.cli(["attach", "Genie", "t2", "--json"]);
+  const bare = s.cli(["attach", "Genie", "t2"]);
+  assert.equal(bare.code, 1);
+  assert.match(bare.err, /Genie \(b-aaaaaaaaaa\) is attached to t1 \(since .*\); nothing was attached\. Move it with: automagik-herdr attach b-aaaaaaaaaa t2 --move/);
+  assert.deepEqual(labelCalls(s.calls()), []);
+  const r = s.cli(["attach", "Genie", "t2", "--move", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.json().movedFrom, ["t1"]);
   assert.deepEqual(labelCalls(s.calls()), [["label", "t1", "bot="], ["label", "t2", `bot=${ID.main}`], ["label", "t2", "role=main"]]);
@@ -512,21 +521,23 @@ test("attach moves the label: off the old pane first, then onto the new one; the
   assert.match(r.err, /no briefing, restart the bot: automagik-herdr restart b-[a-z2-7]{10} \(or the bot row's Restart\)/);
 });
 
-test("attach: when the last label write fails after the old one came off, it says the bot has no pane now", (t) => {
+test("attach: a label write that fails only warns: the ledger has the move", (t) => {
   const s = scene(t);
   writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [term("t1", { bot: ID.dev, app: "codex", argv: ["codex"] }), term("t2", { app: "codex", argv: ["codex"] })], failLabel: "t2" }));
   s.seed(team());
-  const r = s.cli(["attach", "Dev", "t2"]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /Dev has no pane now \(its label came off t1\); attach again/);
+  const r = s.cli(["attach", "Dev", "t2", "--move"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /the ledger has it, but hc label t2 bot=b-cccccccccc failed/);
+  assert.equal(s.cli(["whois", "t2", "--json"]).json().bot, ID.dev);
+  assert.equal(s.cli(["whois", "t1", "--json"]).json().bot, null);
 });
 
-test("detach takes the label off every local pane carrying it", (t) => {
+test("detach unties the bot from its ledger pane and takes the label off every local pane carrying it", (t) => {
   const s = scene(t, { terminals: [term("t1", { bot: ID.cap }), term("t2", { bot: ID.cap, argv: ["zsh"] })] });
   s.seed(team());
   const r = s.cli(["detach", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json(), { id: ID.cap, defined: true, detached: ["t1", "t2"] });
+  assert.deepEqual(r.json(), { id: ID.cap, defined: true, detached: ["t1"], labelsCleared: ["t1", "t2"] });
   assert.deepEqual(s.hcState().terminals.map((x) => x.labels), [{}, {}]);
   assert.match(s.cli(["detach", "Captain"]).out, /no pane on this computer/);
 });
@@ -628,13 +639,13 @@ test("start refuses an old free-text model pin, naming the fix; a pane started u
 test("a failing hc never reads as 'no pane': start, attach and detach refuse; ls and show say hc is unavailable", (t) => {
   const s = scene(t);
   s.seed(team());
-  const st = { terminals: [term("t1", { bot: ID.main, cwd: s.project })], fail: ["ls"] };
+  const st = { terminals: [term("t1", { bot: ID.main, cwd: s.project })], fail: ["server"] };
   st.terminals[0].foreground.cwd = s.project;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
   for (const args of [["start", "Genie"], ["attach", "Genie", "t1"], ["detach", "Genie"]]) {
     const r = s.cli(args);
     assert.equal(r.code, 1, args.join(" "));
-    assert.match(r.err, /hc ls --label bot=b-aaaaaaaaaa failed: hc: can't reach the server/);
+    assert.match(r.err, /hc server status failed: hc: can't reach the server/);
   }
   assert.equal(s.calls().some((c) => c[0] === "run" || c[0] === "label"), false);
   const ls = s.cli(["ls", "--json"]);
@@ -642,18 +653,18 @@ test("a failing hc never reads as 'no pane': start, attach and detach refuse; ls
   const genie = ls.json().projects[0].bots[0];
   assert.equal(genie.status, "hc unavailable");
   assert.match(genie.hcError, /can't reach the server/);
-  assert.match(s.cli(["ls"]).out, /panes unknown: hc ls/);
+  assert.match(s.cli(["ls"]).out, /panes unknown: hc server status/);
   assert.equal(s.cli(["show", "Genie", "--json"]).json().status, "hc unavailable");
   assert.equal(s.cli(["brief", "Genie"]).code, 0, "the briefing still prints, members unreachable");
 });
 
-test("a row whose program is a shell is asked with hc get (its age), yet never counts as live", (t) => {
+test("an attached pane with a shell in front stays the bot's: shown as no agent in front, never as another's", (t) => {
   const s = scene(t, { terminals: [term("t1", { bot: ID.main, argv: ["zsh"], app: "zsh" }), term("t2", { bot: ID.cap })] });
   s.seed(team());
   const bots = s.cli(["ls", "--json"]).json().projects[0].bots;
   const gets = s.calls().filter((c) => c[0] === "get").map((c) => c[1]);
   assert.ok(gets.includes("t2") && gets.includes("t1"));
-  assert.equal(bots.find((b) => b.id === ID.main).terminal ?? null, null);
+  assert.deepEqual([bots.find((b) => b.id === ID.main).terminal, bots.find((b) => b.id === ID.main).status], ["t1", "no agent in front"]);
   assert.equal(bots.find((b) => b.id === ID.cap).terminal, "t2");
 });
 
@@ -688,10 +699,10 @@ test("detach takes a removed bot's label off by its bare id; an unknown name is 
   s.seed(team());
   const rm = s.cli(["rm", "Dev"]);
   assert.equal(rm.code, 0, rm.err);
-  assert.match(rm.err, new RegExp(`take it off with: automagik-herdr detach ${ID.dev}`));
+  assert.match(rm.err, new RegExp(`t1 is still attached to it; detach it with: automagik-herdr detach ${ID.dev}`));
   const r = s.cli(["detach", ID.dev, "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json(), { id: ID.dev, defined: false, detached: ["t1", "t2"] });
+  assert.deepEqual(r.json(), { id: ID.dev, defined: false, detached: ["t1"], labelsCleared: ["t1", "t2"] });
   assert.deepEqual(s.hcState().terminals.map((x) => x.labels), [{}, {}]);
   assert.match(s.cli(["detach", "Ghost"]).err, /No bot "Ghost"/);
   // No bots.json at all: a bare id still works.
@@ -750,7 +761,7 @@ test("attach labels the pane and keeps its own squad; detach takes off bot, role
   assert.equal(s.cli(["attach", "Dev", "t8"]).code, 0);
   assert.deepEqual(labelsIn(s).t8, { squad: "infra", bot: ID.dev, role: "tester", category: "eng" });
   // Moved to t9: t8 loses what Detach takes off, keeping its own squad; t9 copies the lead's.
-  assert.equal(s.cli(["attach", "Dev", "t9"]).code, 0);
+  assert.equal(s.cli(["attach", "Dev", "t9", "--move"]).code, 0);
   assert.deepEqual(labelsIn(s).t8, { squad: "infra" });
   assert.deepEqual(labelsIn(s).t9, { bot: ID.dev, role: "tester", category: "eng", squad: "memory", "automagik-herdr.squad": "memory" });
   assert.equal(s.cli(["detach", "Dev"]).code, 0);
@@ -870,6 +881,7 @@ process.env.AUTOMAGIK_HERDR_RESTART_STABLE_MS = "300";
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
 const ledgerOf = (s) => readLedger(existsSync(ledgerPath(s.app)) ? readFileSync(ledgerPath(s.app), "utf8") : "");
+const attachOf = (s) => readRows(existsSync(attachFile(s.app)) ? readFileSync(attachFile(s.app), "utf8") : "").rows;
 
 /** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
 function restartScene(t, { status = "idle", extra = [], session = SID, runAs } = {}) {
@@ -903,6 +915,15 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   const state = s.hcState();
   assert.equal(state.terminals.find((x) => x.address === "t5").state, "finished");
   assert.equal(state.terminals.find((x) => x.address === "t100").state, "live");
+  // The attach ledger: t5's binding detached (by start, moved), t100 attached (by start), and
+  // exactly one live binding for Genie, on t100.
+  const attach = attachOf(s);
+  assert.deepEqual(attach.slice(-2).map((x) => [x.event, x.terminal, x.by, x.reason ?? null]), [["detach", "t5", "start", "moved"], ["attach", "t100", "start", null]]);
+  const bound = [...foldRows(attach).byKey.values()].filter((b) => b.bot === ID.main);
+  assert.deepEqual(bound.map((b) => b.terminal), ["t100"]);
+  assert.equal(foldRows(attach).byBot.get(ID.main).terminal, "t100");
+  const whois = s.cli(["whois", "--bot", ID.main, "--json"]);
+  assert.equal(whois.json().terminal, "t100", whois.err);
   // The seat row and the resumed session's row, for t100.
   const rows = ledgerOf(s).filter((x) => x.terminal === "t100");
   assert.deepEqual(rows.map((x) => [x.event, x.kind ?? x.session]), [["start", "seat"], ["session", SID]]);
@@ -939,12 +960,16 @@ test("restart keeps the old pane when the new one never brings its agent up, exi
   process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS = "400";
   t.after(() => { delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS; });
   const s = restartScene(t, { runAs: "shell" });
+  assert.equal(s.cli(["whois", "--bot", ID.main, "--json"]).json().terminal, "t5"); // the ledger imported t5
+  const before = attachOf(s);
   const r = s.cli(["restart", "Genie"]);
   assert.equal(r.code, 1);
   assert.match(r.err, /t100 didn't keep an agent in front within 0\.4s, so it was ended; t5 still runs Genie, untouched\./);
   assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t100"], "the abandoned pane ended, never t5");
   assert.equal(s.hcState().terminals.find((x) => x.address === "t5").state, "live");
   assert.equal(ledgerOf(s).some((x) => x.terminal === "t100"), false, "no seat row for the abandoned pane");
+  assert.deepEqual(attachOf(s).filter((x) => x.event !== "end"), before, "a failed replacement writes no attach rows");
+  assert.equal(foldRows(attachOf(s)).byBot.get(ID.main).terminal, "t5");
   const s2 = restartScene(t, { runAs: "exit" });
   const r2 = s2.cli(["restart", "Genie"]);
   assert.equal(r2.code, 1);
@@ -959,6 +984,8 @@ test("restart keeps the old pane when the new one never brings its agent up, exi
   assert.equal(at(s3.calls(), "kill"), -1);
   assert.equal(s3.hcState().terminals.find((x) => x.address === "t5").state, "live");
   assert.equal(ledgerOf(s3).some((x) => x.terminal === "t100"), false);
+  assert.equal(attachOf(s3).some((x) => x.terminal === "t100"), false, "no attach row for the replacement that exited");
+  assert.equal(foldRows(attachOf(s3)).byBot.get(ID.main).terminal, "t5");
 });
 
 test("restart with no session id known: claude --continue, with a warning; --fresh starts a new conversation", (t) => {
@@ -1047,4 +1074,22 @@ test("a bot restarting itself writes and prints everything before the kill that 
   const calls = s.calls();
   assert.deepEqual(calls.at(-1), ["kill", "t5"], "the kill is the last hc call");
   assert.ok(ledgerOf(s).some((x) => x.terminal === "t100" && x.kind === "seat"));
+});
+
+test("restart: the bot attached elsewhere while the new pane came up: the new pane is ended, no rows written, the other binding kept", (t) => {
+  const other = term("t9", { bot: null, cwd: "/elsewhere", created: 77 });
+  const s = restartScene(t, { extra: [other] });
+  assert.equal(s.cli(["whois", "--bot", ID.main, "--json"]).json().terminal, "t5");
+  // While hc run starts t100, another CLI attaches Genie to t9 (an attach row, as attach --move writes).
+  const rows = attachOf(s);
+  const moved = { ...rows.find((x) => x.terminal === "t5"), terminal: "t9", created_ms: 77, by: "attach", at: new Date().toISOString() };
+  const st = s.hcState();
+  st.onRunWrite = { path: attachFile(s.app), text: [...rows, moved].map((x) => `${JSON.stringify(x)}\n`).join("") };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Genie was attached to t9 while it restarted, so t100 was ended and nothing changed\./);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t100"]);
+  assert.equal(attachOf(s).some((x) => x.terminal === "t100"), false);
+  assert.equal(foldRows(attachOf(s)).byBot.get(ID.main).terminal, "t9");
 });

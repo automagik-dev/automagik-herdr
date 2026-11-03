@@ -2,7 +2,8 @@
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
 // change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run,
-// kill (the terminal finishes), templates (state.templates: [{ name, command }]).
+// server status (state.core), kill (the terminal finishes), templates (state.templates:
+// [{ name, command }]).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -30,7 +31,8 @@ switch (words[0]) {
   }
   case "get": {
     const t = find(words[1]);
-    if (!t) fail(`no terminal ${words[1]}`);
+    // Like the real one: exit 3 and a not_found error on stderr.
+    if (!t) fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal "${words[1]}"` } }), 3);
     // exitAfterGets: answered live that many times, then the program exits (a failed resume).
     if (typeof t.exitAfterGets === "number") {
       if (t.exitAfterGets <= 0) { t.state = "finished"; delete t.exitAfterGets; } else t.exitAfterGets -= 1;
@@ -98,6 +100,12 @@ switch (words[0]) {
     // Killing the caller's own terminal ends the caller (this fake runs exec'd by the wrapper,
     // so its parent is the program that called hc).
     if (process.env.HC_TERMINAL_ID && [t.address, t.name].includes(process.env.HC_TERMINAL_ID)) process.kill(process.ppid, "SIGKILL");
+    break;
+  }
+  case "server": {
+    // `hc server status`: the core's permanent id (state.core, else a fixed one).
+    if (words[1] !== "status") fail(`fake hc: no server ${words[1]}`, 2);
+    out({ core: state.core ?? { id: "fakecore0000", name: "fake" }, live: state.terminals.filter((t) => t.state === "live").length });
     break;
   }
   case "templates": {

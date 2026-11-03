@@ -1,54 +1,50 @@
-// Start and Attach on this computer (DESIGN Approach, Decisions 1-3 and 5, A1): a bot's live
-// pane is the terminal carrying `bot=<id>` with an agent in front. The argument building
-// and messages live in launchArgs.js. Apache-2.0.
+// Start and Attach on this computer (DESIGN Approach, Decisions 1-3 and 5, A1), through the
+// automagik-herdr CLI: the attach ledger it writes is the only answer to which pane plays a
+// bot, so the sidebar never sets a `bot=` label itself. The CLI runs through bin/run.sh (it
+// finds node 22.7 or later, or bun, where Herdr's PATH has none) with this app home. Apache-2.0.
 
-import { hc, terminals, spaces, focused, run, knownAgents, readTextFile, writeTextFile, exec, appHome, notify, home } from "herdr";
-import { BOT_LABEL, BOTS_PATH, parseBots, effectiveLead } from "./model.js";
+import { spaces, focused, run, readTextFile, writeTextFile, exec, appHome, notify, home } from "herdr";
 import { keyOf, rememberProject } from "./bots.js";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, rowIsAgent, isClaude, newest, labelMoves, attachRefusal,
-  paneLabels, attachWords, relabelWords, leadIdOf, leadPane } from "./launchArgs.js";
-import { installHook } from "./briefingText.mjs";
-import { configPaths, knownModelsFrom, modelArgs } from "./models.js";
+import { installHook, runnerPath } from "./briefingText.mjs";
+import { configPaths } from "./models.js";
+import { PACK_NAME } from "./release.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
-// A terminal's labels as terminals() has them (null: no such terminal, or none given).
-const labelsOf = (address) => (address ? terminals().find((t) => t?.address === address)?.labels ?? null : null);
-// The live panes on this computer carrying a bot's label (launchArgs.js leadPane picks the lead's).
-const rowsOfBot = (botId) => terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && t.state === "live" && local(t.address));
-
-async function hcGet(address) {
-  try {
-    const r = await hc(["get", address, "--json"]);
-    return r.code === 0 ? JSON.parse(r.stdout) : null;
-  } catch { return null; }
-}
-
-async function readProject(projectKey) {
-  const text = await readTextFile(`${projectKey}/${BOTS_PATH}`);
-  if (text === null) return null;
-  return parseBots(text).file;
-}
+const cliPath = (dir) => `${dir.replace(/\/+$/, "")}/mods/${PACK_NAME}/bin/automagik-herdr.mjs`;
 
 /**
- * A bot's live pane (Decision 3): a terminal of this computer carrying its label with an
- * agent in front, by `terminals()`' `program.agent`, else `hc get`'s foreground. When several
- * do, the newest by created_ms (read with `hc get` for those only), flagged `duplicate`.
- * Only this computer's terminals count: Start and Attach work here only, and Attach could
- * not take a label off another machine's terminal.
+ * Runs `automagik-herdr <args> --json` with this app home: { code, out (its JSON, or null),
+ * err (stderr, the `automagik-herdr: ` prefixes dropped) }. Never rejects.
+ */
+export async function runCli(args) {
+  const dir = appHome();
+  let r;
+  try { r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runnerPath(dir), cliPath(dir), ...args, "--json"]); } catch (e) {
+    return { code: 127, out: null, err: String(e?.message ?? e) };
+  }
+  let out = null;
+  try { out = JSON.parse(r.stdout); } catch { out = null; }
+  return { code: r.code, out, err: String(r.stderr ?? "").replace(/^automagik-herdr: /gm, "").trim() };
+}
+
+const refusedBy = (r, what) => ({ refused: r.err || `automagik-herdr ${what} failed (exit ${r.code}).` });
+const warn = (bodies) => { for (const body of bodies ?? []) notify({ title: "Bots", body, level: "warning", timeout: 15000 }); };
+
+/**
+ * A bot's pane by the attach ledger (`automagik-herdr whois --bot`): { terminal, duplicate:
+ * false }, or null when it plays nowhere (or the CLI can't answer).
  */
 export async function liveTerminalOf(botId) {
-  const rows = terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && t.state === "live" && local(t.address));
-  const live = [];
-  for (const row of rows) {
-    const says = rowIsAgent(row);
-    if (says === true) live.push(row.address);
-    else if (says === null && agentInForeground(await hcGet(row.address))) live.push(row.address);
-  }
-  if (live.length === 0) return null;
-  if (live.length === 1) return { terminal: live[0], duplicate: false };
-  const gets = (await Promise.all(live.map(hcGet))).filter(Boolean);
-  const pick = newest(gets);
-  return { terminal: pick?.address ?? live[0], duplicate: true };
+  const r = await runCli(["whois", "--bot", botId]);
+  const terminal = r.code === 0 ? r.out?.terminal ?? null : null;
+  return terminal ? { terminal, duplicate: false } : null;
+}
+
+/** The bot a terminal plays by the attach ledger (`automagik-herdr whois <t>`), or null. */
+export async function botOfTerminal(terminal) {
+  if (!local(terminal)) return null;
+  const r = await runCli(["whois", terminal]);
+  return r.code === 0 ? r.out?.bot ?? null : null;
 }
 
 /**
@@ -101,16 +97,13 @@ async function placeFor(projectKey) {
   return { space: space?.id ?? null, tab: tab?.id ?? null };
 }
 
-// Bots being started now, and the terminal each got lately: its agent may not be in front
-// yet, so a second Start right after would pass the live check and open a twin.
+// Bots being started now: a second click waits for nothing and is refused.
 const starting = new Set();
-const started = new Map(); // bot id -> { terminal, at }
-const STARTED_GRACE = 60_000;
 
 /**
- * Starts a bot as a new pane on this computer, or focuses its live pane. Refuses a planned
- * bot, one with no agent, a project folder that doesn't key to itself, and a bot already
- * being started.
+ * Starts a bot as a new pane on this computer (`automagik-herdr start`, which writes its
+ * attach row), or focuses the pane the ledger already ties it to. The CLI's refusals (a
+ * planned bot, no agent, an unlisted model pin) come back as { refused }.
  */
 export async function startBot(projectKey, botId) {
   if (starting.has(botId)) return { refused: `${botId} is already starting.` };
@@ -119,133 +112,29 @@ export async function startBot(projectKey, botId) {
 }
 
 async function startOnce(projectKey, botId) {
-  let file;
-  try { file = await readProject(projectKey); } catch (e) { return { refused: `Can't read ${projectKey}/${BOTS_PATH}: ${e?.message ?? e}` }; }
-  if (!file) return { refused: `No ${BOTS_PATH} in ${projectKey}.` };
-  const why = startRefusal(file, botId);
-  if (why) return { refused: why };
-  const bot = file.bots.find((b) => b.id === botId);
-  const recent = started.get(botId);
-  const fresh = recent && Date.now() - recent.at < STARTED_GRACE
-    && terminals().some((t) => t?.address === recent.terminal && t.state === "live" && t.labels?.[BOT_LABEL] === botId);
-  const live = (await liveTerminalOf(botId))?.terminal ?? (fresh ? recent.terminal : null);
-  if (live) {
-    run("agent.focus", { terminal: live });
-    return { focused: live };
-  }
-  // The same check as Attach, on the folder Start launches in.
-  let key;
-  try { key = await keyOf(projectKey); } catch (e) { return { refused: `Can't read the project of ${projectKey}: ${e?.message ?? e}` }; }
-  const refusal = attachRefusal({ botName: bot.name, projectKey, sessionFolder: projectKey, sessionKey: key });
-  if (refusal) return { refused: refusal };
-  let agents = [];
-  try { agents = await knownAgents(); } catch {}
-  const agent = agents.find((a) => a.key === bot.agent);
-  if (!agent?.run?.length) return { refused: `${bot.name}'s coding agent "${bot.agent}" isn't one Herdr can start here.` };
-  if (agent.installed === false) return { refused: `${agent.name ?? bot.agent} isn't installed on this computer.` };
-  // The effective lead's live terminal (A1), looked up first: parentArgs is synchronous.
-  const lead = bot.kind === "member" ? effectiveLead(file, botId).lead : "";
-  const leadLive = lead ? (await liveTerminalOf(lead))?.terminal ?? null : null;
-  const parent = parentArgs(file, botId, (id) => (id === lead ? leadLive : null));
-  // A16: role, category and the lead pane's squad as labels on the new pane.
-  const labels = paneLabels(file, botId, {}, lead ? leadPane(rowsOfBot(lead))?.labels ?? null : null);
-  const taken = new Set(terminals().map((t) => t?.name).filter(Boolean));
   const { space, tab } = await placeFor(projectKey);
-  // A12: a pinned model goes to the agent with its own flag, as the CLI passes it; a pin the
-  // agent doesn't list (an old free-text model) is skipped, and the owner told.
-  let pin = [];
-  if (bot.model) {
-    if (knownModelsFrom(agent.key, await modelTexts()).includes(bot.model)) pin = modelArgs(agent.key, bot.model);
-    else notify({ title: "Bots", level: "warning", timeout: 15000,
-      body: `${bot.name} is pinned to "${bot.model}", which isn't a ${agent.name ?? agent.key} model this computer lists; it starts on the agent's default. Edit the bot to pick a listed model, or clear the pin.` });
+  const where = space ? ["--space", space, ...(tab ? ["--tab", tab] : [])] : [];
+  const r = await runCli(["start", botId, "--project", projectKey, ...where]);
+  if (r.code !== 0) return refusedBy(r, "start");
+  if (r.out?.running) {
+    run("agent.focus", { terminal: r.out.running });
+    return { focused: r.out.running };
   }
-  const args = startArgs({ botId, name: hcName(bot.name, botId, taken), cwd: projectKey, space, tab, parent, argv: [...agent.run, ...pin], labels });
-  // The briefing hook goes in before the session starts, so Claude Code reads it at startup.
-  await afterBind(bot, projectKey, agent.key === "claude");
-  let r;
-  try { r = await hc(args); } catch (e) { return { refused: `hc run failed: ${e?.message ?? e}` }; }
-  if (r.code !== 0) return { refused: `hc run failed: ${(r.stderr || r.stdout).trim()}` };
-  let terminal = null;
-  try { terminal = JSON.parse(r.stdout).address ?? null; } catch {}
-  if (!terminal) return { refused: `hc run gave no terminal address: ${r.stdout.trim()}` };
-  started.set(botId, { terminal, at: Date.now() });
+  warn(r.out?.warnings);
   rememberProject(projectKey);
-  // An edit that landed while this Start ran: the file read again, its role and category
-  // put on the new pane (relabelWords against the labels it started with). The pane runs
-  // either way, so hc refusing the labels only warns, as Attach does.
-  let now = null;
-  try { now = await readProject(projectKey); } catch { /* the labels it started with stand */ }
-  if (now?.bots.some((b) => b.id === botId && !b.planned)) {
-    const words = relabelWords(labels, paneLabels(now, botId), labels);
-    if (words.length) {
-      let why = null;
-      try { const l = await hc(["label", terminal, ...words]); if (l.code !== 0) why = (l.stderr || l.stdout).trim(); } catch (e) { why = String(e?.message ?? e); }
-      if (why !== null) notify({ title: "Bots", level: "warning", timeout: 12000, body: `${terminal} plays ${bot.name}, but its labels ${words.join(" ")} weren't set: ${why}` });
-    }
-  }
-  return { terminal };
+  return { terminal: r.out?.terminal ?? null };
 }
 
 /**
- * Ties a running pane on this computer to a bot: for a Claude pane, first the folder check
- * (refused, nothing written, both folders named); then the label off any other terminal
- * holding it, and onto this one. The pane keeps the hc parent it was launched with.
+ * Ties a running pane on this computer to a bot (`automagik-herdr attach`, which writes the
+ * attach row and sets the labels). Never a silent move: a bot the ledger ties to another
+ * pane is refused, naming it (the CLI's `attach --move` moves it).
  */
 export async function attachBot(projectKey, botId, terminal) {
   if (!local(terminal)) return { refused: `Attach works on this computer's panes only; ${terminal} is on another machine.` };
-  let file;
-  try { file = await readProject(projectKey); } catch (e) { return { refused: `Can't read ${projectKey}/${BOTS_PATH}: ${e?.message ?? e}` }; }
-  const bot = file?.bots.find((b) => b.id === botId);
-  if (!bot) return { refused: `No bot ${botId} in ${projectKey}.` };
-  if (bot.planned) return { refused: `${bot.name} is planned (wave ${bot.planned.wave}); clear "planned" before attaching it.` };
-  const row = terminals().find((t) => t?.address === terminal);
-  if (!row || row.state !== "live") return { refused: `${terminal} isn't a live terminal.` };
-  const other = row.labels?.[BOT_LABEL];
-  if (other && other !== botId) {
-    const name = file.bots.find((b) => b.id === other)?.name;
-    return { refused: `${terminal} already plays ${name ? `${name} (${other})` : `bot ${other}`}; nothing was attached. Attach that bot elsewhere, or remove its label, first.` };
-  }
-  const get = await hcGet(terminal);
-  let sessionFolder = get?.foreground?.cwd ?? row.cwd ?? null;
-  if (isClaude(row, get)) {
-    if (!get?.foreground?.cwd) return { refused: `Can't read where ${terminal}'s Claude session runs (hc get ${terminal}); nothing was attached.` };
-    sessionFolder = get.foreground.cwd;
-    let sessionKey;
-    try { sessionKey = await keyOf(sessionFolder); } catch (e) { return { refused: `Can't read the project of ${sessionFolder}: ${e?.message ?? e}` }; }
-    const refusal = attachRefusal({ botName: bot.name, projectKey, sessionFolder, sessionKey });
-    if (refusal) return { refused: refusal };
-  }
-  const holders = terminals().filter((t) => t?.labels?.[BOT_LABEL] === botId && local(t.address)).map((t) => t.address);
-  const moves = labelMoves(holders, terminal, botId, labelsOf);
-  for (const [i, args] of moves.entries()) {
-    let why = null;
-    try {
-      const r = await hc(args);
-      if (r.code !== 0) why = (r.stderr || r.stdout).trim();
-    } catch (e) { why = String(e?.message ?? e); }
-    if (why === null) continue;
-    // The label already came off its old pane: say so, rather than a bare hc error.
-    const lost = i === moves.length - 1 && moves.length > 1;
-    return { refused: lost ? `${bot.name} has no pane now (its label came off ${holders.filter((h) => h !== terminal).join(", ")}); attach again. hc said: ${why}`
-      : `hc ${args.join(" ")} failed: ${why}` };
-  }
-  // A16: role, category and a squad copied from the lead, beside the bot label. The pane
-  // plays the bot already, so a failure here only warns.
-  const have = { ...(row.labels ?? {}), [BOT_LABEL]: botId };
-  const lead = leadIdOf(file, botId);
-  const words = attachWords(file, botId, have, lead ? rowsOfBot(lead) : []);
-  if (words.length) {
-    let why = null;
-    try { const r = await hc(["label", terminal, ...words]); if (r.code !== 0) why = (r.stderr || r.stdout).trim(); } catch (e) { why = String(e?.message ?? e); }
-    if (why !== null) notify({ title: "Bots", level: "warning", timeout: 12000, body: `${terminal} plays ${bot.name}, but its labels ${words.join(" ")} weren't set: ${why}` });
-  }
+  const r = await runCli(["attach", botId, terminal, "--project", projectKey]);
+  if (r.code !== 0) return refusedBy(r, "attach");
+  warn(r.out?.warnings);
   rememberProject(projectKey);
-  // Only a Claude pane: its session folder is the one the check above tied to the project.
-  const { written } = await afterBind(bot, sessionFolder, isClaude(row, get));
-  if (written) {
-    notify({ title: "Bots", level: "info", timeout: 15000,
-      body: `${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no `
-        + `briefing, restart the bot: automagik-herdr restart ${bot.id} (or the bot row's Restart).` });
-  }
   return { ok: true };
 }

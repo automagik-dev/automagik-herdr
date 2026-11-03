@@ -109,35 +109,28 @@ export function planText(plan, session) {
   return `resuming its last conversation (${plan.resume.join(" ")})`;
 }
 
-// ---- the sidebar's Restart: the CLI, run by herdr-core ----
+// ---- the sidebar's Restart: the CLI, as launch.js runCli runs it ----
 
 /**
- * The `hc` arguments the sidebar's Restart runs: `hc exec` of this pack's CLI (bin/run.sh
- * finds node) in herdr-core's environment, whose PATH is the one `hc run` starts agents with,
- * so the CLI finds hc and the agent as Start does. `agent`: Restart on… (a swap); `force`:
- * past a working pane or its helpers; `fresh`: a new conversation.
+ * The CLI arguments the sidebar's Restart passes to launch.js runCli (which adds --json and
+ * this app home): `agent`: Restart on… (a swap); `force`: past a working pane or its helpers;
+ * `fresh`: a new conversation.
  */
-export function restartCall({ appHome, botId, projectKey, agent = null, force = false, fresh = false }) {
-  const bin = `${appHome}/mods/am-sidebar/bin`;
-  return ["exec", "--env", `HERDR_APP_HOME=${appHome}`, "--cwd", projectKey, "--timeout", "120", "--",
-    "sh", `${bin}/run.sh`, `${bin}/automagik-herdr.mjs`, "restart", botId, "--project", projectKey, "--json",
-    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
+export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false }) {
+  return ["restart", botId, "--project", projectKey, ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
 }
 
 /**
- * What the CLI's answer to restartCall means: { terminal, replaced, warnings } on success,
- * else { refused, forceable, freshable } (the refusal is one --force overrides, or one a new
- * conversation, --fresh, avoids).
+ * What runCli's answer ({ code, out, err }) to restartArgs means: { terminal, replaced,
+ * warnings } on success, else { refused, forceable, freshable } (the refusal is one --force
+ * overrides, or one a new conversation, --fresh, avoids).
  */
 export function restartAnswer(r) {
-  if (r?.code === 0) {
-    try {
-      const j = JSON.parse(r.stdout);
-      if (j?.terminal) return { terminal: j.terminal, replaced: j.replaced ?? null, warnings: Array.isArray(j.warnings) ? j.warnings : [] };
-    } catch { /* not the CLI's answer: below */ }
+  if (r?.code === 0 && r.out?.terminal) {
+    return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings: Array.isArray(r.out.warnings) ? r.out.warnings : [] };
   }
-  const lines = String(r?.stderr || r?.stdout || "").split("\n").map((l) => l.replace(/^automagik-herdr: /, "").trim()).filter(Boolean);
+  if (r?.code === 0 && r.out?.running) return { refused: `It is already running in ${r.out.running}.`, forceable: false, freshable: false };
   // The CLI's refusal is its last stderr line (warnings come before it).
-  const refused = lines.pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
+  const refused = String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
   return { refused, forceable: /pass --force/.test(refused), freshable: /--fresh\b/.test(refused) };
 }

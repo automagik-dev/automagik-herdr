@@ -17,9 +17,9 @@ import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, ap
 import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
-import { restartAnswer, restartCall } from "./restart.js";
+import { restartAnswer, restartArgs } from "./restart.js";
 import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
-import { attachBot, startBot, liveTerminalOf } from "./launch.js";
+import { attachBot, startBot, liveTerminalOf, runCli } from "./launch.js";
 
 const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
 // The form's dialog size: the mockup's 1000 × 840 (main.js opens it the same way).
@@ -334,7 +334,7 @@ export class BotForm {
     });
   }
 
-  // Restart (the CLI's `restart`, run by herdr-core): the bot's agent again in its pane's
+  // Restart (the CLI's `restart`, through runCli): the bot's agent again in its pane's
   // place, the old pane ended once the new one is up; `agent` swaps it (Restart on…). A
   // refusal --force overrides (a turn in progress) is offered once more as "Restart anyway".
   restart(project, bot, cx, { agent = null, force = false, fresh = false } = {}) {
@@ -345,8 +345,7 @@ export class BotForm {
     this.freshable = null;
     cx.spawn(async (cx) => {
       let r;
-      try { r = restartAnswer(await hc(restartCall({ appHome: appHome(), botId: bot.id, projectKey: project.key, agent, force, fresh }))); }
-      catch (e) { r = { refused: `Restart failed: ${e?.message ?? e}` }; }
+      r = restartAnswer(await runCli(restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh })));
       this.busy = false;
       if (r.refused) {
         this.error = r.refused;

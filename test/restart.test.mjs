@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { canResume, resumeArgs } from "../mods/am-sidebar/models.js";
-import { carriedLabels, continueRefusal, ledgerSession, planText, restartAnswer, restartCall, restartPlan, restartRefusal, sessionId, sessionOf } from "../mods/am-sidebar/restart.js";
+import { carriedLabels, continueRefusal, ledgerSession, planText, restartAnswer, restartArgs, restartPlan, restartRefusal, sessionId, sessionOf } from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 
@@ -90,19 +90,17 @@ test("carriedLabels keeps the old pane's squad and its mark; sessionOf reads age
   assert.equal(sessionOf(null), null);
 });
 
-test("the sidebar's Restart: hc exec of the pack's CLI in herdr-core's environment; its answer read back", () => {
-  assert.deepEqual(restartCall({ appHome: "/a", botId: "b-1", projectKey: "/p" }), ["exec", "--env", "HERDR_APP_HOME=/a", "--cwd", "/p", "--timeout", "120", "--",
-    "sh", "/a/mods/am-sidebar/bin/run.sh", "/a/mods/am-sidebar/bin/automagik-herdr.mjs", "restart", "b-1", "--project", "/p", "--json"]);
-  assert.deepEqual(restartCall({ appHome: "/a", botId: "b-1", projectKey: "/p", agent: "codex", force: true }).slice(-3), ["--agent", "codex", "--force"]);
-  assert.equal(restartCall({ appHome: "/a", botId: "b-1", projectKey: "/p", fresh: true }).at(-1), "--fresh");
-  assert.deepEqual(restartAnswer({ code: 0, stdout: JSON.stringify({ terminal: "t100", replaced: "t5", warnings: ["w"] }), stderr: "" }),
-    { terminal: "t100", replaced: "t5", warnings: ["w"] });
-  const working = restartAnswer({ code: 1, stdout: "", stderr: "automagik-herdr: a warning\nautomagik-herdr: Genie is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.\n" });
+test("the sidebar's Restart: the CLI's restart through launch.js runCli; its answer read back", () => {
+  assert.deepEqual(restartArgs({ botId: "b-1", projectKey: "/p" }), ["restart", "b-1", "--project", "/p"]);
+  assert.deepEqual(restartArgs({ botId: "b-1", projectKey: "/p", agent: "codex", force: true, fresh: true }).slice(4), ["--agent", "codex", "--force", "--fresh"]);
+  assert.deepEqual(restartAnswer({ code: 0, out: { terminal: "t100", replaced: "t5", warnings: ["w"] }, err: "" }), { terminal: "t100", replaced: "t5", warnings: ["w"] });
+  assert.deepEqual(restartAnswer({ code: 0, out: { id: "b-1", running: "t7" }, err: "" }), { refused: "It is already running in t7.", forceable: false, freshable: false });
+  const working = restartAnswer({ code: 1, out: null, err: "a warning\nGenie is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force." });
   assert.match(working.refused, /^Genie is working in t5/);
   assert.equal(working.forceable, true);
-  assert.equal(restartAnswer({ code: 1, stderr: "automagik-herdr: Genie has no recorded Claude session ... restart with --fresh for a new conversation.\n" }).freshable, true);
-  assert.deepEqual(restartAnswer({ code: 1, stdout: "", stderr: "automagik-herdr: No bot x in this project.\n" }), { refused: "No bot x in this project.", forceable: false, freshable: false });
-  assert.deepEqual(restartAnswer({ code: 127, stdout: "", stderr: "" }), { refused: "Restart failed (exit 127).", forceable: false, freshable: false });
+  assert.equal(restartAnswer({ code: 1, err: "Genie has no recorded Claude session ... restart with --fresh for a new conversation." }).freshable, true);
+  assert.deepEqual(restartAnswer({ code: 1, out: null, err: "No bot x in this project." }), { refused: "No bot x in this project.", forceable: false, freshable: false });
+  assert.deepEqual(restartAnswer({ code: 127, out: null, err: "" }), { refused: "Restart failed (exit 127).", forceable: false, freshable: false });
 });
 
 test("session ids: only UUID-shaped ones resume; a flag-like value never reaches --resume; the ledger's last row for the terminal stands in", () => {

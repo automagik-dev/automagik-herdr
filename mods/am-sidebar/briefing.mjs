@@ -2,9 +2,10 @@
 // Claude Code runs it on UserPromptSubmit from the per-person hook Start and Attach write
 // in the session's .claude/settings.local.json; whatever it prints reaches the agent as
 // context. Plain node, outside Herdr: it imports no `herdr` or `gpui`, only the pack's pure
-// modules. Fail-open: it prints nothing and exits 0 unless HC_TERMINAL_ID's terminal carries
-// a `bot` label defined in the project $CLAUDE_PROJECT_DIR keys to; on an error it prints one
-// stderr line and still exits 0.
+// modules. Fail-open: it prints nothing and exits 0 unless the attach ledger (attach.js) ties
+// HC_TERMINAL_ID's terminal to a bot defined in the project $CLAUDE_PROJECT_DIR keys to; on an
+// error it prints one stderr line and still exits 0. It only reads the ledger (the CLI alone
+// writes it); before the CLI's first run has made one, the `bot` label stands in.
 // It also ties a Claude session to its terminal for usagemeter, bot or worker alike: when the
 // hook's stdin names a session_id the terminal's agent.session label doesn't hold yet, it
 // appends a session row to the workers ledger and sets the label (once per change). That part
@@ -13,10 +14,11 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { closeSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf } from "./launchArgs.js";
+import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
 import { briefingText, directMembers, latestReport } from "./briefingText.mjs";
 import { SESSION_LABEL, ledgerLine, ledgerPath, sessionChange, sessionRow } from "./workers.js";
 
@@ -66,7 +68,7 @@ const exists = async (path) => { try { await access(path); return true; } catch 
  * own live terminal, whose unlabelled children are its helpers (null: no helpers counted).
  * Shared with the CLI's `automagik-herdr brief`.
  */
-export async function gatherBriefing({ file, bot, address, ask }) {
+export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask) }) {
   const team = directMembers(file, bot.id);
   const leadId = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
   const leadBot = leadId ? file.bots.find((b) => b.id === leadId) : null;
@@ -75,8 +77,8 @@ export async function gatherBriefing({ file, bot, address, ask }) {
   // team bot; `hc get` only for the bot panes found and the children no query named.
   const [all, panes, leadPane] = await Promise.all([
     address ? ask(["ls"]) : null,
-    Promise.all(team.map((m) => paneOf(m.id, ask))),
-    leadBot ? paneOf(leadBot.id, ask) : null,
+    Promise.all(team.map((m) => locate(m.id))),
+    leadBot ? locate(leadBot.id) : null,
   ]);
   const known = new Set([...panes, leadPane].flatMap((p) => p?.addresses ?? []));
   const [members, helpers] = await Promise.all([
@@ -94,6 +96,40 @@ export async function gatherBriefing({ file, bot, address, ask }) {
   return briefingText({ self: bot, file, members, lead, helpers });
 }
 
+/**
+ * The attach ledger under `appHome`, read only, through `ask`: null when there is no file
+ * yet; a group- or world-writable one throws. Resolves { botAt(get), locate(botId) }:
+ * botAt is the bot a terminal's `hc get` plays (null: none), locate a bot's pane in
+ * paneOf's shape, each binding confirmed with `hc get` (live, the same created_ms) on demand.
+ */
+export async function ledgerOf(appHome, ask) {
+  const path = attachPath(appHome);
+  let st;
+  try { st = statSync(path); } catch (e) { if (e?.code === "ENOENT" || e?.code === "ENOTDIR") return null; throw e; }
+  const why = modeProblem(path, st.mode);
+  if (why) throw new Error(why);
+  const { byBot, byKey } = foldAttach(readAttach(readFileSync(path, "utf8")).rows);
+  const status = await ask(["server", "status"]);
+  const core = status && status !== UNANSWERED ? status.core?.id : null;
+  if (typeof core !== "string" || !core) throw new Error("hc server status gave no core id");
+  const none = { get: null, duplicate: false, addresses: [], gets: [] };
+  return {
+    botAt: (get) => {
+      const b = get && typeof get === "object" ? byKey.get(attachKey({ core, terminal: get.address, created_ms: get.created_ms })) : null;
+      return b && verdictOf(b, get) === "live" ? b.bot : null;
+    },
+    locate: async (botId) => {
+      const b = byBot.get(botId);
+      if (!b) return none;
+      const { live, unknown } = await confirmBindings([b], core, ask, UNANSWERED);
+      if (unknown.length) return { ...none, addresses: [b.terminal], unreachable: true };
+      if (!live.length) return none;
+      const get = { ...live[0].get, address: live[0].get.address ?? b.terminal };
+      return { get, duplicate: false, addresses: [get.address], gets: [get] };
+    },
+  };
+}
+
 // `me`: the pending `hc get` of HC_TERMINAL_ID, shared with joinSession.
 async function main(mePending) {
   const self = process.env.HC_TERMINAL_ID;
@@ -101,12 +137,14 @@ async function main(mePending) {
   if (!self || !dir) return null;
   const [me, key] = await Promise.all([mePending, projectKeyOf(dir, git, exists)]);
   if (hcMissing) throw new Error("hc is not on PATH");
-  const botId = me && me !== UNANSWERED ? me.labels?.[BOT_LABEL] : null;
+  if (!me || me === UNANSWERED) return null;
+  const ledger = await ledgerOf(appHomeOf(), hcJson);
+  const botId = ledger ? ledger.botAt({ ...me, address: me.address ?? self }) : me.labels?.[BOT_LABEL];
   if (!botId) return null;
   const { file } = parseBots(await readFile(`${key === "/" ? "" : key}/${BOTS_PATH}`, "utf8"));
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot || bot.planned) return null;
-  return gatherBriefing({ file, bot, address: me.address ?? self, ask: hcJson });
+  return gatherBriefing({ file, bot, address: me.address ?? self, ask: hcJson, ...(ledger ? { locate: ledger.locate } : {}) });
 }
 
 /**
