@@ -1,7 +1,7 @@
 {
   "name": "automagik-herdr",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.11.0",
   "description": "Automagik Herdr: autonomous, cross-harness teams of coding agents in Herdr.",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,6 +10,6 @@
   },
   "scripts": {
     "test": "node --test 'test/*.test.mjs'",
-    "check": "for f in mods/am-sidebar/*.js mods/am-sidebar/*.mjs mods/am-sidebar/bin/*.mjs scripts/*.mjs; do node --check \"$f\" || exit 1; done && node scripts/version.mjs check"
+    "check": "for f in mods/am-sidebar/*.js mods/am-sidebar/*.mjs mods/am-sidebar/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do node --check \"$f\" || exit 1; done && node scripts/version.mjs check"
   }
 }

@@ -106,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test 'test/*.test.mjs'
-          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do
             node --check "$f"
           done
           node scripts/version.mjs check
