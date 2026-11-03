@@ -13,7 +13,7 @@ const FILE = (name) => ({ file: { version: 1, categories: [], bots: [{ id: name 
 
 // A fake io: each machine's latency (Infinity: never answers), its folders' keys, and a log.
 // Its key lookups bound themselves (as bots.js does each call) after `timeoutMs`.
-function fakeIo({ latency = {}, keyOf = (folder) => folder, last = () => undefined, listed = [], timeoutMs = 0 } = {}) {
+function fakeIo({ latency = {}, keyOf = (folder) => folder, last = () => undefined, listed = [], timeoutMs = 0, cachedKey } = {}) {
   const io = { calls: [], inflight: {}, max: {}, done: [] };
   const answer = async (machine, what, value) => {
     const m = machine ?? "local";
@@ -31,6 +31,7 @@ function fakeIo({ latency = {}, keyOf = (folder) => folder, last = () => undefin
   io.keyOf = (folder, machine) => within(answer(machine, `key ${folder}`, () => keyOf(folder, machine)), machine ? timeoutMs : 0, sleep);
   io.read = (p) => answer(p.machine, `read ${p.key}`, () => FILE(`${p.machine ?? "local"}:${p.key}`));
   io.last = last;
+  io.cachedKey = cachedKey;
   io.listed = async () => listed;
   return io;
 }
@@ -93,13 +94,16 @@ test("discover: this computer's projects are listed before a slow machine answer
 });
 
 test("discover: a machine that never answers holds back only its own projects, which show their last good file", async () => {
-  const last = (p) => (p.machine === "dead" && p.key === "/x" ? FILE("dead-last") : undefined);
-  const io = fakeIo({ latency: { local: 2, dead: Infinity, far: 5 }, last, keyOf: (f) => f, timeoutMs: 60 });
+  const last = (p) => (p.machine === "dead" && ["/x", "/k"].includes(p.key) ? FILE(`dead-last${p.key}`) : undefined);
+  // /w was keyed before: once "dead" is away, its known key still places it.
+  const cachedKey = (f, m) => (m === "dead" && f === "/w" ? "/k" : undefined);
+  const io = fakeIo({ latency: { local: 2, dead: Infinity, far: 5 }, last, keyOf: (f) => f, timeoutMs: 60, cachedKey });
   const spaces = [
     { id: "s1", folder: "/x", machine: "dead" },
     { id: "s2", folder: "/b", machine: null },
     { id: "s3", folder: "/y", machine: "far" },
     { id: "s4", folder: "/z", machine: "dead" },
+    { id: "s5", folder: "/w", machine: "dead" },
   ];
   const updates = [];
   const t0 = Date.now();
@@ -109,9 +113,10 @@ test("discover: a machine that never answers holds back only its own projects, w
   assert.ok(took < 400, `took ${took} ms`);
   // This computer's and far's projects were listed before the dead machine's time ran out.
   assert.deepEqual(updates.map((l) => l.map((p) => p.key)), [["/b", "/x"], ["/b", "/y", "/x"]]);
-  // In the end: the remembered dead project with its last good file; /z (never keyed) is skipped.
-  assert.deepEqual(found.map((p) => [p.machine, p.key]), [[null, "/b"], ["far", "/y"], ["dead", "/x"]]);
-  assert.equal(found[2].file.bots[0].id, "dead-last");
+  // In the end: the remembered dead project and /w's (by its known key) with their last good
+  // files; /z (never keyed) is skipped.
+  assert.deepEqual(found.map((p) => [p.machine, p.key, p.spaces]), [[null, "/b", ["s2"]], ["far", "/y", ["s3"]], ["dead", "/k", ["s5"]], ["dead", "/x", []]]);
+  assert.deepEqual(found.slice(2).map((p) => p.file.bots[0].id), ["dead-last/k", "dead-last/x"]);
   // After one call to the dead machine timed out, its others didn't wait (limit 1: one call).
   assert.equal(io.calls.filter(([m]) => m === "dead").length, 1);
 });

@@ -52,7 +52,8 @@ export function within(p, ms, sleep) {
  *     machine is away; io.keyOf bounds its own calls, a lookup being several);
  *   io.read({ key, machine, remembered }) -> { file, warnings }, or null (not shown);
  *     rejects when the machine can't answer;
- *   io.last({ key, machine }) -> the last good { file, warnings }, or undefined.
+ *   io.last({ key, machine }) -> the last good { file, warnings }, or undefined;
+ *   io.cachedKey(folder, machine) -> the key known for the folder, without asking (optional).
  * A read that rejects or takes longer than `timeoutMs` (another machine only, timed with
  * `sleep`) shows io.last; after one call to a machine timed out, its other calls this time
  * don't wait. `onUpdate(list)` gets the list each time a machine is done but the last, a
@@ -113,7 +114,8 @@ export async function discover({ spaces, remembered = [] }, io, { limit = DISCOV
     const cli = remote ? null : call(() => io.listed(), () => []).then((keys) => { listed = keys; for (const key of keys) want(key); });
     const mine = [];
     spaces.forEach((s, i) => { if ((s.machine ?? null) === machine && s.folder) mine.push(i); });
-    await Promise.all([cli, ...mine.map((i) => call(() => io.keyOf(spaces[i].folder, machine), () => undefined, false)
+    const keyOf = (i) => call(() => io.keyOf(spaces[i].folder, machine), () => io.cachedKey?.(spaces[i].folder, machine), false);
+    await Promise.all([cli, ...mine.map((i) => keyOf(i)
       .then((key) => { if (typeof key === "string") { keyed.set(i, key); want(key); } }))]);
     await Promise.all(reads);
     left -= 1;

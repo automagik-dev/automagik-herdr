@@ -792,17 +792,17 @@ export default class Spaces extends View {
   // one has been (a discovery longer than the 15-second timer still shows).
   refreshBots(cx) {
     const run = ++this.botsRun;
-    const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-    const show = (found) => {
-      if (run < this.botsShown) return;
-      this.botsShown = run;
-      const seen = JSON.stringify(found);
-      if (seen === this.botsSeen) return;
-      this.botsSeen = seen;
-      this.bots = found;
-      cx.notify();
-    };
     cx.spawn(async (cx) => {
+      const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+      const show = (found) => {
+        if (run < this.botsShown) return;
+        this.botsShown = run;
+        const seen = JSON.stringify(found);
+        if (seen === this.botsSeen) return;
+        this.botsSeen = seen;
+        this.bots = found;
+        cx.notify();
+      };
       let found;
       try { found = await discoverProjects({ sleep, onUpdate: show }); } catch { return; }
       if (run < this.botsShown) return;

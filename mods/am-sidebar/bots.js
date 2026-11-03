@@ -163,6 +163,7 @@ export async function discoverProjects({ sleep = null, onUpdate = null } = {}) {
     keyOf: (folder, machine) => knownKeyOf(folder, machine, sleep),
     read: readProject,
     last: (p) => lastGood.get(id(p.machine, p.key)),
+    cachedKey: (folder, machine) => keys.get(id(machine, folder))?.key,
   }, { sleep, onUpdate });
 }
 
