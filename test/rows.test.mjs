@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, visibleRows, botFold, categoryFold, knownBots, projectId,
+  ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
   secondLine, argvToAsk, argvEntry,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
@@ -42,7 +42,7 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   ];
   const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
   assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-devdevdevd", "b-mainmainma", "b-pmpmpmpmpm"]);
-  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
+  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, parent: null, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
   assert.equal(live["b-mainmainma"].duplicate, false);
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
@@ -193,6 +193,29 @@ test("placeTrees: after the first shown space of a project, once; projects with 
   const { at, rest } = placeTrees(["s1", "wt", "x", "s9"], trees);
   assert.deepEqual([...at], [["s1", projectId({ key: "/a" })], ["s9", projectId({ key: "/c", machine: "box" })]]);
   assert.deepEqual(rest, [projectId({ key: "/b" })]);
+});
+
+test("a project whose last space closes stays where that space was; one never placed goes right after the open spaces", () => {
+  const trees = buildTree({ projects: [
+    { key: "/a", file, spaces: ["s2"] },
+    { key: "/b", file, spaces: ["s3"] },
+    { key: "/c", file, spaces: [] },
+  ] });
+  const [a, b, c] = ["/a", "/b", "/c"].map((key) => projectId({ key }));
+  // Drawn with every space open: where each placed project's tree is.
+  const open = ["s1", "s2", "s3"];
+  const last = placesOf(open, placeTrees(open, trees).at);
+  assert.deepEqual([...last], [[a, 1], [b, 2]]);
+  // /a's space closes: /a stays between s1 and s3; /c, never placed, after the open spaces.
+  const now = ["s1", "s3"];
+  const { rest } = placeTrees(now, trees);
+  assert.deepEqual(rest, [a, c]);
+  assert.deepEqual(withSpaceless(now, rest, last), [{ space: "s1" }, { project: a }, { space: "s3" }, { project: c }]);
+  // Every space gone: the remembered order holds, after nothing.
+  assert.deepEqual(withSpaceless([], [b, a, c], last), [{ project: a }, { project: b }, { project: c }]);
+  // The first space closing keeps its project first.
+  assert.deepEqual(withSpaceless(["s2"], [projectId({ key: "/z" })], new Map([[projectId({ key: "/z" }), 0]])),
+    [{ project: projectId({ key: "/z" }) }, { space: "s2" }]);
 });
 
 test("secondLine: the model a live pane runs (its command line, else the agent's default), never typed text", () => {

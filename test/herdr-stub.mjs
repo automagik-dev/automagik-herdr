@@ -7,7 +7,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 
 export const state = {
-  spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [],
+  // offline: machines whose calls reject; hung: machines whose calls never answer.
+  spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), hung: new Set(), calls: [],
   // Start and Attach: terminals() rows, hc's answers by command (hcAnswer), hc calls made, run() calls.
   terminals: [], focused: null, agents: [], hcCalls: [], runs: [], hcAnswer: () => ({ code: 0, stdout: "{}", stderr: "" }),
 };
@@ -41,6 +42,7 @@ export function setShared(key, value) { state.setSharedCalls += 1; state.shared.
 export function exec(command, args = [], { cwd, on } = {}) {
   state.calls.push({ kind: "exec", command, args, cwd, on: on ?? null });
   if (on && state.offline.has(on)) return Promise.reject(new Error(`${on} is unreachable`));
+  if (on && state.hung.has(on)) return new Promise(() => {});
   return new Promise((resolve, reject) => execFile(command, args, { cwd }, (err, stdout, stderr) => {
     if (err && typeof err.code !== "number") reject(err);
     else resolve({ code: err ? err.code : 0, stdout, stderr });
@@ -50,6 +52,7 @@ export function exec(command, args = [], { cwd, on } = {}) {
 export async function readTextFile(path, { on } = {}) {
   state.calls.push({ kind: "read", path, on: on ?? null });
   if (on && state.offline.has(on)) throw new Error(`${on} is unreachable`);
+  if (on && state.hung.has(on)) return new Promise(() => {});
   // state.readFault(path): an error to throw for a file that is there (Herdr's 1 MiB cap, a permission).
   const fault = state.readFault?.(path);
   if (fault) throw fault;

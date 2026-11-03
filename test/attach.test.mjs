@@ -1,7 +1,7 @@
 // The attach ledger (attach.js, and the CLI that alone writes it): the fold over plain rows,
 // then automagik-herdr as a program against scratch git projects, a scratch HERDR_APP_HOME
-// and the fake hc (test/fake-hc.mjs) first on PATH. The real hc, window and app home are
-// never touched.
+// and the fake hc (test/fake-hc.mjs) and a fake herdr-app with no window (test/fake-herdr-app.mjs)
+// first on PATH. The real hc, window and app home are never touched.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -13,6 +13,7 @@ import { attachKey, attachRow, confirmBindings, foldAttach, modeProblem, readAtt
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc" };
 const CORE = "fakecore0000";
 
@@ -94,6 +95,9 @@ function scene(t, terminals = () => []) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
+  writeFileSync(join(root, "herdr-app.json"), JSON.stringify({ down: true }));
+  writeFileSync(join(root, "herdr-app.log"), "");
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
@@ -104,7 +108,8 @@ function scene(t, terminals = () => []) {
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: terminals(project), next: 100 }));
   writeFileSync(logPath, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+    HERDR_APP_FAKE_STATE: join(root, "herdr-app.json"), HERDR_APP_FAKE_LOG: join(root, "herdr-app.log") };
   delete env.HC_TERMINAL_ID;
   const cli = (...args) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
@@ -155,7 +160,8 @@ test("NEGATIVE: two CLIs attaching one bot at once: one wins, the other is refus
   s.cli("ls"); // the one-time import, first, so both runs read the same file
   const { execFile } = await import("node:child_process");
   const env = { ...process.env, PATH: `${join(s.root, "bin")}:${process.env.PATH}`, HOME: join(s.root, "home"), HERDR_APP_HOME: s.app,
-    HC_FAKE_STATE: join(s.root, "hc.json"), HC_FAKE_LOG: join(s.root, "hc.log") };
+    HC_FAKE_STATE: join(s.root, "hc.json"), HC_FAKE_LOG: join(s.root, "hc.log"),
+    HERDR_APP_FAKE_STATE: join(s.root, "herdr-app.json"), HERDR_APP_FAKE_LOG: join(s.root, "herdr-app.log") };
   delete env.HC_TERMINAL_ID;
   const go = (terminal) => new Promise((done) => execFile(process.execPath, [CLI, "attach", "Genie", terminal], { cwd: s.project, env },
     (e) => done(e ? e.code : 0)));
