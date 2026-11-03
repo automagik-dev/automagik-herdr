@@ -553,6 +553,35 @@ test("the mod manager catalog: a pack URL in either folder is brought up to date
   assert.equal(existsSync(old), false, "and never in the old one");
 });
 
+test("the mod manager catalog: a local path whose file is gone is dropped for the pack's URL", (t) => {
+  const s = scratch(t);
+  const amMods = join(s.home, "data", "am-mods", "catalog.json"), old = join(s.home, "data", "mod-manager", "catalog.json");
+  const tgzDir = join(s.root, "empty");
+  mkdirSync(tgzDir);
+  const setup = () => { const lines = []; setupHome({ modsDir: s.mods, tgzDir, record: { mods: [] }, log: (l) => lines.push(l) }); return lines.join("\n"); };
+  const gone = join(s.root, "pack-on-dev", "catalog", "index.json");
+  writeJson(amMods, { url: gone });
+  let log = setup();
+  assert.deepEqual(readJson(amMods), { url: CATALOG_URL });
+  assert.ok(log.includes(`dropped your mod manager catalog ${gone}: the file is gone; using the published index`), log);
+  assert.doesNotMatch(log, /kept your mod manager catalog/);
+  assert.equal(existsSync(old), false, "nothing else under data/ is written");
+  // In the old folder: dropped there; data/am-mods/ is left as it was.
+  writeJson(amMods, { url: "https://example.test/index.json" });
+  writeJson(old, { url: gone });
+  log = setup();
+  assert.deepEqual(readJson(old), { url: CATALOG_URL });
+  assert.deepEqual(readJson(amMods), { url: "https://example.test/index.json" });
+  assert.ok(log.includes(`dropped your mod manager catalog ${gone}`), log);
+  // A local path that is there is kept.
+  mkdirSync(dirname(gone), { recursive: true });
+  writeFileSync(gone, "{}");
+  writeJson(amMods, { url: gone });
+  log = setup();
+  assert.deepEqual(readJson(amMods), { url: gone });
+  assert.ok(log.includes(`kept your mod manager catalog (${gone})`), log);
+});
+
 test("the mod manager reads the person's catalog URL wherever it is; a copy holding the pack's never shadows it", async (t) => {
   const s = scratch(t);
   const io = { readText: async (path) => read(path) };

@@ -203,3 +203,25 @@ test("names differing only in case: Pocket-Link, Demo and Main.json never touch 
   for (const k of Object.keys(before)) if (k.startsWith("automagik-herdr/")) delete before[k];
   assert.deepEqual(after, before, "the person's mods and layouts are byte-identical");
 });
+
+test("catalogUrl: a local catalog path whose file is gone falls back to the published index", async (t) => {
+  const home = scratch(t);
+  const put = (dir, url) => {
+    mkdirSync(join(home, "data", dir), { recursive: true });
+    writeFileSync(join(home, "data", dir, "catalog.json"), JSON.stringify({ url }));
+  };
+  const gone = join(home, "renamed", "catalog", "index.json");
+  put("am-mods", gone);
+  assert.equal(await core.catalogUrl(ioOf(), home), core.CATALOG_URL, "the only candidate is dead");
+  const nullIo = { ...ioOf(), readText: async (p) => (existsSync(p) ? readFileSync(p, "utf8") : null) };
+  assert.equal(await core.catalogUrl(nullIo, home), core.CATALOG_URL, "a readText that returns null on a missing file");
+  put("mod-manager", core.CATALOG_URL);
+  assert.equal(await core.catalogUrl(ioOf(), home), core.CATALOG_URL, "the pack's URL in the old folder");
+  put("mod-manager", "https://example.test/index.json");
+  assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/index.json", "the person's other URL wins");
+  mkdirSync(dirname(gone), { recursive: true });
+  writeFileSync(gone, JSON.stringify({ mods: [] }));
+  assert.equal(await core.catalogUrl(ioOf(), home), gone, "a local path that is there still wins");
+  put("am-mods", "file:///catalogs/mine.json");
+  assert.equal(await core.catalogUrl(ioOf(), home), "file:///catalogs/mine.json", "a URL with a scheme is not probed");
+});
