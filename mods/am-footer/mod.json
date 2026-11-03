@@ -1,8 +1,4 @@
 {
   "place": "none",
-  "title": "Automagik Footer",
-  "cloned_from": {
-    "name": "workspace-chrome",
-    "version": "0.1.11"
-  }
+  "title": "Automagik Footer"
 }
