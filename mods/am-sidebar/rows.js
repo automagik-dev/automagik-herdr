@@ -99,7 +99,8 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
 
 /**
  * Every project's bot tree. `projects`: discoverProjects()' entries ({ key, machine?, file,
- * warnings? }); one tree per machine and key however often it is listed (worktree spaces).
+ * warnings?, stale? }); one tree per machine and key however often it is listed (worktree
+ * spaces), `stale` carried over.
  * `live`: liveFrom()'s map. `terminals`: terminals() rows, for helpers only. A member nests
  * under its effective lead (A1, by definition only, never by hc parent); the main bot's
  * direct reports group by `category` in file order, then the uncategorised; a planned bot
@@ -137,7 +138,7 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
       // No main bot (or a file that did not parse): every bot at the top, nothing nested.
       if (!warnings.includes("no main bot") && file.bots.length) warnings.unshift("no main bot");
       trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: null, categories: [],
-        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings });
+        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings, ...(p.stale ? { stale: true } : {}) });
       continue;
     }
     placed.add(main.id);
@@ -149,7 +150,8 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
     const mainNode = node(main);
     // main's own `members` are its direct reports, already grouped above.
     mainNode.members = [];
-    trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings });
+    trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings,
+      ...(p.stale ? { stale: true } : {}) });
   }
   return trees;
 }
@@ -169,6 +171,35 @@ export function placeTrees(orderedSpaceIds, trees) {
     at.set(sid, projectId(t));
   }
   return { at, rest: trees.map(projectId).filter((id) => !placed.has(id)) };
+}
+
+/**
+ * Where each placed project's tree is (`at` from placeTrees) as an index into the same space
+ * list: the place withSpaceless puts the project back at once its last space closes.
+ */
+export function placesOf(orderedSpaceIds, at) {
+  const out = new Map();
+  orderedSpaceIds.forEach((sid, i) => { if (at.has(sid)) out.set(at.get(sid), i); });
+  return out;
+}
+
+/**
+ * One sidebar list with its spaceless projects in it (A8): each where its space last was
+ * (`last`: Map<project id, index> from placesOf), else right after the open spaces. Returns
+ * the drawing order as { space: id } and { project: id } items.
+ */
+export function withSpaceless(orderedSpaceIds, spaceless, last = new Map()) {
+  const n = orderedSpaceIds.length;
+  // Two at one place keep their remembered order, then the order they came in.
+  const pending = spaceless.map((id, i) => ({ id, i, was: last.get(id) ?? Infinity, at: Math.min(last.get(id) ?? n, n) }))
+    .sort((a, b) => a.at - b.at || (a.was === b.was ? 0 : a.was < b.was ? -1 : 1) || a.i - b.i);
+  const out = [];
+  let k = 0;
+  for (let s = 0; s <= n; s += 1) {
+    while (k < pending.length && pending[k].at === s) out.push({ project: pending[k++].id });
+    if (s < n) out.push({ space: orderedSpaceIds[s] });
+  }
+  return out;
 }
 
 /** The fold id of a bot row, or of a project's category. */

@@ -1011,17 +1011,17 @@ async function pidOf(terminal) {
  * the `herdr.space` / `herdr.tab` labels of a live terminal on this computer whose folder
  * keys to the project, while the window (herdr-app ls) shows the project in that space: a
  * caller's tab in another space never takes the bot. Else the window's space on the project, in
- * its selected tab. Null when none does; the pane then has no place in Herdr's window. With no
- * window to ask, the first labelled terminal's place.
+ * its selected tab. Null when none does; the pane then has no place in Herdr's window. `seen`:
+ * windowSpaces(), read once by the caller; null (no window to ask): the first labelled
+ * terminal's place.
  */
-async function placementOf(key) {
+async function placementOf(key, seen = null) {
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && typeof r.cwd === "string");
   const keys = new Map();
   await Promise.all([...new Set(rows.map((r) => r.cwd))].map(async (cwd) => {
     try { keys.set(cwd, await keyOf(cwd)); } catch { /* a folder gone: not this project */ }
   }));
   const mine = rows.filter((r) => keys.get(r.cwd) === key);
-  const seen = await windowSpaces();
   const shows = (place) => !seen || spacePlace(seen.spaces.filter((s) => s.id === place.space), seen.keys, key) !== null;
   for (const r of mine) {
     const place = placementFrom([await hcGet(r.address)].filter(Boolean));
@@ -1042,6 +1042,34 @@ async function windowSpaces() {
     try { keys.set(f, await keyOf(f)); } catch { /* a folder gone: not this project */ }
   }));
   return { spaces, keys };
+}
+
+/**
+ * Where a start with no --space goes: a project terminal's place (placementOf) while the window
+ * still shows that space, else a window space on the project, else a new one (herdr-app do
+ * space.new, named after the folder). With no window to ask, the terminal's place, or null.
+ * `seen`: windowSpaces(), read once per start and shared with placementOf.
+ * Two starts at once can each open one: both then use the first space on the project in the
+ * window, and the one that opened another closes it (it holds only its new shell).
+ */
+async function windowPlace(key, labelled = null, seen = null) {
+  if (!seen) return labelled;
+  if (labelled && seen.spaces.some((s) => s.id === labelled.space)) return labelled;
+  // This ls is the check right before space.new: nothing else runs between them.
+  const open = spacePlace(seen.spaces, seen.keys, key);
+  if (open) return open;
+  const name = key.replace(/\/+$/, "").split("/").pop();
+  const r = await runProgram("herdr-app", ["do", "space.new", JSON.stringify({ name, folder: key, machine: "" })]);
+  if (r.code !== 0) return null;
+  let out = {};
+  try { out = JSON.parse(r.stdout) ?? {}; } catch { /* the space is found in ls instead */ }
+  const now = await windowSpaces();
+  const first = now && spacePlace(now.spaces, now.keys, key);
+  const ours = now?.spaces.find((s) => s.id === out.space || s.tabs.some((t) => t.panes.some((p) => p.terminal === out.terminal)));
+  if (first && ours && ours.id !== first.space) {
+    await runProgram("herdr-app", ["do", "space.close", JSON.stringify({ id: ours.id, confirmed: true })]);
+  }
+  return first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
 }
 
 async function cmdStart(opts, [ref]) {
@@ -1112,7 +1140,14 @@ async function launchSeat(project, bot, over = {}) {
   const runPath = interpreterPath(argv[0], process.env.PATH);
   const path = runPath.path !== process.env.PATH ? runPath.path : null;
   const cwd = over.cwd ?? key;
-  const place = over.place !== undefined ? over.place : await placementOf(key);
+  // A restart's own place (the old pane's space and tab) stands; a start asks the window too:
+  // one herdr-app ls, shared by placementOf (a label whose space doesn't show the project is
+  // dropped) and windowPlace (an open space on the project, else a new one).
+  let place = over.place;
+  if (place === undefined) {
+    const seen = await windowSpaces();
+    place = await windowPlace(key, await placementOf(key, seen), seen);
+  }
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };

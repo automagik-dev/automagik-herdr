@@ -96,15 +96,18 @@ test("commands: name with optional JSON or key=value arguments", () => {
 // ---- launch.js over the stand-ins: the sidebar runs the real CLI ----
 // launch.js execs `env HERDR_APP_HOME=<app> sh <app>/mods/am-sidebar/bin/run.sh <cli> …`
 // through the stub's exec (a real execFile). The scratch app home's mods/am-sidebar links
-// to this checkout, and this process's PATH starts with a fake hc (test/fake-hc.mjs), its HOME
-// a scratch one, so the CLI never reaches a real hc, window or app home.
+// to this checkout, and this process's PATH starts with a fake hc (test/fake-hc.mjs) and a fake
+// herdr-app with no window (test/fake-herdr-app.mjs), its HOME a scratch one, so the CLI never
+// reaches a real hc, window or app home.
 
 const run = promisify(execFile);
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const MOD = new URL("../mods/am-sidebar", import.meta.url).pathname;
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const saved = { PATH: process.env.PATH, HOME: process.env.HOME, HC_FAKE_STATE: process.env.HC_FAKE_STATE,
-  HC_FAKE_LOG: process.env.HC_FAKE_LOG, HC_TERMINAL_ID: process.env.HC_TERMINAL_ID, HERDR_APP_HOME: process.env.HERDR_APP_HOME };
+  HC_FAKE_LOG: process.env.HC_FAKE_LOG, HC_TERMINAL_ID: process.env.HC_TERMINAL_ID, HERDR_APP_HOME: process.env.HERDR_APP_HOME,
+  HERDR_APP_FAKE_STATE: process.env.HERDR_APP_FAKE_STATE, HERDR_APP_FAKE_LOG: process.env.HERDR_APP_FAKE_LOG };
 
 async function world(t, { file = team(), terminals = () => [] } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
@@ -116,7 +119,11 @@ async function world(t, { file = team(), terminals = () => [] } = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
+  const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
+  writeFileSync(appState, JSON.stringify({ down: true }));
+  writeFileSync(appLog, "");
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   const app = join(root, "app");
@@ -126,7 +133,8 @@ async function world(t, { file = team(), terminals = () => [] } = {}) {
   const logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: terminals(main), next: 100 }));
   writeFileSync(logPath, "");
-  Object.assign(process.env, { PATH: `${bin}:${saved.PATH}`, HOME: home, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath });
+  Object.assign(process.env, { PATH: `${bin}:${saved.PATH}`, HOME: home, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog });
   delete process.env.HC_TERMINAL_ID;
   delete process.env.HERDR_APP_HOME;
   t.after(() => {
@@ -146,8 +154,8 @@ const term = (address, { bot: b, cwd = "/x", argv = ["claude"], created = 1 } = 
 
 test("the fake hc is the one the CLI runs here: never the real one", async (t) => {
   await world(t);
-  const { stdout } = await run("sh", ["-c", "command -v hc"]);
-  assert.match(stdout.trim(), /automagik-herdr-.*\/bin\/hc$/);
+  const { stdout } = await run("sh", ["-c", "command -v hc; command -v herdr-app"]);
+  assert.match(stdout.trim(), /automagik-herdr-.*\/bin\/hc\n.*automagik-herdr-.*\/bin\/herdr-app$/);
 });
 
 test("startBot runs the CLI: hc run in the project's space and tab, an attach row by start; the sidebar sets no label", async (t) => {
@@ -168,6 +176,42 @@ test("startBot runs the CLI: hc run in the project's space and tab, an attach ro
   assert.deepEqual(state.runs, [["agent.focus", { terminal: "t100" }]]);
   assert.equal(w.calls().filter((a) => a[0] === "run").length, 1);
   assert.match((await startBot(w.main, ID.plan)).refused, /planned/);
+});
+
+test("startBot: no space shows the project -> space.new on its folder, waited for and matched by project key", async (t) => {
+  const w = await world(t);
+  const tree = join(w.root, "proj-wt");
+  await run("git", ["worktree", "add", "-q", "-b", "wt", tree], { cwd: w.main });
+  state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] }];
+  // Herdr makes the space a moment after run(), on its own folder spelling: here the worktree,
+  // which keys to the project as the main checkout does.
+  let looks = 0;
+  const sleep = async () => {
+    if (++looks === 2) state.spaces = [...state.spaces, { id: "s5", folder: tree, machine: null, active: true, tabs: [{ id: "t5", active: true }] }];
+  };
+  assert.deepEqual(await startBot(w.main, ID.main, { sleep }), { terminal: "t100" });
+  assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }]]);
+  const runArgs = w.calls().find((a) => a[0] === "run");
+  assert.ok(runArgs.includes("herdr.space=s5") && runArgs.includes("herdr.tab=t5"));
+  // With no sleep to wait by, no space is opened (none left behind empty): the shown space.
+  state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] }];
+  state.runs = [];
+  assert.ok((await startBot(w.main, ID.cap)).terminal);
+  assert.deepEqual(state.runs, []);
+  assert.ok(w.calls().filter((a) => a[0] === "run")[1].includes("herdr.space=s0"));
+});
+
+test("startBot: two bots of one project started at once open one space and both start in it", async (t) => {
+  const w = await world(t);
+  let looks = 0;
+  const sleep = async () => {
+    if (++looks === 3) state.spaces = [{ id: "s5", folder: w.main, machine: null, active: true, tabs: [{ id: "t5", active: true }] }];
+  };
+  await Promise.all([startBot(w.main, ID.main, { sleep }), startBot(w.main, ID.cap, { sleep })]);
+  assert.equal(state.runs.filter(([name]) => name === "space.new").length, 1);
+  const runs = w.calls().filter((a) => a[0] === "run");
+  assert.equal(runs.length, 2);
+  assert.ok(runs.every((a) => a.includes("herdr.space=s5")));
 });
 
 test("startBot: two Starts at once open one pane", async (t) => {
