@@ -10,8 +10,8 @@ Herdr
 ==============================================================================
 
 The sidebar (main.js, mod.json) is derived from Herdr's shipped `spaces` mod,
-version 0.1.7 (Herdr, dev.herdr.app), by way of the owner's clone of it
-(mod.json `cloned_from`), licensed under the Apache License, Version 2.0
+version 0.1.7 (Herdr, dev.herdr.app), by way of the owner's clone of it,
+licensed under the Apache License, Version 2.0
 (see LICENSE-herdr, copied from Herdr.app/Contents/Resources/LICENSE).
 Both files are changed by this pack.
 

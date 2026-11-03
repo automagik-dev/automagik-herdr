@@ -3,7 +3,7 @@
 Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text
 talks about; click one and it renders in a preview pane beside the chat. One mod, two faces.
 
-Derived from Herdr's shipped `menu`, with the Markdown renderer from
+Derived from Herdr's shipped `menu` 0.1.10, with the Markdown renderer from
 [`ohneda/herdr-markdown-browser`](https://github.com/ohneda/herdr-markdown-browser) (MIT; the
 verbatim notice is `LICENSE-upstream`).
 
