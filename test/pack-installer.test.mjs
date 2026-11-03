@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,7 +221,14 @@ test("catalogUrl: a local catalog path whose file is gone falls back to the publ
   assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/index.json", "the person's other URL wins");
   mkdirSync(dirname(gone), { recursive: true });
   writeFileSync(gone, JSON.stringify({ mods: [] }));
-  assert.equal(await core.catalogUrl(ioOf(), home), gone, "a local path that is there still wins");
+  // Both the person's now: the one changed last wins. Explicit mtimes, as `[ -nt ]` compares
+  // whole seconds in macOS sh and nanoseconds in Linux dash.
+  const at = (dir, secs) => utimesSync(join(home, "data", dir, "catalog.json"), secs, secs);
+  at("am-mods", 2_000_000); at("mod-manager", 1_000_000);
+  assert.equal(await core.catalogUrl(ioOf(), home), gone, "a local path that is there counts again");
+  at("am-mods", 1_000_000); at("mod-manager", 2_000_000);
+  assert.equal(await core.catalogUrl(ioOf(), home), "https://example.test/index.json", "and loses to a newer one");
   put("am-mods", "file:///catalogs/mine.json");
+  at("am-mods", 2_000_000); at("mod-manager", 1_000_000);
   assert.equal(await core.catalogUrl(ioOf(), home), "file:///catalogs/mine.json", "a URL with a scheme is not probed");
 });
