@@ -245,7 +245,7 @@ export async function attachBot(projectKey, botId, terminal) {
   if (written) {
     notify({ title: "Bots", level: "info", timeout: 15000,
       body: `${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no `
-        + "briefing, open /hooks once in that session to load it." });
+        + `briefing, restart the bot: automagik-herdr restart ${bot.id} (or the bot row's Restart).` });
   }
   return { ok: true };
 }

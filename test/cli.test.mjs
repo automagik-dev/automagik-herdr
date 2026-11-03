@@ -508,7 +508,7 @@ test("attach moves the label: off the old pane first, then onto the new one; the
   const labels = Object.fromEntries(s.hcState().terminals.map((x) => [x.address, x.labels]));
   assert.deepEqual(labels, { t1: {}, t2: { bot: ID.main, role: "main" } });
   assert.ok(existsSync(join(sub, ".claude/settings.local.json")));
-  assert.match(r.err, /open \/hooks once/);
+  assert.match(r.err, /no briefing, restart the bot: automagik-herdr restart b-[a-z2-7]{10} \(or the bot row's Restart\)/);
 });
 
 test("attach: when the last label write fails after the old one came off, it says the bot has no pane now", (t) => {
@@ -860,4 +860,132 @@ test("start: an edit landing during hc run relabels the new pane; a failed relab
   const r = s.cli(["start", "Dev"]);
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /t101's labels role=reviewer weren't set\./);
+});
+
+// ---- restart ----
+
+/** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
+function restartScene(t, { status = "idle", extra = [], session = "s-1", runAs } = {}) {
+  const s = scene(t);
+  s.seed(team());
+  const old = term("t5", { bot: ID.main, cwd: s.project, status });
+  old.foreground.cwd = s.project;
+  old.labels = { ...old.labels, role: "main", "herdr.space": "sp9", "herdr.tab": "tb3", squad: "core", ...(session ? { "agent.session": session } : {}) };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}) }));
+  return s;
+}
+const at = (calls, word, target) => calls.findIndex((c) => c[0] === word && (target === undefined || c[1] === target));
+
+test("restart: the new pane resumes the session in the old one's space and tab, folder and labels; the old one ends only after", (t) => {
+  const s = restartScene(t);
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out.trim(), "t100", "prints the new terminal");
+  assert.match(r.err, /Genie: t100 replaces t5, resuming session s-1\./);
+  const calls = s.calls();
+  const run = runCall(calls);
+  assert.deepEqual(run.slice(run.indexOf("--")), ["--", "claude", "--resume", "s-1"]);
+  assert.ok(["herdr.space=sp9", "herdr.tab=tb3", `bot=${ID.main}`, "role=main", "squad=core"].every((l) => run.includes(l)), run.join(" "));
+  assert.equal(run[run.indexOf("--cwd") + 1], s.project);
+  // Started, seen live (hc get of the new pane), and only then the old one killed.
+  // Between run and kill: the ledger's pid lookup and at least one agent-up check, both hc get t100.
+  const ran = at(calls, "run"), killed = at(calls, "kill", "t5");
+  assert.ok(ran >= 0 && ran < killed, JSON.stringify(calls));
+  const seen = calls.slice(ran, killed).filter((c) => c[0] === "get" && c[1] === "t100").length;
+  assert.ok(seen >= 2, `the new pane was checked before the kill: ${JSON.stringify(calls)}`);
+  assert.equal(calls.filter((c) => c[0] === "kill").length, 1);
+  const state = s.hcState();
+  assert.equal(state.terminals.find((x) => x.address === "t5").state, "finished");
+  assert.equal(state.terminals.find((x) => x.address === "t100").state, "live");
+});
+
+test("restart refuses a working bot (nothing started or ended) unless --force", (t) => {
+  const s = restartScene(t, { status: "working" });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Genie is working in t5; restarting now would cut its turn in half\. Wait until it is idle, or pass --force\./);
+  assert.equal(runCall(s.calls()), undefined);
+  assert.equal(at(s.calls(), "kill"), -1);
+  const forced = s.cli(["restart", "Genie", "--force"]);
+  assert.equal(forced.code, 0, forced.err);
+  assert.ok(at(s.calls(), "run") < at(s.calls(), "kill", "t5"));
+});
+
+test("restart refuses while a helper would end with the pane; a member bot that outlives it doesn't count", (t) => {
+  const worker = { ...term("t7", { argv: ["codex"], app: "codex", parent: "t5" }), die_with_parent: true };
+  const member = { ...term("t8", { bot: ID.cap, parent: "t5" }), die_with_parent: false };
+  const s = restartScene(t, { extra: [worker, member] });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t5 has a helper that ends with it: t7\. Let it finish, or pass --force/);
+  assert.equal(runCall(s.calls()), undefined);
+});
+
+test("restart keeps the old pane when the new one never brings its agent up, or exits", (t) => {
+  process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS = "400";
+  t.after(() => { delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS; });
+  const s = restartScene(t, { runAs: "shell" });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t100 has no agent in front after 0.4s; t5 still runs Genie, untouched\. Look at it \(hc read t100\)/);
+  assert.equal(at(s.calls(), "kill"), -1);
+  assert.equal(s.hcState().terminals.find((x) => x.address === "t5").state, "live");
+  const s2 = restartScene(t, { runAs: "exit" });
+  const r2 = s2.cli(["restart", "Genie"]);
+  assert.equal(r2.code, 1);
+  assert.match(r2.err, /t100 exited before its agent came up .*t5 still runs Genie, untouched\. Try automagik-herdr restart b-aaaaaaaaaa --fresh\./);
+  assert.equal(at(s2.calls(), "kill"), -1);
+});
+
+test("restart with no session id known: claude --continue, with a warning; --fresh starts a new conversation", (t) => {
+  const s = restartScene(t, { session: null });
+  const r = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().mode, r.json().replaced, r.json().terminal], ["resume", "t5", "t100"]);
+  assert.deepEqual(runCall(s.calls()).slice(-2), ["claude", "--continue"]);
+  assert.match(r.err, /No Claude session id was known for t5, so t100 resumes the latest conversation in .* \(--continue\)/);
+  const s2 = restartScene(t);
+  const fresh = s2.cli(["restart", "Genie", "--fresh", "--json"]);
+  assert.equal(fresh.code, 0, fresh.err);
+  assert.equal(fresh.json().mode, "fresh");
+  assert.deepEqual(runCall(s2.calls()).slice(-2), ["--", "claude"]);
+});
+
+test("restart --agent swaps fresh without touching bots.json; --save writes the agent and drops the old pin; --save alone is a usage mistake", (t) => {
+  const s = restartScene(t);
+  const before = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["restart", "Genie", "--agent", "codex", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().mode, r.json().agent, r.json().saved], ["swap", "codex", false]);
+  assert.deepEqual(runCall(s.calls()).slice(-2), ["--", "codex"]);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
+  // Again from the claude pin, written down this time (t100 is mid-turn in the fake: --force).
+  const f = team();
+  f.bots[0].model = "claude-opus-5-5";
+  s.seed(f);
+  const saved = s.cli(["restart", "Genie", "--agent", "codex", "--save", "--force"]);
+  assert.equal(saved.code, 0, saved.err);
+  assert.equal(s.bots().bots[0].agent, "codex");
+  assert.equal("model" in s.bots().bots[0], false, "the claude pin is dropped");
+  assert.match(saved.err, /bots\.json now says codex/);
+  const lone = s.cli(["restart", "Genie", "--save"]);
+  assert.equal(lone.code, 2);
+  assert.match(lone.err, /--save keeps a swap/);
+});
+
+test("restart a codex bot resumes with codex resume --last; a bot not running is started as start does", (t) => {
+  const s = scene(t, { terminals: [term("t6", { bot: ID.cap, argv: ["codex"], app: "codex", cwd: "/p" })] });
+  const f = team();
+  f.bots[1].agent = "codex";
+  s.seed(f);
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(runCall(s.calls()).slice(-3), ["codex", "resume", "--last"]);
+  assert.equal(r.json().replaced, "t6");
+  // Genie isn't running: a plain start, nothing killed but t6.
+  const started = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(started.code, 0, started.err);
+  assert.deepEqual([started.json().mode, started.json().replaced], ["start", null]);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run")[1].slice(-2), ["--", "claude"]);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t6"]);
 });

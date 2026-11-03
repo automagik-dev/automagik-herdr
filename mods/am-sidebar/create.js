@@ -1,5 +1,5 @@
-// The Create / Edit form, the Attach picker, the bot list (Edit, Start) and a bot row's menu
-// (Edit, Start, Attach to the focused pane): the pack opened as a Herdr dialog or popup
+// The Create / Edit form, the Attach picker, the bot list and a bot row's menu (Edit, Start,
+// Restart, Restart on…, Attach to the focused pane): the pack opened as a Herdr dialog or popup
 // (props.form "create" | "edit" | "attach" | "pick" | "menu"). The Create / Edit form is
 // drawn to the owner-approved mockup (A13, mockup/create-form.dc.html): a live character
 // preview, look, name and sidebar preview on the left; role, instructions, coding agent and
@@ -17,6 +17,7 @@ import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, ap
 import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
+import { restartAnswer, restartCall } from "./restart.js";
 import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
 import { attachBot, startBot, liveTerminalOf } from "./launch.js";
 
@@ -333,6 +334,44 @@ export class BotForm {
     });
   }
 
+  // Restart (the CLI's `restart`, run by herdr-core): the bot's agent again in its pane's
+  // place, the old pane ended once the new one is up; `agent` swaps it (Restart on…). A
+  // refusal --force overrides (a turn in progress) is offered once more as "Restart anyway".
+  restart(project, bot, cx, { agent = null, force = false } = {}) {
+    if (this.busy) return;
+    this.busy = true;
+    this.error = null;
+    this.forceable = null;
+    cx.spawn(async (cx) => {
+      let r;
+      try { r = restartAnswer(await hc(restartCall({ appHome: appHome(), botId: bot.id, projectKey: project.key, agent, force }))); }
+      catch (e) { r = { refused: `Restart failed: ${e?.message ?? e}` }; }
+      this.busy = false;
+      if (r.refused) {
+        this.error = r.refused;
+        this.forceable = r.forceable ? { project, bot, agent } : null;
+      } else {
+        if (r.warnings.length) notify({ title: "Bots", level: "warning", timeout: 15000, body: r.warnings.join("\n") });
+        run("am-sidebar.refresh");
+        closeOverlay(this.p.overlay);
+      }
+      cx.notify();
+    });
+  }
+
+  /** Restart on…: the installed agents, loaded once when the submenu opens. */
+  toggleSwap(cx) {
+    this.swapOpen = !this.swapOpen;
+    if (this.swapOpen && !this.swapAgents) {
+      cx.spawn(async (cx) => {
+        try { this.swapAgents = (await knownAgents()).filter((a) => a.installed !== false && !LEGACY_AGENTS[a.key]); }
+        catch { this.swapAgents = []; }
+        cx.notify();
+      });
+    }
+    cx.notify();
+  }
+
   // ---- drawing (automations' helpers) ----
 
   button(id, label, t, onClick, opts = {}) {
@@ -358,12 +397,13 @@ export class BotForm {
           .when(list, (el) => el.child(this.button("bot-cancel", "Cancel", t, () => closeOverlay(this.p.overlay))))));
   }
 
-  // A bot row's right-click (A10): Edit, Start (not for a planned bot), Attach to the pane
-  // that was focused at the click. A bot defined on another machine is changed from there.
+  // A bot row's right-click (A10): Edit, Start, Restart and Restart on… (not for a planned
+  // bot), Attach to the pane that was focused at the click. A bot defined on another machine
+  // is changed from there.
   menuBody(t) {
     if (this.p.machine) {
       return div().p(14).text_size(12).text_color(t.muted)
-        .child(`${this.p.name} is defined on ${this.p.machine}; Edit, Start and Attach work from that computer.`);
+        .child(`${this.p.name} is defined on ${this.p.machine}; Edit, Start, Restart and Attach work from that computer.`);
     }
     const project = { key: this.p.project }, bot = { id: this.p.bot };
     const pane = typeof this.p.terminal === "string" && !this.p.terminal.includes("/") ? this.p.terminal : null;
@@ -372,6 +412,12 @@ export class BotForm {
     return v_flex().p(6).gap(2)
       .child(item("menu-edit", "Edit…", () => this.edit(project, bot)))
       .when(!this.p.planned, (el) => el.child(item("menu-start", this.busy ? "Starting…" : "Start", (cx) => this.start(project, bot, cx))))
+      .when(!this.p.planned, (el) => el.child(item("menu-restart", this.busy ? "Restarting…" : "Restart", (cx) => this.restart(project, bot, cx))))
+      .when(Boolean(this.forceable), (el) => el.child(item("menu-restart-force", "Restart anyway (ends what it is doing)",
+        (cx) => this.restart(this.forceable.project, this.forceable.bot, cx, { agent: this.forceable.agent, force: true }))))
+      .when(!this.p.planned, (el) => el.child(item("menu-restart-on", `Restart on… ${this.swapOpen ? "▾" : "▸"}`, (cx) => this.toggleSwap(cx))))
+      .when(!this.p.planned && this.swapOpen, (el) => el.children(!this.swapAgents ? [div().px(22).h(26).text_size(12).text_color(t.muted).child("Finding agents…")]
+        : this.swapAgents.map((a) => item(`menu-restart-on-${a.key}`, `    ${a.name ?? a.key}`, (cx) => this.restart(project, bot, cx, { agent: a.key })))))
       .when(!this.p.planned && Boolean(pane), (el) => el.child(item("menu-attach", `Attach to the focused pane (${pane})`, (cx) => this.attach(project, bot, cx))));
   }
 
@@ -390,7 +436,8 @@ export class BotForm {
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted)
             .child(b.planned ? `planned · wave ${b.planned.wave}` : b.kind === "main" ? "Main bot" : b.role))
           .when(pick, (el) => el.child(this.button(`edit-${b.id}`, "Edit", t, () => this.edit(q, b), { h: 22 }))
-            .when(!b.planned, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 })))))];
+            .when(!b.planned, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 }))
+              .child(this.button(`restart-${b.id}`, "Restart", t, (cx) => this.restart(q, b, cx), { h: 22 })))))];
     });
     if (!rows.length && pick) {
       // No bot yet: the list offers the one thing to do, the Create form.
