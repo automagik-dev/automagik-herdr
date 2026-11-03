@@ -55,7 +55,10 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
  * the rename reverts, and `usagemeter=<version>` when install.sh put the usagemeter binary in
- * ~/.local/bin (--uninstall removes only that one). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
+ * ~/.local/bin (--uninstall removes only that one), `usagemeter-machines=<machine>:<version>,…` for
+ * the linked machines the pack put it on (meterFleet.js), and `usagemeter-scope=local|none` when
+ * install.sh ran with --usagemeter-local-only or --no-usagemeter (absent: this computer and every
+ * linked machine). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -75,14 +78,20 @@ export function parseMarker(text) {
       .filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a.mod) && a.mod !== POCKET_LINK && ADOPTED_PATH.test(a.path)),
     migrated: list(get("migrated")).filter((p) => ADOPTED_PATH.test(p)),
     usagemeter: /^\d+\.\d+\.\d+$/.test(get("usagemeter")) ? get("usagemeter") : null,
+    usagemeterOn: Object.fromEntries(list(get("usagemeter-machines")).map((e) => [e.slice(0, e.lastIndexOf(":")), e.slice(e.lastIndexOf(":") + 1)])
+      .filter(([m, v]) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(m) && /^\d+\.\d+\.\d+$/.test(v))),
+    usagemeterScope: ["local", "none"].includes(get("usagemeter-scope")) ? get("usagemeter-scope") : null,
   };
 }
 
-export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], usagemeter = null }) =>
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], usagemeter = null, usagemeterOn = {},
+  usagemeterScope = null }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
     ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
     ...(migrated.length ? [`migrated=${migrated.join(",")}`] : []),
-    ...(usagemeter ? [`usagemeter=${usagemeter}`] : [])].join("\n") + "\n";
+    ...(usagemeter ? [`usagemeter=${usagemeter}`] : []),
+    ...(Object.keys(usagemeterOn ?? {}).length ? [`usagemeter-machines=${Object.entries(usagemeterOn).map(([m, v]) => `${m}:${v}`).join(",")}`] : []),
+    ...(usagemeterScope ? [`usagemeter-scope=${usagemeterScope}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */
 export const NO_UPDATE_ENV = "AUTOMAGIK_HERDR_NO_UPDATE";
 export const FIRST_CHECK_MS = 20_000;

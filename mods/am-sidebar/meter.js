@@ -4,6 +4,8 @@
 // folder on its PATH, so the path is absolute). One run at a time, never more often than
 // usagemeter's own 10-minute freshness check: the start time is shared across sidebar copies,
 // and a copy never starts a run while its last one is still going. A missing binary is silent.
+// Then the same on each connected linked machine (SYNC through exec's `on`), one at a
+// time: each machine's sync writes its own `herdr-meter` doc, which the phone reads there.
 // Pure: no `herdr` import (exec, the shared value and the clock are passed in), so `node --test`
 // runs it; main.js wires it to Herdr's exec, shared and timer. Apache-2.0.
 
@@ -11,6 +13,19 @@ export const METER_FIRST_MS = 30_000;
 export const METER_EVERY_MS = 10 * 60 * 1000;
 /** The shared value (Herdr's shared/setShared) holding when the last run started (ms). */
 export const METER_KEY = "am.sidebar.meter-started";
+
+/** Run as `sh -c SYNC` on a linked machine: its own usagemeter sync; no binary there is silent. */
+export const SYNC = `m=$HOME/.local/bin/usagemeter
+[ -x "$m" ] || exit 0
+exec "$m" sync`;
+
+/**
+ * The linked machines a run syncs: the connected ones of `hc machine ls` (the sidebar's list, no
+ * temporary ones), none when the install record's usagemeter-scope is set (install.sh had
+ * --no-usagemeter or --usagemeter-local-only).
+ */
+export const syncTargets = (machines, scope = null) => (scope ? [] : (machines ?? [])
+  .filter((m) => m && m.state === "connected" && !m.temporary && typeof m.name === "string" && m.name).map((m) => m.name));
 
 /** The one shared usagemeter path, under the person's home (Herdr's `home()`). */
 export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
@@ -23,9 +38,11 @@ export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
  * meantime finds it fresh. No timeout of its own: Herdr's exec gives a program at most 30 s, and
  * usagemeter ends itself within its 20-second budget; a copy never starts a second run while one
  * it started is still going.
- * Resolves `{ ran, why?, code?, wait }`: wait is when to look again (ms).
+ * `machines`: the connected linked machines to sync after this computer, one at a time, within the
+ * same run (`exec("sh", ["-c", SYNC], { on })`; a rejection or a failure there is silent).
+ * Resolves `{ ran, why?, code?, on?, wait }`: wait is when to look again (ms); on: { machine: code }.
  */
-export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {} }) {
+export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {}, machines = [] }) {
   if (state.busy) return { ran: false, why: "busy", wait: METER_EVERY_MS };
   const at = now();
   const last = Number(get(METER_KEY));
@@ -34,10 +51,19 @@ export async function syncMeter({ exec, now = Date.now, bin, get = () => null, s
   state.busy = true;
   try { set(METER_KEY, at); } catch {}
   try {
-    const result = await exec(bin, ["sync"]);
-    return { ran: true, code: result?.code ?? null, wait: METER_EVERY_MS };
-  } catch {
-    return { ran: false, why: "missing", wait: METER_EVERY_MS };
+    let here;
+    try {
+      const result = await exec(bin, ["sync"]);
+      here = { ran: true, code: result?.code ?? null, wait: METER_EVERY_MS };
+    } catch {
+      here = { ran: false, why: "missing", wait: METER_EVERY_MS };
+    }
+    if (!machines.length) return here;
+    const on = {};
+    for (const machine of machines) {
+      try { on[machine] = (await exec("sh", ["-c", SYNC], { on: machine }))?.code ?? null; } catch { on[machine] = null; }
+    }
+    return { ...here, on };
   } finally {
     state.busy = false;
   }

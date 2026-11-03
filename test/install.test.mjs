@@ -1096,6 +1096,70 @@ test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left w
   assert.equal(parseMarker(s.mark()).usagemeter, "0.3.0");
 });
 
+/** A fake hc (test/fake-hc.mjs) on install.sh's PATH: `lin` (Linux x86_64, connected), `off` (not). */
+const linkMachines = (s) => {
+  const lin = join(s.root, "m-lin"), log = join(s.root, "hc.log"), state = join(s.root, "hc.json");
+  mkdirSync(lin);
+  writeFileSync(log, "");
+  writeFileSync(state, JSON.stringify({ terminals: [], machines: [
+    { name: "lin", state: "connected", uname: "Linux x86_64", home: lin }, { name: "off", state: "disconnected", uname: "Linux aarch64", home: lin }] }));
+  exe(join(s.bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${join(dirname(INSTALL), "test", "fake-hc.mjs")}" "$@"\n`);
+  Object.assign(s.extraEnv, { HC_FAKE_STATE: state, HC_FAKE_LOG: log });
+  return {
+    meter: join(lin, ".local", "bin", "usagemeter"),
+    execs: () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a[0] === "exec"),
+  };
+};
+
+test("usagemeter on linked machines: install puts it on the connected one, records it; --uninstall removes it", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  const m = linkMachines(s);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /usagemeter 0\.3\.0 on lin: installed \(checksum ok\)\./);
+  assert.match(r.out, /Warning: usagemeter on off: skipped, the machine is not connected\./);
+  assert.equal(spawnSync(m.meter, ["--version"], { encoding: "utf8" }).stdout.trim(), "usagemeter 0.3.0");
+  assert.equal(sha(m.meter), sha(join(s.root, "release", "usagemeter", "download", "v0.3.0", "usagemeter-linux-x86_64")));
+  assert.deepEqual(parseMarker(s.mark()).usagemeterOn, { lin: "0.3.0" });
+  assert.equal(parseMarker(s.mark()).usagemeterScope, null);
+  // A rerun: already there, nothing downloaded; update.mjs's rewrite of the record keeps the line.
+  const again = s.run();
+  assert.match(again.out, /usagemeter 0\.3\.0 on lin: already installed\./);
+  assert.deepEqual(parseMarker(s.mark()).usagemeterOn, { lin: "0.3.0" });
+  const u = s.run("--uninstall");
+  assert.equal(u.code, 0, u.err);
+  assert.match(u.out, /Removed usagemeter on lin\. Its store is kept\./);
+  assert.equal(existsSync(m.meter), false);
+});
+
+test("usagemeter on linked machines: --usagemeter-local-only and --no-usagemeter skip them and are recorded", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  const m = linkMachines(s);
+  const local = s.run("--yes", "--usagemeter-local-only");
+  assert.equal(local.code, 0, local.err);
+  assert.match(local.out, /usagemeter on linked machines: skipped \(--usagemeter-local-only\)\./);
+  assert.equal(meterSays(s), "usagemeter 0.3.0");
+  assert.equal(parseMarker(s.mark()).usagemeterScope, "local");
+  const none = s.run("--no-usagemeter");
+  assert.equal(none.code, 0, none.err);
+  assert.equal(parseMarker(s.mark()).usagemeterScope, "none");
+  assert.deepEqual(m.execs(), []);
+  assert.equal(existsSync(m.meter), false);
+  // Run again without either: everywhere again, and the line goes.
+  assert.equal(s.run().code, 0);
+  assert.equal(parseMarker(s.mark()).usagemeterScope, null);
+  assert.deepEqual(parseMarker(s.mark()).usagemeterOn, { lin: "0.3.0" });
+  // --uninstall --usagemeter-local-only leaves the linked machines' copy.
+  const u = s.run("--uninstall", "--usagemeter-local-only");
+  assert.match(u.out, /Left usagemeter on the linked machines \(lin\)\./);
+  assert.equal(existsSync(m.meter), true);
+  assert.match(s.run("--help").out, /--usagemeter-local-only/);
+});
+
 test("usagemeter: --uninstall --no-usagemeter keeps even a pack-installed binary", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");

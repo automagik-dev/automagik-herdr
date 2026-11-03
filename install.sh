@@ -6,7 +6,8 @@
 #   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
-#   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
+#   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
+#   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
 # downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
@@ -19,7 +20,9 @@
 # layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
 # the `automagik-herdr` command into ~/.local/bin. It installs the pinned usagemeter release (the
 # token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
-# over a newer one; a failure there is only a warning. Safe to run again: a rerun of the installed
+# over a newer one, and the same release on every connected linked machine (`hc machine ls`, through
+# the pack's `automagik-herdr meter install --linked`: each machine downloads and checks it
+# itself); a failure there is only a warning. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
 # missing or damaged folder the record lists (the damaged copy kept in backup/), puts back a
 # missing automagik layout and runs `herdr-app check` again. It says "up to date" only when every
@@ -64,6 +67,8 @@ main() {
   METER_RELEASES=https://github.com/automagik-dev/usagemeter/releases
   METER=$BIN_DIR/usagemeter
   METER_OK=1
+  # Linked machines too (meterFleet.js): 0 with --usagemeter-local-only (or --no-usagemeter).
+  FLEET_OK=1
 
   YES=0
   ADOPT=0
@@ -74,7 +79,8 @@ main() {
       --yes|-y) YES=1 ;;
       --uninstall) UNINSTALL=1 ;;
       --adopt) ADOPT=1 ;;
-      --no-usagemeter) METER_OK=0 ;;
+      --no-usagemeter) METER_OK=0; FLEET_OK=0 ;;
+      --usagemeter-local-only) FLEET_OK=0 ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -111,7 +117,7 @@ usage() {
   cat <<'EOF'
 Automagik Herdr installer
 
-  install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter]
+  install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter | --usagemeter-local-only]
                                        install or update the pack and the automagik-herdr command
   install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
   install.sh --help
@@ -120,8 +126,10 @@ Automagik Herdr installer
 Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
---no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone: install skips it, and
---uninstall keeps it even when this installer put it there.
+--no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone, here and on every linked
+machine: install skips it, and --uninstall keeps it even where this installer put it.
+--usagemeter-local-only installs and removes it on this computer only, never on a linked machine
+(hc machine ls). Both are remembered for 'automagik-herdr update' and the sidebar's sync.
 EOF
 }
 
@@ -258,6 +266,11 @@ uninstall() {
   if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
+  fi
+  # usagemeter on the linked machines first, while the pack's CLI is still in mods/.
+  if grep -q '^usagemeter-machines=.' "$MARK"; then
+    if [ "$FLEET_OK" = 0 ]; then say "Left usagemeter on the linked machines ($(mark_get usagemeter-machines | sed 's/:[^,]*//g; s/,/, /g'))."
+    else fleet uninstall; fi
   fi
   # The record's folders leave mods/ together as the kept set (never deleted); only names the
   # pack can own, never Pocket Link, never a link.
@@ -405,9 +418,35 @@ install_meter() {
   why="could not write $METER"
   return 1
 }
+# The marker's usagemeter-scope= line (none, local, or dropped for everywhere; a v2 marker only).
+mark_scope() {
+  grep -q '^mods=' "$MARK" 2>/dev/null || return 0
+  m=$(mktemp "$STATE/.marker.XXXXXX") || return 1
+  if { sed '/^usagemeter-scope=/d' "$MARK" && if [ -n "$1" ]; then printf 'usagemeter-scope=%s\n' "$1"; fi; } >"$m" && mv "$m" "$MARK"; then return 0; fi
+  rm -f "$m"
+  return 1
+}
+# The pack's own CLI, run with node (install() checked it): meter install|uninstall on the linked
+# machines. Its lines are printed as they are; it failing to run at all is only a warning.
+fleet() {
+  cli=$PACK/bin/automagik-herdr.mjs
+  [ -f "$cli" ] || { say "Warning: usagemeter on linked machines: $cli is missing; skipped."; return 0; }
+  HERDR_APP_HOME=$APP_HOME node "$cli" meter "$@" </dev/null 2>&1 \
+    || say "Warning: usagemeter on linked machines did not finish; 'automagik-herdr meter install' retries it."
+}
 meter_step() {
+  if [ "$METER_OK" = 0 ]; then scope=none; elif [ "$FLEET_OK" = 0 ]; then scope=local; else scope=; fi
+  mark_scope "$scope" || say "usagemeter: the ownership record could not note --no-usagemeter or --usagemeter-local-only."
   if [ "$METER_OK" = 0 ]; then say "usagemeter: skipped (--no-usagemeter)."; return 0; fi
   install_meter || say "Warning: usagemeter was not installed: $why. The pack is installed; run this again later to retry."
+}
+# The linked machines, after the command is linked (the pack's CLI repoints an old link to its
+# wrapper when it starts, which step e reports itself).
+fleet_step() {
+  [ "$METER_OK" = 1 ] || return 0
+  if [ "$FLEET_OK" = 0 ]; then say "usagemeter on linked machines: skipped (--usagemeter-local-only)."; return 0; fi
+  [ -n "$target" ] || { say "usagemeter on linked machines: skipped ($PACK is not this installer's)."; return 0; }
+  fleet install --linked
 }
 # --uninstall: the binary goes only when the marker says this installer put it there, it still
 # reports that version (a newer one is Pocket Link's or the person's), Pocket Link is not here, and
@@ -572,6 +611,7 @@ install() {
     say "Linked $LINK."
     changed=yes
   fi
+  fleet_step
   case ":${PATH}:" in
     *":$BIN_DIR:"*) ;;
     *) say "Add ~/.local/bin to your PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
