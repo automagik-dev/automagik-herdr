@@ -1,8 +1,9 @@
 name: CI
 
-# The pack's tests, a syntax check of every pack mod and the release tooling, the catalog index,
-# and one version everywhere (scripts/version.mjs). No build step and no dependencies: the
-# pack is plain JavaScript that Herdr loads as it is.
+# The pack's tests, a privacy check (scripts/privacy-check.mjs: no home paths, private hosts
+# or machine names), a syntax check of every pack mod and the release tooling, the catalog
+# index, and one version everywhere (scripts/version.mjs). No build step and no dependencies:
+# the pack is plain JavaScript that Herdr loads as it is.
 
 on:
   push:
@@ -32,6 +33,9 @@ jobs:
 
       - name: Tests
         run: node --test 'test/*.test.mjs'
+
+      - name: Privacy
+        run: node scripts/privacy-check.mjs
 
       - name: Syntax
         run: |
