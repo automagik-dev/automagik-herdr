@@ -18,7 +18,7 @@ import {
 import { apply, plan, pending, revert } from "../mods/am-sidebar/migrateHome.mjs";
 import { CATALOG_URL, parseMarker } from "../mods/am-sidebar/release.js";
 import { migrateRefs, revertRefs, setupHome } from "../mods/am-sidebar/update.mjs";
-import { catalogUrl } from "../mods/mod-manager/core.js";
+import { catalogUrl } from "../mods/am-mods/core.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const UPDATE = join(ROOT, "mods", "am-sidebar", "update.mjs");
@@ -64,8 +64,8 @@ test("RENAMES are the D4 names; every shared key moves under am.*, and the shim 
 
 test("each mod's own shim maps its keys exactly as SHARED_RENAMES does", () => {
   const stubs = {
-    "sidebar-chrome": new URL("./footer-herdr.mjs", import.meta.url).href,
-    "md-menu": new URL("./md-menu-herdr.mjs", import.meta.url).href,
+    "am-footer": new URL("./footer-herdr.mjs", import.meta.url).href,
+    "am-markdown": new URL("./am-markdown-herdr.mjs", import.meta.url).href,
   };
   const gpui = new URL("./gpui-stub.mjs", import.meta.url).href;
   registerHooks({
@@ -76,11 +76,11 @@ test("each mod's own shim maps its keys exactly as SHARED_RENAMES does", () => {
       return next(specifier, context);
     },
   });
-  return Promise.all([import("../mods/sidebar-chrome/main.js"), import("../mods/md-menu/main.js")]).then(([footer, markdown]) => {
+  return Promise.all([import("../mods/am-footer/main.js"), import("../mods/am-markdown/main.js")]).then(([footer, markdown]) => {
     for (const shim of [footer.SHARED_OLD, markdown.SHARED_OLD]) {
       for (const [old, now] of Object.entries(shim)) assert.equal(SHARED_RENAMES[old], now, old);
     }
-    const manager = read(join(ROOT, "mods", "mod-manager", "main.js"));
+    const manager = read(join(ROOT, "mods", "am-mods", "main.js"));
     assert.match(manager, /const RECORDS = "am\.mods\.installed";/);
     assert.equal(SHARED_RENAMES["mod-manager.installed"], "am.mods.installed");
     assert.match(manager, /"mod-manager\.installed": RECORDS/);
@@ -549,8 +549,8 @@ test("the mod manager catalog: a pack URL in either folder is brought up to date
   assert.deepEqual(readJson(amMods), { url: "https://example.test/index.json" }, "an override in the folder core.js reads first is kept");
   rmSync(join(s.home, "data"), { recursive: true });
   setup();
-  assert.deepEqual(readJson(old), { url: CATALOG_URL });
-  assert.equal(existsSync(amMods), false);
+  assert.deepEqual(readJson(amMods), { url: CATALOG_URL }, "with neither, the pack's goes in the folder of the renamed mod");
+  assert.equal(existsSync(old), false, "and never in the old one");
 });
 
 test("the mod manager reads the person's catalog URL wherever it is; a copy holding the pack's never shadows it", async (t) => {

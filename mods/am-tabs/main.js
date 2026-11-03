@@ -153,7 +153,7 @@ export default class Tabs extends View {
           .text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_mouse_down("left", stop)
           .on_click(() => openOverlay({
-            mod: "auto-tabs",
+            mod: "am-tabs",
             kind: "popup",
             width: 280,
             height: 14 + 28 * Math.min(settled.length, 12),
@@ -161,7 +161,7 @@ export default class Tabs extends View {
           }))
           .child(div().child(String(settled.length)))
           .child(div().child(settled.length === 1 ? "settled" : "settled"))))
-      .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+      .child(button("tab-new", "+", () => openOverlay({ mod: "am-new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .when(window()?.buttons, el => el.child(button("minimize", "−", () => run("window.minimize")))

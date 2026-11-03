@@ -22,8 +22,8 @@ export const OLD_PACK_NAME = "spaces-agents";
  * it guards against packaging bugs, not tampering (SHA256SUMS covers integrity). Pocket Link is
  * never one of them: automagik-pocket owns it.
  */
-export const PACK_MODS = Object.freeze(["am-quota", "am-sidebar", "auto-tabs", "automations", "md-menu", "mod-manager",
-  "new-menu-tui", "sidebar-chrome"]);
+export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markdown", "am-mods", "am-new-menu", "am-quota",
+  "am-sidebar", "am-tabs"]);
 export const POCKET_LINK = "pocket-link";
 /**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
@@ -43,8 +43,8 @@ export const PACK_LAYOUT = "layouts/automagik.json";
 /** sha256 of the bots-only layout v0.2.0–v0.2.2 installed: only that copy is replaced (D8). */
 export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caaf1c7096c6b84778a8a3";
 /** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */
-export const PACK_KEYS = Object.freeze({ global: Object.freeze({ "cmd-shift-m": "mod.open:mod-manager" }) });
-/** What the mod manager lists; mods/mod-manager/core.js's CATALOG_URL is kept equal by a test. */
+export const PACK_KEYS = Object.freeze({ global: Object.freeze({ "cmd-shift-m": "mod.open:am-mods" }) });
+/** What the mod manager lists; mods/am-mods/core.js's CATALOG_URL is kept equal by a test. */
 export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
 /** The pack's tarball on release `version` (release.yml's Pack step). */
 export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;

@@ -1,10 +1,10 @@
 // Retired agents (Gemini CLI, which Antigravity replaces) stay out of the pack's agent lists:
-// the + menu (new-menu-tui/agents.js) and the automations form (automations/agents.js). Both
+// the + menu (am-new-menu/agents.js) and the automations form (am-automations/agents.js). Both
 // files are pure, so they load here as they are.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { menuAgents, RETIRED as MENU_RETIRED } from "../mods/new-menu-tui/agents.js";
-import { offeredAgents, RETIRED as AUTO_RETIRED } from "../mods/automations/agents.js";
+import { menuAgents, RETIRED as MENU_RETIRED } from "../mods/am-new-menu/agents.js";
+import { offeredAgents, RETIRED as AUTO_RETIRED } from "../mods/am-automations/agents.js";
 
 const agent = (key, installed) => ({ key, name: key, installed, run: [key] });
 const keys = (list) => list.map((a) => a.key);

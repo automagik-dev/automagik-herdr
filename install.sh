@@ -223,16 +223,16 @@ layout_notes() {
     if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
     grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$f" || continue
     lacks=
-    for s in 'sidebar-chrome:the footer rail (sidebar-chrome)' 'auto-tabs:the tab bar (auto-tabs)' \
-      'md-menu:the Markdown menu (md-menu)' 'automations:the automations panel (automations)' 'am-quota:the quota panel (am-quota)'; do
-      # A block naming the mod ("mod": …), or for md-menu the root's "terminal_menu": an id like
+    for s in 'am-footer:the footer rail (am-footer)' 'am-tabs:the tab bar (am-tabs)' \
+      'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the quota panel (am-quota)'; do
+      # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
       # "am-quota-panel" or a mention elsewhere doesn't count.
       grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
     done
     [ -n "$lacks" ] || continue
     name=${f##*/}
     say "Your layout ${name%.json} ($f) shows the Automagik sidebar, but not the rest of the pack: $lacks."
-    say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"md-menu\") from the pack's layout, $REF, into it; or use the automagik layout instead."
+    say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"am-markdown\") from the pack's layout, $REF, into it; or use the automagik layout instead."
   done
 }
 

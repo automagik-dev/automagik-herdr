@@ -57,11 +57,11 @@ function carryShared() {
 }
 
 // The Mods tab: the one already showing, else a new one. A tab, so it can be resized and
-// closed like any other; the mod-manager dialog stays on cmd+shift+m.
+// closed like any other; the am-mods dialog stays on cmd+shift+m.
 function openMods() {
-  const shown = panes().find((p) => p.mod === "mod-manager");
+  const shown = panes().find((p) => p.mod === "am-mods");
   if (shown) run("tab.select", { id: shown.tab });
-  else run("tab.new", { name: "Mods", mod: "mod-manager" });
+  else run("tab.new", { name: "Mods", mod: "am-mods" });
 }
 
 // The Bots tab's two entries: the sidebar mod's own forms, opened as their own copy of it
@@ -81,7 +81,7 @@ export function botsMenuItems(defined = shared("bots.defined")) {
 }
 
 function openBotsMenu() {
-  openOverlay({ mod: "sidebar-chrome", kind: "popup", width: 200, height: 90, props: { botsMenu: true } });
+  openOverlay({ mod: "am-footer", kind: "popup", width: 200, height: 90, props: { botsMenu: true } });
 }
 
 export default class WorkspaceChrome extends View {
@@ -161,7 +161,7 @@ export default class WorkspaceChrome extends View {
       // A rail of tabs, one row however many there are: icon only, so none of them stacks up.
       // Icon only, so none of them stacks up; the name appears in the rail while the pointer is on
       // the tab — discrete, and never moving the icons themselves.
-      const tab = (id, icon, label, active, dim, action, path = `mods/sidebar-chrome/${icon}.svg`) => h_flex().id(id).size(28).flex_none().items_center().justify_center().rounded(7)
+      const tab = (id, icon, label, active, dim, action, path = `mods/am-footer/${icon}.svg`) => h_flex().id(id).size(28).flex_none().items_center().justify_center().rounded(7)
         .bg(active ? t.selected : t.chrome).text_color(active ? t.foreground : dim ? t.dim : t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
         .on_hover((over, cx) => {
@@ -203,8 +203,8 @@ export default class WorkspaceChrome extends View {
     return h_flex().size_full().bg(t.chrome).pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13.5)
       .when(window()?.platform === "macos" && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center().child(image("frame/welcome/herdr.png").size(20).rounded(5)).child(div().font_semibold().text_color(t.foreground).child("Herdr"))))
-      .when(!collapsed, el => el.child(this.button("search", svg("mods/sidebar-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
+      .when(!collapsed, el => el.child(this.button("search", svg("mods/am-footer/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
       // On the macOS rail the traffic lights fill the row; the agents list's » unfolds it.
-      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/sidebar-chrome/sidebar.svg").size(15), toggleSidebar)));
+      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/am-footer/sidebar.svg").size(15), toggleSidebar)));
   }
 }

@@ -19,7 +19,7 @@ const UPDATE = fileURLToPath(new URL("../mods/am-sidebar/update.mjs", import.met
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
 /** A two-folder pack at `version` under `parent` (`mods` its PACK_MODS), as release.yml lays the tarball out. */
-const MODS = ["am-sidebar", "auto-tabs"];
+const MODS = ["am-sidebar", "am-tabs"];
 function packDir(parent, version, { main = true, mod = true, mods = MODS } = {}) {
   for (const m of mods) {
     const dir = join(parent, m);
@@ -146,7 +146,7 @@ test("applyUpdate swaps the pack in, keeps the old one outside mods/, and rollba
     assert.deepEqual(done.replaced, MODS);
     assert.equal(stateDirOf(mods), join(home, "automagik-herdr"));
     assert.equal(readVersion(kept(mods)), "0.1.0");
-    assert.equal(readFileSync(join(kept(mods, "auto-tabs"), "main.js"), "utf8"), 'export const v = "0.1.0";\n', "the whole set is kept");
+    assert.equal(readFileSync(join(kept(mods, "am-tabs"), "main.js"), "utf8"), 'export const v = "0.1.0";\n', "the whole set is kept");
     assert.deepEqual(execFileSync("ls", ["-A", mods], { encoding: "utf8" }).trim().split("\n"), MODS, "nothing else in mods/");
     assert.deepEqual(execFileSync("ls", ["-A", stateDirOf(mods)], { encoding: "utf8" }).trim().split("\n"), [".prev", "installed-by-install.sh"], "staging removed");
     assert.equal(readMarker(mods).version, "0.2.0");
@@ -280,7 +280,7 @@ test("unsafeEntries: only plain files and folders in pack folders, plus layouts/
   assert.match(unsafeEntries(["am-sidebar/h"], ["-rw-r--r-- 0 0 0 0 x am-sidebar/h link to am-sidebar/main.js"])[0], /not a plain file/);
   assert.match(unsafeEntries(["am-sidebar/../x"], ["-"])[0], /\.\. segment/);
   assert.match(unsafeEntries(["/etc/x"], ["-"])[0], /absolute/);
-  assert.deepEqual(unsafeEntries(["auto-tabs/main.js", "layouts/", "layouts/automagik.json"], ["-", "d", "-"]), []);
+  assert.deepEqual(unsafeEntries(["am-tabs/main.js", "layouts/", "layouts/automagik.json"], ["-", "d", "-"]), []);
   for (const outside of ["evil.js", "pocket-link/main.js", "layouts/other.json", "Bad/x"]) {
     assert.match(unsafeEntries([outside], ["-"])[0], /outside the pack's folders/, outside);
   }
@@ -413,17 +413,17 @@ test("private paths are carried on update and rollback; a symlinked .state stays
   const elsewhere = mkdtempSync(join(tmpdir(), "state-"));
   try {
     symlinkSync(elsewhere, join(mods, "am-sidebar", ".state"));
-    mkdirSync(join(mods, "auto-tabs", "node_modules", "x"), { recursive: true });
-    writeFileSync(join(mods, "auto-tabs", ".tabs.json"), "{}\n");
+    mkdirSync(join(mods, "am-tabs", "node_modules", "x"), { recursive: true });
+    writeFileSync(join(mods, "am-tabs", ".tabs.json"), "{}\n");
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     assert.equal(lstatSync(join(mods, "am-sidebar", ".state")).isSymbolicLink(), true);
     assert.equal(readlinkSync(join(mods, "am-sidebar", ".state")), elsewhere);
-    assert.equal(readFileSync(join(mods, "auto-tabs", ".tabs.json"), "utf8"), "{}\n");
-    assert.ok(existsSync(join(mods, "auto-tabs", "node_modules", "x")));
-    writeFileSync(join(mods, "auto-tabs", ".tabs.json"), "{\"newer\":true}\n");
+    assert.equal(readFileSync(join(mods, "am-tabs", ".tabs.json"), "utf8"), "{}\n");
+    assert.ok(existsSync(join(mods, "am-tabs", "node_modules", "x")));
+    writeFileSync(join(mods, "am-tabs", ".tabs.json"), "{\"newer\":true}\n");
     rollback({ modsDir: mods });
     assert.equal(readVersion(join(mods, "am-sidebar")), "0.1.0");
-    assert.equal(readFileSync(join(mods, "auto-tabs", ".tabs.json"), "utf8"), "{\"newer\":true}\n", "rollback carries the latest state back");
+    assert.equal(readFileSync(join(mods, "am-tabs", ".tabs.json"), "utf8"), "{\"newer\":true}\n", "rollback carries the latest state back");
     assert.equal(readlinkSync(join(mods, "am-sidebar", ".state")), elsewhere);
   } finally {
     for (const d of [t.src, home, elsewhere]) rmSync(d, { recursive: true, force: true });
@@ -434,21 +434,21 @@ test("a folder not in the record is left alone, or adopted to backup/; a retired
   const { home, mods } = appHome("0.1.0", ["am-sidebar", "old-mod"]);
   const t = tarball("0.2.0");
   try {
-    mkdirSync(join(mods, "auto-tabs"));
-    writeFileSync(join(mods, "auto-tabs", "main.js"), "// mine\n");
+    mkdirSync(join(mods, "am-tabs"));
+    writeFileSync(join(mods, "am-tabs", "main.js"), "// mine\n");
     const left = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
-    assert.deepEqual([left.left, left.replaced, left.retired], [["auto-tabs"], ["am-sidebar"], ["old-mod"]]);
-    assert.equal(readFileSync(join(mods, "auto-tabs", "main.js"), "utf8"), "// mine\n");
+    assert.deepEqual([left.left, left.replaced, left.retired], [["am-tabs"], ["am-sidebar"], ["old-mod"]]);
+    assert.equal(readFileSync(join(mods, "am-tabs", "main.js"), "utf8"), "// mine\n");
     assert.equal(existsSync(join(mods, "old-mod")), false);
     assert.ok(existsSync(join(kept(mods, "old-mod"), "main.js")));
     assert.deepEqual(readMarker(mods).mods, ["am-sidebar"]);
     assert.throws(() => { mkdirSync(join(mods, "old-mod")); rollback({ modsDir: mods }); }, /mods\/old-mod is not this installer's: nothing rolled back/);
     rmSync(join(mods, "old-mod"), { recursive: true });
     const adopted = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods, adopt: true });
-    assert.deepEqual(adopted.adopted.map((a) => a.mod), ["auto-tabs"]);
+    assert.deepEqual(adopted.adopted.map((a) => a.mod), ["am-tabs"]);
     assert.equal(readFileSync(join(adopted.adopted[0].backup, "main.js"), "utf8"), "// mine\n");
     assert.deepEqual(readMarker(mods).mods, MODS);
-    assert.match(readFileSync(markerOf(mods), "utf8"), /^adopted=auto-tabs:backup\/auto-tabs-\d{4}-\d\d-\d\d$/m);
+    assert.match(readFileSync(markerOf(mods), "utf8"), /^adopted=am-tabs:backup\/am-tabs-\d{4}-\d\d-\d\d$/m);
   } finally {
     rmSync(t.src, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -457,7 +457,7 @@ test("a folder not in the record is left alone, or adopted to backup/; a retired
 
 test("release.js's PACK_KEYS and CATALOG_URL equal the repository's keys.json and the mod manager's index URL", async () => {
   const { PACK_KEYS, CATALOG_URL } = await import("../mods/am-sidebar/release.js");
-  const core = await import("../mods/mod-manager/core.js");
+  const core = await import("../mods/am-mods/core.js");
   assert.deepEqual(JSON.parse(JSON.stringify(PACK_KEYS)), JSON.parse(readFileSync(new URL("../keys.json", import.meta.url), "utf8")));
   assert.equal(CATALOG_URL, core.CATALOG_URL);
 });
@@ -467,14 +467,14 @@ test("rollback then reinstall: a folder only the newer set had comes back with i
   const t = tarball("0.2.0");
   try {
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
-    mkdirSync(join(mods, "auto-tabs", ".state"));
-    writeFileSync(join(mods, "auto-tabs", ".state", "cred"), "SECRET\n");
+    mkdirSync(join(mods, "am-tabs", ".state"));
+    writeFileSync(join(mods, "am-tabs", ".state", "cred"), "SECRET\n");
     rollback({ modsDir: mods });
-    assert.equal(existsSync(join(mods, "auto-tabs")), false);
-    assert.equal(readFileSync(join(kept(mods, "auto-tabs"), ".state", "cred"), "utf8"), "SECRET\n");
+    assert.equal(existsSync(join(mods, "am-tabs")), false);
+    assert.equal(readFileSync(join(kept(mods, "am-tabs"), ".state", "cred"), "utf8"), "SECRET\n");
     const again = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
-    assert.deepEqual(again.installed, ["auto-tabs"]);
-    assert.equal(readFileSync(join(mods, "auto-tabs", ".state", "cred"), "utf8"), "SECRET\n");
+    assert.deepEqual(again.installed, ["am-tabs"]);
+    assert.equal(readFileSync(join(mods, "am-tabs", ".state", "cred"), "utf8"), "SECRET\n");
   } finally {
     rmSync(t.src, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -509,10 +509,10 @@ test("an older kept set that cannot be removed is reported, and the new set is s
   const { home, mods } = appHome("0.1.0");
   const t = tarball("0.2.0");
   const t3 = tarball("0.3.0");
-  const locked = () => join(stateDirOf(mods), readdirSync(stateDirOf(mods), { encoding: "utf8" }).find((n) => n.startsWith(".prev-old-")) ?? ".prev", "auto-tabs");
+  const locked = () => join(stateDirOf(mods), readdirSync(stateDirOf(mods), { encoding: "utf8" }).find((n) => n.startsWith(".prev-old-")) ?? ".prev", "am-tabs");
   try {
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
-    chmodSync(join(prevSetOf(mods), "auto-tabs"), 0o555);
+    chmodSync(join(prevSetOf(mods), "am-tabs"), 0o555);
     const r = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: mods });
     assert.match(r.warnings[0], /older kept set could not be removed .*\.prev-old-/);
     assert.equal(readVersion(join(mods, "am-sidebar")), "0.3.0");

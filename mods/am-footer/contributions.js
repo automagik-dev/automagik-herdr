@@ -1,11 +1,11 @@
 // Buttons other mods add to the footer rail. A mod declares them in its own mod.json:
 //   "automagik": { "footer": [ { "id", "label", "icon"?, "command", "args"?, "badge"? } ] }
 // Pure: no Herdr import, so node tests and main.js share it. The scan takes an `io` with
-// `exec` and `readText`, as mod-manager's core.js does.
+// `exec` and `readText`, as am-mods' core.js does.
 
 export const MAX_BUTTONS = 4;
 // Drawn when a button's icon is missing, outside the app home or not an SVG.
-export const FALLBACK_ICON = "mods/sidebar-chrome/circle.svg";
+export const FALLBACK_ICON = "mods/am-footer/circle.svg";
 // Pocket Link's folder belongs to automagik-pocket; the rail has its own tab for it and never
 // reads it here.
 const SKIP = /^pocket-link$/i;

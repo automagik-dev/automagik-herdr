@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-02T23:36:06.240Z",
+  "generatedAt": "2026-11-03T00:25:52.171Z",
   "modCount": 9,
   "repositoryCount": 3,
   "source": "automagik-herdr",
@@ -12,20 +12,20 @@
       "url": "https://github.com/automagik-dev/automagik-herdr",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-02T20:36:06-03:00",
+      "pushedAt": "2026-11-02T21:25:51-03:00",
       "headCommit": "",
       "path": "",
       "name": "Automagik Herdr",
       "blurb": "Autonomous teams of coding agents across harnesses (Claude Code, Codex, Antigravity, Kimi, Oh My Pi…)",
       "modNames": [
+        "am-automations",
+        "am-footer",
+        "am-markdown",
+        "am-mods",
+        "am-new-menu",
         "am-quota",
         "am-sidebar",
-        "auto-tabs",
-        "automations",
-        "md-menu",
-        "mod-manager",
-        "new-menu-tui",
-        "sidebar-chrome"
+        "am-tabs"
       ],
       "hasKeys": true,
       "hasPreview": false,
@@ -33,6 +33,31 @@
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
+        {
+          "name": "am-automations",
+          "title": "Automagik Automations",
+          "blurb": "Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were away, start one now, pause them all, or write a new one with its next runs previe"
+        },
+        {
+          "name": "am-footer",
+          "title": "Automagik Footer",
+          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome`."
+        },
+        {
+          "name": "am-markdown",
+          "title": "Automagik Markdown",
+          "blurb": "Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text talks about; click one and it renders in a preview pane beside the chat. One mod, two faces."
+        },
+        {
+          "name": "am-mods",
+          "title": "Automagik Mods",
+          "blurb": "A table of every mod in a Herdr app home, with the switches, versions and origins that let a person run their own mod set: install from a marketplace, update, switch off, remove — each after a review that lists what enters, what the code does, and which keys it takes."
+        },
+        {
+          "name": "am-new-menu",
+          "title": "Automagik New Menu",
+          "blurb": "The `+` menu: start a terminal or an installed coding agent in the shown space (or a space row's `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu`; it asks herdr-core which agents are actually installed instead of offering a fixed list."
+        },
         {
           "name": "am-quota",
           "title": "Automagik Quota",
@@ -44,34 +69,9 @@
           "blurb": "The sidebar of Automagik Herdr, and the bots in it: each project's main bot and its team, drawn with Automagik's characters, created and edited in one form, started on or attached to any coding agent, labelled for the agent event envelope, and briefed before every Claude turn. De"
         },
         {
-          "name": "auto-tabs",
-          "title": "Auto tabs",
+          "name": "am-tabs",
+          "title": "Automagik Tabs",
           "blurb": "The window's tab bar: one pill per tab of the shown space, named from what runs in it, with a close ✕ on hover and on middle press, the side-panel buttons and the window buttons. Derived from Herdr's shipped `tabs`; the naming engine is this project's."
-        },
-        {
-          "name": "automations",
-          "title": "Automagik Automations",
-          "blurb": "Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were away, start one now, pause them all, or write a new one with its next runs previe"
-        },
-        {
-          "name": "md-menu",
-          "title": "Markdown",
-          "blurb": "Right-click in a terminal and, under Herdr's own items, the Markdown files that terminal's text talks about; click one and it renders in a preview pane beside the chat. One mod, two faces."
-        },
-        {
-          "name": "mod-manager",
-          "title": "Mod Manager",
-          "blurb": "A table of every mod in a Herdr app home, with the switches, versions and origins that let a person run their own mod set: install from a marketplace, update, switch off, remove — each after a review that lists what enters, what the code does, and which keys it takes."
-        },
-        {
-          "name": "new-menu-tui",
-          "title": "new-menu-tui",
-          "blurb": "The `+` menu: start a terminal or an installed coding agent in the shown space (or a space row's `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu`; it asks herdr-core which agents are actually installed instead of offering a fixed list."
-        },
-        {
-          "name": "sidebar-chrome",
-          "title": "sidebar-chrome",
-          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome`."
         }
       ]
     },

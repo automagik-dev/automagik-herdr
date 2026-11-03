@@ -5,7 +5,7 @@
 // - { file, on }: that file rendered in a pane, reloaded when it changes, with a button that hands
 //   it to the system's default app (`on` = the machine it lives on, null for this one).
 //
-// The preview carries a `slot`, and shared `am.markdown.slots` / `.show` / `.last` (markdown-browser's
+// The preview carries a `slot`, and shared `am.markdown.slots` / `.show` / `.last` (the merged Markdown panel's
 // before the rename, copied over once) let the next file replace the current one in place instead of piling up panes. Only
 // this mod writes them: a preview opened from a shell's own `pane.split` carries no slot.
 // The menu face: Herdr's items (an item is [label, command, args]; "worktree" opens the worktree
@@ -22,12 +22,12 @@ import { openDefault } from "./open.js";
 
 // The mod previews are opened into, and the shared state that lets a click switch an existing
 // preview in place. Only this mod writes them; a preview split by hand carries no slot and writes nothing.
-const PREVIEW = "md-menu";
+const PREVIEW = "am-markdown";
 const SLOTS = "am.markdown.slots";
 const SHOW = "am.markdown.show";
 const LAST = "am.markdown.last";
 // The rename shim (D12): the values from before the rename are copied over once on load, and the
-// old keys stay (spaces-agents/migrate.js SHARED_RENAMES).
+// old keys stay (am-sidebar/migrate.js SHARED_RENAMES).
 export const SHARED_OLD = Object.freeze({ "markdown-browser.slots": SLOTS, "markdown-browser.show": SHOW, "markdown-browser.last": LAST });
 function carryShared() {
   for (const [old, now] of Object.entries(SHARED_OLD)) if (shared(now) == null && shared(old) != null) setShared(now, shared(old));
@@ -196,7 +196,7 @@ export default class MdMenu extends View {
       // One process for every check: `[ -f ]` exits 1 when the last one isn't, so read stdout only.
       const seen = await exec(
         "sh",
-        ["-c", 'for f do [ -f "$f" ] && printf "%s\\n" "$f"; done', "md-menu", ...found.slice(0, 60).map((f) => f.path)],
+        ["-c", 'for f do [ -f "$f" ] && printf "%s\\n" "$f"; done', "am-markdown", ...found.slice(0, 60).map((f) => f.path)],
         { on },
       ).catch((e) => ({ stdout: e?.stdout ?? "" }));
       const live = new Set((seen.stdout ?? "").split("\n").filter(Boolean));
@@ -231,7 +231,7 @@ export default class MdMenu extends View {
     });
   }
 
-  // Shows the file in the tab's preview, as a click in the markdown-browser panel did: the tab's
+  // Shows the file in the tab's preview, as a click in the old Markdown panel did: the tab's
   // preview switches in place when it was opened by a preview (a slot in shared state), else a
   // new pane splits to the right of the clicked one. run() doesn't wait, so each step is polled.
   async reveal(file, on, cx) {
@@ -370,7 +370,7 @@ export default class MdMenu extends View {
       const me = panes().find((p) => p.pane === this.paneId());
       if (!me || me.tab === focused()?.tab) this.load(cx);
     });
-    // "md-menu.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
+    // "am-markdown.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
     cx.spawn(async () => {
       for (;;) {
         const c = await nextCommand();
@@ -445,7 +445,7 @@ export default class MdMenu extends View {
   renderPreview() {
     const t = theme();
     const name = this.file.split(/[\\/]/).pop();
-    return v_flex().id("markdown-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+    return v_flex().id("am-markdown").size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .child(h_flex().h(32).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().font_semibold().truncate().child(name))
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(this.on ? `${this.on}:${this.file}` : this.file))
