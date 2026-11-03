@@ -37,6 +37,7 @@ import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, read
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
 import { OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
+import { botHistory, historyLines } from "../inspect.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -592,6 +593,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
   whois <terminal> | whois --bot <bot>   who plays where, by the attach ledger
+  history <bot>                 what the bot did, by the attach and workers ledgers: its panes,
+                                starts, sessions (and the newest transcript) and workers
   brief <bot>                   print the bot's per-turn briefing as it would be now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
@@ -1022,19 +1025,25 @@ async function pidOf(terminal) {
 /**
  * Where Herdr shows a bot started here (DESIGN: the space whose folder keys to the project):
  * the `herdr.space` / `herdr.tab` labels of a live terminal on this computer whose folder
- * keys to the project. Null when none does; the pane then has no place in Herdr's window.
+ * keys to the project, while the window (herdr-app ls) shows the project in that space: a
+ * caller's tab in another space never takes the bot. Else the window's space on the project, in
+ * its selected tab. Null when none does; the pane then has no place in Herdr's window. `seen`:
+ * windowSpaces(), read once by the caller; null (no window to ask): the first labelled
+ * terminal's place.
  */
-async function placementOf(key) {
+async function placementOf(key, seen = null) {
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && typeof r.cwd === "string");
   const keys = new Map();
   await Promise.all([...new Set(rows.map((r) => r.cwd))].map(async (cwd) => {
     try { keys.set(cwd, await keyOf(cwd)); } catch { /* a folder gone: not this project */ }
   }));
   const mine = rows.filter((r) => keys.get(r.cwd) === key);
+  const shows = (place) => !seen || spacePlace(seen.spaces.filter((s) => s.id === place.space), seen.keys, key) !== null;
   for (const r of mine) {
     const place = placementFrom([await hcGet(r.address)].filter(Boolean));
-    if (place) return place;
+    if (place && shows(place)) return place;
   }
+  if (seen) return spacePlace(seen.spaces, seen.keys, key);
   return null;
 }
 
@@ -1055,11 +1064,11 @@ async function windowSpaces() {
  * Where a start with no --space goes: a project terminal's place (placementOf) while the window
  * still shows that space, else a window space on the project, else a new one (herdr-app do
  * space.new, named after the folder). With no window to ask, the terminal's place, or null.
+ * `seen`: windowSpaces(), read once per start and shared with placementOf.
  * Two starts at once can each open one: both then use the first space on the project in the
  * window, and the one that opened another closes it (it holds only its new shell).
  */
-async function windowPlace(key, labelled = null) {
-  const seen = await windowSpaces();
+async function windowPlace(key, labelled = null, seen = null) {
   if (!seen) return labelled;
   if (labelled && seen.spaces.some((s) => s.id === labelled.space)) return labelled;
   // This ls is the check right before space.new: nothing else runs between them.
@@ -1141,12 +1150,24 @@ async function launchSeat(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   const argv = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
+  // As a worker (cmdWorker): an npm agent (#!/usr/bin/env node, like codex) gets its interpreter's
+  // folder first on PATH when this PATH lacks it (#56); start and restart both come here. PATH is
+  // passed only when that changes it, so any other seat runs as before.
+  const runPath = interpreterPath(argv[0], process.env.PATH);
+  const path = runPath.path !== process.env.PATH ? runPath.path : null;
   const cwd = over.cwd ?? key;
-  // A restart's own place (the old pane's space and tab) stands; a start asks the window too.
-  const place = over.place !== undefined ? over.place : await windowPlace(key, await placementOf(key));
-  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels });
+  // A restart's own place (the old pane's space and tab) stands; a start asks the window too:
+  // one herdr-app ls, shared by placementOf (a label whose space doesn't show the project is
+  // dropped) and windowPlace (an open space on the project, else a new one).
+  let place = over.place;
+  if (place === undefined) {
+    const seen = await windowSpaces();
+    place = await windowPlace(key, await placementOf(key, seen), seen);
+  }
+  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
+  if (runPath.note) hook.warnings.unshift(runPath.note);
   report(hook.warnings);
   const run = async (ledger) => {
     const r = await hc(args);
@@ -1547,6 +1568,23 @@ async function cmdWhois(opts, [terminal]) {
   const out = held ? whoisOf(held) : { terminal: address, core: view.core, created_ms: get?.created_ms ?? null, bot: null };
   if (opts.json) return out;
   return held ? `${address} plays ${out.bot} (${out.project}) since ${out.since}.` : `${address} plays no bot.`;
+}
+
+async function cmdHistory(opts, [ref]) {
+  // A bare id needs no definition (as detach): a removed bot's history is still there.
+  const bareId = BOT_ID_SHAPE.test(ref ?? "");
+  let bot = null;
+  try { bot = findBot((await projectFor(opts)).file, ref); } catch (e) { if (!bareId || !(e instanceof CliError)) throw e; }
+  const id = bot?.id ?? ref;
+  const h = botHistory({ attachRows: readAttachFile() ?? [], ledgerRows: workerLedgerRows(), botId: id });
+  if (opts.json) return { id, name: bot?.name ?? null, ...h };
+  const { timeline, workers, transcript } = historyLines(h);
+  return [
+    `${bot?.name ?? `bot ${id}`} (${id})`,
+    "  what happened", ...(timeline.length ? timeline.map((e) => `    ${e.text}`) : ["    nothing recorded on this computer"]),
+    ...(workers.length ? ["  workers", ...workers.map((w) => `    ${w}`)] : []),
+    ...(transcript ? [`  transcript   ${transcript}`] : []),
+  ].join("\n");
 }
 
 async function cmdBrief(opts, [ref]) {
@@ -2190,9 +2228,9 @@ export async function meterAfterUpdate(io) {
 }
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, brief: cmdBrief, update: cmdUpdate,
+  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
   tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter };
-const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "brief"]);
+const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
 export async function main(argv = process.argv.slice(2)) {

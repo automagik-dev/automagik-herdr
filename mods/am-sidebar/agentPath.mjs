@@ -1,4 +1,4 @@
-// The PATH an agent worker starts with, made able to run the agent's own interpreter.
+// The PATH an agent (a worker or a bot's seat) starts with, made able to run its own interpreter.
 //
 // An npm agent such as codex is a `#!/usr/bin/env node` script: nvm and Homebrew link
 // `<prefix>/bin/codex` to `<prefix>/lib/node_modules/<pkg>/bin/codex.js`, next to
@@ -165,8 +165,8 @@ export function interpreterPath(program, path, env = process.env) {
   const name = basename(program);
   if (!dir) {
     return { path, note: `${name} runs under ${interp} (its #!/usr/bin/env ${interp} line), which isn't on PATH or beside it; `
-      + `the worker may fail with "env: ${interp}: No such file or directory".` };
+      + `it may fail with "env: ${interp}: No such file or directory".` };
   }
   return { path: path ? `${dir}:${path}` : dir,
-    note: `${name} runs under ${interp}, which isn't on the worker's PATH: ${dir} put first on it.` };
+    note: `${name} runs under ${interp}, which isn't on its PATH: ${dir} put first on it.` };
 }
