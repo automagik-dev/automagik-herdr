@@ -195,8 +195,9 @@ automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
-automagik-herdr attach <bot> <terminal>
+automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
+automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
@@ -211,10 +212,71 @@ automagik-herdr update [--check | --rollback]
   checkout. A `--project` folder that isn't there is a usage mistake.
 - A bot is named by its id or by its name. A refusal exits 1, a usage mistake (such as a
   missing `--project` folder) exits 2, and nothing is written.
-- `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`. A member
-  whose lead is running gets the lead's pane as its parent. A running bot is not started twice.
+- `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
+  in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
+  pane as its parent. A running bot is not started twice.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
-  project is refused.
+  project is refused, and so are a pane another bot plays and a bot another pane plays; the
+  refusal names the holder. `attach --move` moves a bot from its pane to this one.
+- `detach` unties a bot from its pane. `whois` says which bot a pane plays, or which pane a
+  bot plays.
+
+## The attach ledger
+
+Which pane plays which bot is recorded in one file, `<app home>/automagik-herdr/attach.jsonl`
+(beside the workers ledger), and nowhere else. Only `automagik-herdr` writes it: `start`,
+`attach` and `detach`, and any run that reads it and finds a pane ended. The sidebar's Start
+and Attach run the command line too. The `bot` label is a display hint: `hc label` changes
+no row, so relabelling a pane moves no bot.
+
+The file is made with mode 0600; one that is group- or world-writable is refused (every
+command that reads it exits 1, naming the fix: `chmod 600`). Each row is one line, written
+with one append, under the file's lock (`attach.jsonl.lock`), so two runs never attach one bot:
+
+```json
+{ "v": 1, "event": "attach", "bot": "b-…", "project": "/abs/main/checkout", "terminal": "t7",
+  "core": "<hc core id>", "created_ms": 1762100000000, "machine": null,
+  "at": "2026-11-02T10:00:00.000Z", "by": "start" }
+```
+
+- `event`: `attach`, `detach` or `end`. `bot`: a bot id (`b-…`) or a session (`session-…`).
+- `core`: `hc server status`'s `core.id`, the core's permanent id (reset only when hc's state is
+  wiped). `created_ms`: the terminal's, from `hc get`. A terminal is the triple
+  (`core`, `terminal`, `created_ms`), so an id hc hands out again is another terminal.
+- `by`: `start`, `attach`, `detach`, `sweep` (an end row) or `import` (see below). `reason`, on
+  some rows: `moved` (the detach of `attach --move`, written before its attach, in the same
+  run), `finished` (hc says the terminal finished, or doesn't know it) or `replaced` (its id
+  now has another `created_ms`). `machine` is `null`: every row is this computer's.
+
+**The fold.** Read the rows in order, skipping any line that isn't a well-formed row:
+
+1. `attach`: end any earlier binding of the same bot and of the same terminal, then bind the
+   terminal to the bot.
+2. `detach`: unbind the terminal if it is bound to that bot (a detach naming another bot does
+   nothing).
+3. `end`: unbind the terminal, whatever bot it holds.
+
+What is left binds each bot to at most one terminal. A binding counts only when hc confirms
+it: its `core` is this computer's, and `hc get <terminal>` says `live` with the same
+`created_ms`. Anything else reads as ended at once; the next command that reads the file
+appends its `end` row.
+
+**Looking it up** (the interface for other tools):
+
+```text
+automagik-herdr whois <terminal> --json
+  { "terminal", "core", "created_ms", "bot", "project", "since" }   or   { "terminal", "core", "created_ms", "bot": null }
+automagik-herdr whois --bot <bot> --json
+  the same, or { "terminal": null, "core", "created_ms": null, "bot", "project": null, "since": null }
+```
+
+`since` is the attach row's `at`; `created_ms` is hc's. Both forms fold and confirm with hc first.
+
+**The first run.** With no file yet, the first command that reads it imports today's labels
+once: each live pane on this computer carrying `bot=<id>` of a bot some project here defines
+becomes an attach row with `by: "import"` (one pane per bot: an agent in front, then the
+newest). The file is then made, even empty, so this happens once. The briefing hook reads the
+file and never writes it; before the file exists it goes by the label.
 
 ## Workers
 
@@ -374,15 +436,15 @@ stamp events with them (`actor.bot`, `actor.role`, `actor.squad`):
 | `category` | the category it shows under (a deeper member: its chain's category), when there is one |
 | `squad` | the team, set by the team-assembly helper (`squad=memory`). Never overwritten. A pane with none gets its lead's pane's squad, and `automagik-herdr.squad=<that squad>` records the copy. |
 
-Start sets them. Attach leaves the pane matching its bot: a `role=` or `category=` the bot
+They are a hint for display and for those tools; which pane plays which bot is the
+[attach ledger](#the-attach-ledger)'s answer. Start sets them. Attach leaves the pane matching its bot: a `role=` or `category=` the bot
 doesn't have (left by the pane's last bot) comes off. An edit that changes a bot's rank, lead or category, or a lead's
 captain status, rewrites the labels on the live panes of the bots it changes; a squad this
 pack copied (the pane's `squad` still equals its `automagik-herdr.squad`) follows a lead
 change, or comes off when the new lead's pane has none. Detach takes off `bot`, any `role`
 and any `category` (nothing else sets those two today), the `automagik-herdr.squad` mark,
 and `squad` only while it still equals the mark: a squad set after the copy stays. Only panes
-on this computer are labelled. The lead's pane is its live one with an agent in front, the
-newest when there are several.
+on this computer are labelled. The lead's pane is the one the attach ledger ties it to.
 
 ## Reference
 
@@ -452,7 +514,7 @@ break it. The installer and `automagik-herdr update` move
 older hooks onto it (each file backed up beside itself as `settings.local.json.am-backup`), a hook
 in the older `node` form is upgraded to it the next time the bot starts or attaches, and a
 rollback to a pack without the entry point moves the hooks back onto that folder's own
-`briefing.mjs`. It prints nothing outside a bot's pane, finishes within about 2 seconds, and never fails a
+`briefing.mjs`. It prints nothing outside a bot's pane (by the attach ledger), finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
 already running may need `/hooks` once to load the hook.
@@ -501,8 +563,8 @@ node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
-`launchArgs.js`, `models.js`, `workers.js`, `formModel.js`, `release.js`, `updateCheck.js`,
-`workerTab.js`, `migrate.js`), so the tests
+`launchArgs.js`, `models.js`, `workers.js`, `attach.js`, `formModel.js`, `release.js`,
+`updateCheck.js`, `workerTab.js`, `migrate.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are

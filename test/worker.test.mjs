@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -277,7 +277,8 @@ test("start and attach append a seat row to the ledger", (t) => {
   const seat = s.ledger().find((r) => r.kind === "seat");
   assert.deepEqual([seat.terminal, seat.botId, seat.task, seat.worktree, seat.agent, seat.pid], ["t100", ID.main, null, s.project, "claude", 5100]);
   assert.equal(seat.project, s.project, "a seat row names its project (usagemeter: task null, project the key)");
-  assert.equal(s.cli(["attach", "Captain", "t2"], { from: null }).code, 0);
+  // Captain's label on t4 was imported into the attach ledger: the move is explicit.
+  assert.equal(s.cli(["attach", "Captain", "t2", "--move"], { from: null }).code, 0);
   const attached = s.ledger().filter((r) => r.kind === "seat")[1];
   assert.deepEqual([attached.terminal, attached.botId, attached.agent, attached.pid], ["t2", ID.cap, "claude", 4000]);
   assert.deepEqual([attached.task, attached.project], [null, s.project]);
@@ -387,6 +388,12 @@ test("worker refuses outside a bot's pane: no HC_TERMINAL_ID, a pane with no bot
   const plain = s.cli(["worker", "x", "--branch", "feat/x"], { from: "t2" });
   assert.equal(plain.code, 1);
   assert.match(plain.err, /t2 isn't a bot's pane/);
+  // t3's bot= label names a bot no project defines, so the import leaves it out; a ledger row
+  // tying t3 to that bot (written by hand here) is refused as a bot of no project here.
+  assert.match(s.cli(["worker", "x", "--branch", "feat/x"], { from: "t3" }).err, /t3 isn't a bot's pane \(the attach ledger ties no bot to it\)/);
+  const row = { v: 1, event: "attach", bot: ID.stray, project: s.project, terminal: "t3", core: "fakecore0000", created_ms: 1,
+    machine: null, at: new Date().toISOString(), by: "attach" };
+  appendFileSync(join(s.app, "automagik-herdr/attach.jsonl"), `${JSON.stringify(row)}\n`);
   const stray = s.cli(["worker", "x", "--branch", "feat/x"], { from: "t3" });
   assert.equal(stray.code, 1);
   assert.match(stray.err, /plays bot b-zzzzzzzzzz, which no project here defines \(looked in .*proj\)/);
@@ -1044,6 +1051,13 @@ function moveForeground(s, address, cwd, labels = {}) {
   Object.assign(t.labels, labels);
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
 }
+/** Ties a scene terminal to a bot in the attach ledger, as attach writes it (#57's row shape). */
+function bindIn(s, terminal, botId, project) {
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  const row = { v: 1, event: "attach", bot: botId, project, terminal, core: "fakecore0000", created_ms: 1,
+    machine: null, at: new Date().toISOString(), by: "attach" };
+  appendFileSync(join(s.app, "automagik-herdr/attach.jsonl"), `${JSON.stringify(row)}\n`);
+}
 const withoutDev = () => team({ bots: team().bots.filter((b) => b.id !== ID.dev) });
 const devOnly = () => team({ bots: team().bots.filter((b) => b.id === ID.dev) });
 
@@ -1070,6 +1084,7 @@ test("worker: the pane's Herdr space names its project when the agent's folder d
   const b = otherProject(s, "b", devOnly());
   // t1 works outside any project; t2, in its space, works in B.
   moveForeground(s, "t1", s.root, { "herdr.space": "w9" });
+  bindIn(s, "t1", ID.dev, s.project); // bound in A, which no longer defines Dev
   const st = s.hcState();
   Object.assign(st.terminals.find((x) => x.address === "t2"), { cwd: b, labels: { "herdr.space": "w9" } });
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -1078,10 +1093,11 @@ test("worker: the pane's Herdr space names its project when the agent's folder d
   assert.equal(r.json().worktree, join(b, ".claude/worktrees/feat-x"));
 });
 
-test("worker: two projects defining the calling bot are refused with both listed; --project picks one", (t) => {
+test("worker: two fallback projects defining the calling bot are refused with both listed; --project picks one", (t) => {
   const s = scene(t); // A defines Dev
   const b = otherProject(s, "b", devOnly()); // so does B
   moveForeground(s, "t1", b);
+  bindIn(s, "t1", ID.dev, join(s.root, "old")); // bound in a project that no longer defines Dev
   const r = s.cli(["worker", "fix it", "--branch", "feat/x"]);
   assert.equal(r.code, 1);
   assert.match(r.err, new RegExp(`t1 plays bot ${ID.dev}, which 2 projects define: ${b}, ${s.project}\\. Pick its project with --project`));
@@ -1090,4 +1106,54 @@ test("worker: two projects defining the calling bot are refused with both listed
   const picked = s.cli(["worker", "fix it", "--branch", "feat/x", "--project", s.project, "--json"]);
   assert.equal(picked.code, 0, picked.err);
   assert.equal(picked.json().worktree, join(s.project, ".claude/worktrees/feat-x"));
+});
+
+test("worker: the attach binding's project wins when it defines the bot, even with another project defining it", (t) => {
+  const s = scene(t); // A defines Dev
+  const b = otherProject(s, "b", devOnly()); // so does B, where t1 now works
+  moveForeground(s, "t1", b);
+  bindIn(s, "t1", ID.dev, s.project);
+  const r = s.cli(["worker", "fix it", "--branch", "feat/x", "--json"], { cwd: b });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().worktree, join(s.project, ".claude/worktrees/feat-x"));
+  const named = s.cli(["worker", "y", "--branch", "feat/y", "--project", b, "--json"], { cwd: b });
+  assert.equal(named.code, 0, named.err);
+  assert.equal(named.json().worktree, join(b, ".claude/worktrees/feat-y"), "--project wins when it defines the bot");
+});
+
+test("worker: a pre-ledger pane (bot= label only) working outside its project is told to attach; then it starts", (t) => {
+  const s = scene(t);
+  // t1: Dev's label, launched and working outside the project, a codex pane; no attach.jsonl yet.
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t1"), { cwd: s.root, foreground: { argv: ["codex"], cwd: s.root, pid: 4000 },
+    status: { app: "codex", state: "idle" } });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["worker", "fix it", "--branch", "feat/x"], { cwd: s.root });
+  assert.equal(r.code, 1);
+  assert.match(r.err, new RegExp(`t1 isn't a bot's pane \\(the attach ledger ties no bot to it\\)\\. Its bot=${ID.dev} label is from before `
+    + `the ledger.*Tie it: automagik-herdr attach ${ID.dev} t1 --project <its project>\\..*automagik-herdr start ${ID.dev} --project`));
+  assert.equal(s.runs().length, 0);
+  // The one-time import ran (and found nothing); the advice works.
+  assert.equal(s.cli(["attach", ID.dev, "t1", "--project", s.project], { from: null, cwd: s.root }).code, 0);
+  const w = s.cli(["worker", "fix it", "--branch", "feat/x", "--json"], { cwd: s.root });
+  assert.equal(w.code, 0, w.err);
+  assert.equal(w.json().worktree, join(s.project, ".claude/worktrees/feat-x"));
+});
+
+test("worker: a pre-ledger pane's first run with --project imports its label there; a Claude pane outside is refused attach", (t) => {
+  const s = scene(t);
+  moveForeground(s, "t1", s.root);
+  const st = s.hcState();
+  st.terminals.find((x) => x.address === "t1").cwd = s.root;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  // No attach.jsonl yet: the one-time import looks in --project too, so the label is tied there.
+  const w = s.cli(["worker", "fix it", "--branch", "feat/x", "--project", s.project, "--json"], { cwd: s.root });
+  assert.equal(w.code, 0, w.err);
+  assert.equal(w.json().worktree, join(s.project, ".claude/worktrees/feat-x"));
+  const rows = readFileSync(join(s.app, "automagik-herdr/attach.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepEqual(rows.filter((r) => r.terminal === "t1").map((r) => [r.bot, r.project, r.by]), [[ID.dev, s.project, "import"]]);
+  // A Claude session outside the project can't be attached (attachRefusal): start is the way.
+  const attach = s.cli(["attach", ID.dev, "t1", "--project", s.project], { from: null, cwd: s.root });
+  assert.equal(attach.code, 1);
+  assert.match(attach.err, /Not attached: this Claude session runs in/);
 });
