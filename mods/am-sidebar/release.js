@@ -67,8 +67,10 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * (the mod manager's INSTALLED column; am-mods/core.js parsePackMarker reads it too),
  * `usagemeter=<version>` when install.sh put the usagemeter binary in ~/.local/bin (--uninstall
  * removes only that one), `usagemeter-machines=<machine>:<version>,…` for the linked machines the
- * pack put it on (meterFleet.js), and `usagemeter-scope=local|none` when install.sh ran with
- * --usagemeter-local-only or --no-usagemeter. A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
+ * pack put it on (meterFleet.js), and `usagemeter-scope=all|local|none`, what the person chose
+ * (install.sh: all by default, local with --usagemeter-local-only, none with --no-usagemeter;
+ * `automagik-herdr meter install` sets all, or local with --local). An older install.sh wrote no
+ * scope, not even for --no-usagemeter: meterFleet.js meterScope reads that as "not asked". A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -91,7 +93,7 @@ export function parseMarker(text) {
     usagemeter: /^\d+\.\d+\.\d+$/.test(get("usagemeter")) ? get("usagemeter") : null,
     usagemeterOn: Object.fromEntries(list(get("usagemeter-machines")).map((e) => [e.slice(0, e.lastIndexOf(":")), e.slice(e.lastIndexOf(":") + 1)])
       .filter(([m, v]) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(m) && /^\d+\.\d+\.\d+$/.test(v))),
-    usagemeterScope: ["local", "none"].includes(get("usagemeter-scope")) ? get("usagemeter-scope") : null,
+    usagemeterScope: ["all", "local", "none"].includes(get("usagemeter-scope")) ? get("usagemeter-scope") : null,
   };
 }
 

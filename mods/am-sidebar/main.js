@@ -22,6 +22,7 @@ import { SHARED_RENAMES, carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
 import { parseMarker } from "./release.js";
+import { meterScope } from "./meterFleet.js";
 import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -456,13 +457,13 @@ export default class Spaces extends View {
   }
 
   // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine
-  // (unless install.sh had --no-usagemeter or --usagemeter-local-only), then the next look.
+  // when the person agreed to them (meterScope "all"), then the next look.
   meterTick(cx) {
     cx.spawn(async (cx) => {
       let wait = METER_EVERY_MS;
       try {
         let scope = null;
-        try { scope = parseMarker(await readTextFile(`${appHome()}/automagik-herdr/installed-by-install.sh`))?.usagemeterScope ?? null; } catch {}
+        try { scope = meterScope(parseMarker(await readTextFile(`${appHome()}/automagik-herdr/installed-by-install.sh`))); } catch {}
         const machines = syncTargets(this.machines, scope);
         ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines }));
       } catch {}

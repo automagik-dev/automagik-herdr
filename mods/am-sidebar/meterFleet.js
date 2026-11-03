@@ -52,6 +52,22 @@ const PLATFORMS = Object.freeze({
 /** The release asset for a machine's `uname -sm`, or null when there is no build for it. */
 export const assetFor = (uname) => USAGEMETER.assets[PLATFORMS[String(uname ?? "").trim().replace(/\s+/g, " ")]] ?? null;
 
+/**
+ * Where the person agreed to usagemeter, from the install record: `all` (this computer and every
+ * linked machine), `local`, `none`, or null when nobody asked. The record's scope line says it;
+ * a record without one (an install.sh before this one wrote none, even for --no-usagemeter) counts
+ * as `all` only when it shows the pack installed usagemeter somewhere, else null: `update` then
+ * installs nowhere and the sidebar syncs only this computer.
+ */
+export function meterScope(record) {
+  if (!record) return null;
+  if (record.usagemeterScope) return record.usagemeterScope;
+  return record.usagemeter || Object.keys(record.usagemeterOn ?? {}).length ? "all" : null;
+}
+
+/** The line `update` prints when nobody asked: how to opt in. */
+export const OPT_IN = "usagemeter: not installed by the update (no install has asked for it). To install it on this computer and every linked machine: automagik-herdr meter install";
+
 /** A machine name as `hc machine ls` gives it, safe in the ownership record (`name:version,…`). */
 export const MACHINE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 

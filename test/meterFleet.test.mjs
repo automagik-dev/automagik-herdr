@@ -11,8 +11,8 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { METER_RELEASES, assetFor, decodeExec, hcExecArgs, linkedMachines, meterPins, meterReleases, recordAfter, releaseBase } from "../mods/am-sidebar/meterFleet.js";
-import { SYNC, syncMeter, syncTargets } from "../mods/am-sidebar/meter.js";
+import { METER_RELEASES, OPT_IN, assetFor, decodeExec, hcExecArgs, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, releaseBase } from "../mods/am-sidebar/meterFleet.js";
+import { METER_EVERY_MS, METER_EXEC_LIMIT_MS, METER_KEY, SYNC, syncMeter, syncTargets } from "../mods/am-sidebar/meter.js";
 import { USAGEMETER, formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { meterAfterUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 
@@ -133,7 +133,7 @@ test("the record: usagemeter-machines and usagemeter-scope round-trip; junk is d
   assert.deepEqual(back.usagemeterOn, { lin: V, "g9.b": "0.2.0" });
   assert.equal(back.usagemeterScope, "local");
   assert.equal(formatMarker(back), text);
-  assert.deepEqual(parseMarker(`${formatMarker(base)}usagemeter-machines=../x:1.0.0,ok:junk,ok2:1.2.3\nusagemeter-scope=all\n`),
+  assert.deepEqual(parseMarker(`${formatMarker(base)}usagemeter-machines=../x:1.0.0,ok:junk,ok2:1.2.3\nusagemeter-scope=everywhere\n`),
     { ...parseMarker(formatMarker(base)), usagemeterOn: { ok2: "1.2.3" }, usagemeterScope: null });
   assert.doesNotMatch(formatMarker(base), /usagemeter/);
   assert.deepEqual(recordAfter({ a: "0.2.0", b: V, c: V }, [
@@ -285,8 +285,37 @@ test("meter uninstall: only where the record says the pack put it, and only that
   assert.equal(s.says("lin"), `usagemeter ${V}`);
 });
 
-test("update runs the new pack's meter install, as install.sh's scope says", async (t) => {
+test("an old opt-out (no scope line, no usagemeter= line): update installs nowhere and says how to opt in", async (t) => {
+  // What dev's install.sh --no-usagemeter left: a record with no usagemeter line at all.
   const s = fleet(t);
+  assert.equal(meterScope(s.mark()), null);
+  const calls = [];
+  const io = { modsDir: s.mods, meter: async (args) => { calls.push(args); return { code: 0, stdout: '{"results":[],"notes":[]}' }; } };
+  const r = await meterAfterUpdate(io);
+  assert.deepEqual(r, { lines: [OPT_IN], results: [] });
+  assert.match(OPT_IN, /automagik-herdr meter install$/);
+  assert.deepEqual(calls, [], "nothing ran, here or on a machine");
+  // The sidebar's sync stays on this computer too.
+  assert.deepEqual(syncTargets([{ name: "lin", state: "connected" }], meterScope(s.mark())), []);
+  // A record that shows the pack installed it (here or on a machine) is a yes: everywhere.
+  assert.equal(meterScope({ ...s.mark(), usagemeter: "0.2.0" }), "all");
+  assert.equal(meterScope({ ...s.mark(), usagemeterOn: { lin: V } }), "all");
+  assert.equal(meterScope({ ...s.mark(), usagemeter: V, usagemeterScope: "none" }), "none");
+  assert.equal(meterScope(null), null);
+  // An explicit meter install is the yes: it records all (or local with --local), and update follows.
+  assert.equal(s.cli("meter", "install", "--local").code, 0);
+  assert.equal(s.mark().usagemeterScope, "local");
+  assert.equal(s.cli("meter", "install").code, 0);
+  assert.equal(s.mark().usagemeterScope, "all");
+  assert.equal(s.cli("meter", "install", "--local").code, 0);
+  assert.equal(s.mark().usagemeterScope, "all", "--local never narrows an all");
+  await meterAfterUpdate(io);
+  assert.deepEqual(calls, [["meter", "install", "--json"]]);
+});
+
+test("update runs the new pack's meter install, as the recorded scope says", async (t) => {
+  const s = fleet(t);
+  writeFileSync(s.markPath, formatMarker({ ...s.mark(), usagemeterScope: "all" }));
   const calls = [];
   const io = { modsDir: s.mods, meter: async (args) => { calls.push(args); return { code: 0, stdout: JSON.stringify({ results: [{ machine: "lin", status: "installed", version: V }], notes: [] }) }; } };
   assert.deepEqual((await meterAfterUpdate(io)).lines, [`usagemeter ${V} on lin: installed (checksum ok).`]);
@@ -295,7 +324,7 @@ test("update runs the new pack's meter install, as install.sh's scope says", asy
   writeFileSync(s.markPath, formatMarker({ ...s.mark(), usagemeterScope: "none" }));
   assert.deepEqual((await meterAfterUpdate(io)).lines, ["usagemeter: skipped (install.sh --no-usagemeter)."]);
   assert.deepEqual(calls, [["meter", "install", "--json"], ["meter", "install", "--json", "--local"]]);
-  writeFileSync(s.markPath, formatMarker({ ...s.mark(), usagemeterScope: null }));
+  writeFileSync(s.markPath, formatMarker({ ...s.mark(), usagemeterScope: "all" }));
   // A pack whose CLI can't answer: one warning, never a failed update.
   const bad = await meterAfterUpdate({ modsDir: s.mods, meter: async () => ({ code: 1, stdout: "", stderr: "boom\n" }) });
   assert.match(bad.lines[0], /^Warning: usagemeter was not checked: boom\./);
@@ -307,7 +336,8 @@ test("update runs the new pack's meter install, as install.sh's scope says", asy
 
 test("sync fan-out: this computer, then each connected linked machine in turn; failures are silent", async () => {
   const machines = [{ name: "lin", state: "connected" }, { name: "off", state: "disconnected" }, { name: "tmp", state: "connected", temporary: true }];
-  assert.deepEqual(syncTargets(machines), ["lin"]);
+  assert.deepEqual(syncTargets(machines, "all"), ["lin"]);
+  assert.deepEqual(syncTargets(machines), [], "nobody asked: this computer only");
   assert.deepEqual(syncTargets(machines, "local"), []);
   assert.deepEqual(syncTargets(machines, "none"), []);
   const calls = [];
@@ -323,6 +353,41 @@ test("sync fan-out: this computer, then each connected linked machine in turn; f
   assert.equal(missing.why, "missing");
   assert.deepEqual(missing.on, { lin: 0 });
   assert.equal("on" in await syncMeter({ exec: async () => ({ code: 0 }), bin: "/x" }), false);
+});
+
+test("a machine that hangs during sync: left at the 30 s limit, the run goes on and ends, the next run is due", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  assert.equal(METER_EXEC_LIMIT_MS, 30_000);
+  const store = new Map();
+  let clock = 1_000_000;
+  const calls = [];
+  // `hang` never answers (its sync is stuck); `lin` answers at once.
+  const exec = (bin, args, opts) => { calls.push(opts?.on ?? "here"); return opts?.on === "hang" ? new Promise(() => {}) : Promise.resolve({ code: 0 }); };
+  const state = {};
+  const run = () => syncMeter({ exec, bin: "/h/usagemeter", now: () => clock, get: (k) => store.get(k) ?? null, set: (k, v) => store.set(k, v), state, machines: ["hang", "lin"] });
+  let done = null;
+  const first = run().then((r) => { done = r; });
+  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+  assert.deepEqual(calls, ["here", "hang"], "stuck on hang");
+  assert.equal(done, null);
+  t.mock.timers.tick(METER_EXEC_LIMIT_MS - 1);
+  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+  assert.equal(done, null, "not before the limit");
+  t.mock.timers.tick(1);
+  await first;
+  assert.deepEqual(calls, ["here", "hang", "lin"], "the run moved on to the next machine");
+  assert.deepEqual(done.on, { hang: "timed out", lin: 0 });
+  assert.equal(done.ran, true);
+  assert.equal(done.wait, METER_EVERY_MS, "the next look is scheduled as usual");
+  assert.equal(state.busy, false, "the run is over: the next one may start");
+  assert.equal(store.get(METER_KEY), 1_000_000);
+  // The next run, when it is due, starts again from this computer.
+  clock += METER_EVERY_MS;
+  const again = run();
+  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+  t.mock.timers.tick(METER_EXEC_LIMIT_MS);
+  assert.equal((await again).ran, true);
+  assert.deepEqual(calls.slice(3), ["here", "hang", "lin"]);
 });
 
 test("SYNC on a machine: no binary is silent (exit 0); one there runs `sync`", (t) => {

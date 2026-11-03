@@ -11,6 +11,17 @@
 
 export const METER_FIRST_MS = 30_000;
 export const METER_EVERY_MS = 10 * 60 * 1000;
+/**
+ * The most one linked machine's sync may take (Herdr's exec ends a program at 30 s too): a machine
+ * that hangs past it is left behind, the run goes on to the next one and ends, and the next run
+ * is scheduled as usual.
+ */
+export const METER_EXEC_LIMIT_MS = 30_000;
+const within = (promise, ms) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error("timed out")), ms);
+  Promise.resolve(promise).then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+});
+
 /** The shared value (Herdr's shared/setShared) holding when the last run started (ms). */
 export const METER_KEY = "am.sidebar.meter-started";
 
@@ -21,10 +32,9 @@ exec "$m" sync`;
 
 /**
  * The linked machines a run syncs: the connected ones of `hc machine ls` (the sidebar's list, no
- * temporary ones), none when the install record's usagemeter-scope is set (install.sh had
- * --no-usagemeter or --usagemeter-local-only).
+ * temporary ones), and only when the person agreed to them (meterFleet.js meterScope is `all`).
  */
-export const syncTargets = (machines, scope = null) => (scope ? [] : (machines ?? [])
+export const syncTargets = (machines, scope = null) => (scope !== "all" ? [] : (machines ?? [])
   .filter((m) => m && m.state === "connected" && !m.temporary && typeof m.name === "string" && m.name).map((m) => m.name));
 
 /** The one shared usagemeter path, under the person's home (Herdr's `home()`). */
@@ -39,8 +49,10 @@ export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
  * usagemeter ends itself within its 20-second budget; a copy never starts a second run while one
  * it started is still going.
  * `machines`: the connected linked machines to sync after this computer, one at a time, within the
- * same run (`exec("sh", ["-c", SYNC], { on })`; a rejection or a failure there is silent).
- * Resolves `{ ran, why?, code?, on?, wait }`: wait is when to look again (ms); on: { machine: code }.
+ * same run (`exec("sh", ["-c", SYNC], { on })`; a rejection or a failure there is silent), each
+ * within METER_EXEC_LIMIT_MS.
+ * Resolves `{ ran, why?, code?, on?, wait }`: wait is when to look again (ms); on: { machine: code,
+ * null when it could not run, "timed out" past the limit }.
  */
 export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {}, machines = [] }) {
   if (state.busy) return { ran: false, why: "busy", wait: METER_EVERY_MS };
@@ -61,7 +73,8 @@ export async function syncMeter({ exec, now = Date.now, bin, get = () => null, s
     if (!machines.length) return here;
     const on = {};
     for (const machine of machines) {
-      try { on[machine] = (await exec("sh", ["-c", SYNC], { on: machine }))?.code ?? null; } catch { on[machine] = null; }
+      try { on[machine] = (await within(exec("sh", ["-c", SYNC], { on: machine }), METER_EXEC_LIMIT_MS))?.code ?? null; }
+      catch (e) { on[machine] = e?.message === "timed out" ? "timed out" : null; }
     }
     return { ...here, on };
   } finally {

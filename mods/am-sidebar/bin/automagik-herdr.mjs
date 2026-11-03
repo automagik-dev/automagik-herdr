@@ -35,7 +35,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
 import { carriedLabels, continueRefusal, ledgerSession, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
-import { decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
+import { OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -610,14 +610,15 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 runs it on about one task in three, by rule
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back;
-                                an update then runs meter install (unless install.sh had
-                                --no-usagemeter; --usagemeter-local-only: this computer only)
+                                an update then runs meter install where you agreed to it
+                                (install.sh, or an earlier meter install); nobody asked: nowhere
   meter install [--machine M | --linked | --local]
                                 the pinned usagemeter (v${USAGEMETER.version}, hash-checked on each
                                 machine, never a downgrade) in ~/.local/bin on this computer and
                                 every connected linked machine (hc machine ls); --machine: that
                                 one, e.g. one linked later; --linked: the machines only; --local:
-                                this computer only. A machine that fails is a warning
+                                this computer only. A machine that fails is a warning. Running
+                                it records your yes (--local: this computer only) for updates
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
 
@@ -2053,15 +2054,20 @@ async function meterMachines() {
   return { machines: linkedMachines(r.stdout) };
 }
 
-/** The install record after `results` (only a v2 one install.sh wrote; none: nothing is noted). */
-function noteMeter(modsDir, results) {
+/**
+ * The install record after `results` (only a v2 one install.sh wrote; none: nothing is noted), and
+ * the scope an explicit `meter install` agreed to (`scope`: all, or local; never narrower than all).
+ */
+function noteMeter(modsDir, results, scope = null) {
   const record = readMarker(modsDir);
   if (!record || record.v1) return;
+  const usagemeterScope = scope === "all" || (scope === "local" && record.usagemeterScope !== "all") ? scope : record.usagemeterScope;
   const here = results.find((r) => r.machine === null);
   const usagemeter = here?.status === "installed" ? here.version : ["newer", "link", "unknown"].includes(here?.status) ? null : record.usagemeter;
   const usagemeterOn = recordAfter(record.usagemeterOn, results);
-  if (usagemeter === record.usagemeter && JSON.stringify(usagemeterOn) === JSON.stringify(record.usagemeterOn)) return;
-  writeMarker(modsDir, { ...record, usagemeter, usagemeterOn });
+  if (usagemeter === record.usagemeter && usagemeterScope === record.usagemeterScope
+    && JSON.stringify(usagemeterOn) === JSON.stringify(record.usagemeterOn)) return;
+  writeMarker(modsDir, { ...record, usagemeter, usagemeterOn, usagemeterScope });
 }
 
 /**
@@ -2106,7 +2112,10 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
   } else {
     throw new CliError(`meter needs install or uninstall${verb ? `, not "${verb}"` : ""}.`, 2);
   }
-  try { noteMeter(modsDir, results); } catch (e) { notes.push(`usagemeter: the install record could not note it (${e?.message ?? e}).`); }
+  // An explicit `meter install` is the person's yes (install.sh's own run passes --linked
+  // and records its scope itself; `update` asks only within the scope already agreed).
+  const agreed = verb === "install" && !opts.linked && opts.machine === undefined ? (opts.local ? "local" : "all") : null;
+  try { noteMeter(modsDir, results, agreed); } catch (e) { notes.push(`usagemeter: the install record could not note it (${e?.message ?? e}).`); }
   if (opts.machine !== undefined && results.some((r) => r.status === "failed" || r.status === "disconnected")) {
     throw new CliError(results.map(resultLine).join("\n").replace(/^Warning: /, ""));
   }
@@ -2121,8 +2130,10 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
  */
 export async function meterAfterUpdate(io) {
   const modsDir = io.modsDir ?? defaultModsDir(io.env ?? process.env);
-  const scope = readMarker(modsDir)?.usagemeterScope ?? null;
+  const scope = meterScope(readMarker(modsDir));
   if (scope === "none") return { lines: ["usagemeter: skipped (install.sh --no-usagemeter)."], results: [] };
+  // Nobody asked (an older install.sh recorded no --no-usagemeter): nowhere, and how to opt in.
+  if (!scope) return { lines: [OPT_IN], results: [] };
   const args = ["meter", "install", "--json", ...(scope === "local" ? ["--local"] : [])];
   let r;
   if (io.meter) r = await io.meter(args);

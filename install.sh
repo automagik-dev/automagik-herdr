@@ -366,14 +366,26 @@ version_ge() {
     for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
     exit 0 }' </dev/null
 }
-# The marker's usagemeter= line: set to $1, or dropped when $1 is empty (a v2 marker only).
-mark_meter() {
+# The marker's usagemeter lines, last and in release.js formatMarker's order (usagemeter=,
+# usagemeter-machines=, usagemeter-scope=), so a later rewrite by update.mjs changes nothing:
+# $1 the usagemeter= value and $2 the usagemeter-scope= one (empty: dropped); the machines line kept.
+# Unchanged values leave the record byte for byte (a rerun changes nothing). A v2 marker only.
+mark_usagemeter() {
   grep -q '^mods=' "$MARK" 2>/dev/null || return 0
+  machines=$(mark_get usagemeter-machines)
   m=$(mktemp "$STATE/.marker.XXXXXX") || return 1
-  if { sed '/^usagemeter=/d' "$MARK" && if [ -n "$1" ]; then printf 'usagemeter=%s\n' "$1"; fi; } >"$m" && mv "$m" "$MARK"; then return 0; fi
+  if { sed -e '/^usagemeter=/d' -e '/^usagemeter-machines=/d' -e '/^usagemeter-scope=/d' "$MARK"
+    if [ -n "$1" ]; then printf 'usagemeter=%s\n' "$1"; fi
+    if [ -n "$machines" ]; then printf 'usagemeter-machines=%s\n' "$machines"; fi
+    if [ -n "$2" ]; then printf 'usagemeter-scope=%s\n' "$2"; fi; } >"$m"; then
+    if cmp -s "$m" "$MARK"; then rm -f "$m"; return 0; fi
+    if mv "$m" "$MARK"; then return 0; fi
+  fi
   rm -f "$m"
   return 1
 }
+mark_meter() { mark_usagemeter "$1" "$(mark_get usagemeter-scope)"; }
+mark_scope() { mark_usagemeter "$(mark_get usagemeter)" "$1"; }
 # Puts the pinned release at $METER: the binary for this OS and CPU, checked against the release's
 # SHA256SUMS, written to a temp file beside it, chmod 755, renamed into place. Never over a newer
 # usagemeter (Pocket Link installs the same one; a pre-release counts by its X.Y.Z, so 0.3.0-dev
@@ -438,14 +450,6 @@ install_meter() {
   why="could not write $METER"
   return 1
 }
-# The marker's usagemeter-scope= line (none, local, or dropped for everywhere; a v2 marker only).
-mark_scope() {
-  grep -q '^mods=' "$MARK" 2>/dev/null || return 0
-  m=$(mktemp "$STATE/.marker.XXXXXX") || return 1
-  if { sed '/^usagemeter-scope=/d' "$MARK" && if [ -n "$1" ]; then printf 'usagemeter-scope=%s\n' "$1"; fi; } >"$m" && mv "$m" "$MARK"; then return 0; fi
-  rm -f "$m"
-  return 1
-}
 # The pack's own CLI, run with node (install() checked it): meter install|uninstall on the linked
 # machines. Its lines are printed as they are; it failing to run at all is only a warning.
 fleet() {
@@ -458,7 +462,7 @@ fleet() {
     || say "Warning: usagemeter on linked machines did not finish; 'automagik-herdr meter install' retries it."
 }
 meter_step() {
-  if [ "$METER_OK" = 0 ]; then scope=none; elif [ "$FLEET_OK" = 0 ]; then scope=local; else scope=; fi
+  if [ "$METER_OK" = 0 ]; then scope=none; elif [ "$FLEET_OK" = 0 ]; then scope=local; else scope=all; fi
   mark_scope "$scope" || say "usagemeter: the ownership record could not note --no-usagemeter or --usagemeter-local-only."
   if [ "$METER_OK" = 0 ]; then say "usagemeter: skipped (--no-usagemeter)."; return 0; fi
   install_meter || say "Warning: usagemeter was not installed: $why. The pack is installed; run this again later to retry."
