@@ -243,7 +243,7 @@ export default class Spaces extends View {
   }
 
   // The core terminal behind a pane: by address; else, for a machine renamed in the app
-  // whose terminals still carry its old name (server/t2 behind hx470/t2), the one with
+  // whose terminals still carry its old name (server/t2 behind host-b/t2), the one with
   // the same local id and the core's own herdr.tab label for that pane's tab.
   coreTerminal(p) {
     if (!p?.terminal) return null;

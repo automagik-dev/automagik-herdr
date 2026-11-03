@@ -1,7 +1,16 @@
 // Writes bots-canvas/project/Main.dc.html: the live brain-v3 hc tree as a Herdr Bots sidebar.
-import { CHARACTERS } from '/Users/feliperosa/workspace/repos/automagik/apps/bots-dsh/src/client/characters.js'
-import { INKS } from '/Users/feliperosa/workspace/repos/automagik/apps/bots-dsh/src/client/inks.js'
+// AUTOMAGIK_DIR is a checkout of the Automagik repo, which holds the characters and inks.
 import { writeFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+
+const AUTOMAGIK = process.env.AUTOMAGIK_DIR
+if (!AUTOMAGIK) {
+  console.error('gen-sidebar: set AUTOMAGIK_DIR to a checkout of the Automagik repo')
+  process.exit(2)
+}
+const client = (name) => pathToFileURL(`${AUTOMAGIK}/apps/bots-dsh/src/client/${name}`).href
+const { CHARACTERS } = await import(client('characters.js'))
+const { INKS } = await import(client('inks.js'))
 
 const OUT = new URL('../bots-canvas/project/Main.dc.html', import.meta.url).pathname
 const mix = (a, b, t) => '#' + [1,3,5].map(i => Math.round(parseInt(a.slice(i,i+2),16)*t + parseInt(b.slice(i,i+2),16)*(1-t)).toString(16).padStart(2,'0')).join('')
