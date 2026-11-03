@@ -116,17 +116,17 @@
       "url": "https://github.com/dmazlum/herdr-revive",
       "defaultBranch": "main",
       "stars": 4,
-      "pushedAt": "2026-11-02T17:02:25Z",
-      "headCommit": "6851ada7a6da1d897d787cbf1e21dfe675dd6460",
+      "pushedAt": "2026-11-03T12:30:13Z",
+      "headCommit": "ae95ce54c1780e495a6772b3d06c4a51d2a16081",
       "path": "",
       "name": "Revive",
-      "blurb": "Brings back the coding agent a Herdr terminal lost to a reboot or a herdr-core restart, in the same pane with the same flags, and forks a live session beside it (Claude Code; Codex and pi experimental).",
+      "blurb": "Brings back the coding agent a Herdr terminal lost to a reboot or a herdr-core restart, in the same pane with the same session and flags, and forks a live session beside it (Claude Code; Codex, Factory Droid, Cursor CLI and pi experimental).",
       "modNames": [
         "revive"
       ],
       "hasKeys": true,
       "hasPreview": true,
-      "recipeBytes": 12817,
+      "recipeBytes": 17712,
       "previewUrl": "",
       "license": "MIT",
       "mods": [
