@@ -262,7 +262,7 @@ test("argvToAsk: live known-bot panes without a command line, not read for the s
     T("box/t6", { labels: { bot: "b-d" }, created_ms: 60 }),
     T("t7", { labels: { bot: "b-e" }, created_ms: 70 }),
   ];
-  assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [], next: 3 });
+  assert.deepEqual(argvToAsk(rows, known), { ask: ["t1", "t2", "box/t6"], gone: [], next: 0 });
   // Read already for the same pane: skipped; a new pane at an old address: asked again.
   const cached = new Map([["t1", { argv: ["claude"], created: 10, settled: true }], ["t2", { argv: ["claude"], created: 19, settled: true }], ["t9", { argv: ["x"], created: 1, settled: true }]]);
   assert.deepEqual(argvToAsk(rows, known, cached), { ask: ["t2", "box/t6", "t7"], gone: ["t9"], next: 0 });
@@ -377,4 +377,24 @@ test("argvToAsk: a row with no program is re-read too, so a quit agent stops cou
   assert.deepEqual(argvToAsk(rows, known, cached).ask, ["t1"]);
   // With program.agent true the table answers; a settled read isn't asked again.
   assert.deepEqual(argvToAsk([{ ...rows[0], program: { agent: true } }], known, cached).ask, []);
+});
+
+test("argvToAsk: a pane never read is asked first, ahead of the shell-held rotation", () => {
+  const shell = { key: "shell", agent: false };
+  const known = new Set(["b-1", "b-2", "b-3", "b-4", "b-5", "b-6"]);
+  const held = ["t1", "t2", "t3", "t4", "t5"].map((a, n) => T(a, { labels: { bot: `b-${n + 1}` }, created_ms: n, program: shell }));
+  const cached = new Map(held.map((k) => [k.address, argvEntry({ foreground: { argv: ["-zsh"] } }, k.created_ms)]));
+  const fresh = T("t6", { labels: { bot: "b-6" }, created_ms: 50, program: shell }); // just started
+  const rows = [...held, fresh];
+  for (const start of [0, 1, 2, 3, 4]) {
+    const r = argvToAsk(rows, known, cached, 3, start);
+    assert.equal(r.ask[0], "t6", `start ${start}`);
+    assert.equal(r.ask.length, 3);
+  }
+  // The rotation of the rest still moves on: two slots each call.
+  const a = argvToAsk(rows, known, cached), b = argvToAsk(rows, known, cached, 3, a.next);
+  assert.deepEqual([a.ask, b.ask], [["t6", "t1", "t2"], ["t6", "t3", "t4"]]);
+  // A new pane at an old address counts as never read.
+  const reborn = held.map((k) => (k.address === "t3" ? { ...k, created_ms: 99 } : k));
+  assert.equal(argvToAsk(reborn, known, cached, 3, 4).ask[0], "t3");
 });

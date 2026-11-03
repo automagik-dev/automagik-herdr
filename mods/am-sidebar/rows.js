@@ -290,20 +290,23 @@ export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
  * skipped: a bot pane runs the command it was started with. One read while still in its
  * `sh -c` wrapper (or at a shell) is asked again, and so is one whose row doesn't say
  * `program.agent` true (false, or no program): the read alone can keep it live (liveFrom), so
- * it is kept fresh and an agent that quits back to its shell stops counting. Unread panes come
- * first, then the re-reads; at most `max` per call, taken from `start` round the list, so panes
- * that never settle (a bot pane at its shell) can't starve the rest. Returns { ask: addresses,
- * gone: cached addresses no longer wanted, next: the `start` for the next call }.
+ * it is kept fresh and an agent that quits back to its shell stops counting. At most `max` per
+ * call: panes never read (no read cached, or one for an older pane at that address) always
+ * first, so a just-started bot shows as running on the next refresh; the rest (unsettled reads
+ * and re-reads) share what's left, taken from `start` round their list, so panes that never
+ * settle (a bot pane at its shell) can't starve each other. Returns { ask: addresses, gone:
+ * cached addresses no longer wanted, next: the `start` for the next call }.
  */
 export function argvToAsk(terminals, known, cached = new Map(), max = 3, start = 0) {
   const rows = (terminals ?? []).filter((k) => k?.address && k.state === "live" && known.has(k.labels?.[BOT_LABEL])
     && !Array.isArray(k.foreground?.argv));
   const wanted = new Set(rows.map((k) => k.address));
-  const unread = (k) => { const hit = cached.get(k.address); return !hit?.settled || hit.created !== (k.created_ms ?? null); };
-  const due = [...rows.filter(unread), ...rows.filter((k) => !unread(k) && rowIsAgent(k) !== true)].map((k) => k.address);
+  const fresh = (k) => { const hit = cached.get(k.address); return !hit || hit.created !== (k.created_ms ?? null); };
+  const first = rows.filter(fresh).map((k) => k.address).slice(0, max);
+  const due = rows.filter((k) => !fresh(k) && (!cached.get(k.address).settled || rowIsAgent(k) !== true)).map((k) => k.address);
   const from = due.length ? ((start % due.length) + due.length) % due.length : 0;
-  const ask = Array.from({ length: Math.min(max, due.length) }, (_, n) => due[(from + n) % due.length]);
-  return { ask, gone: [...cached.keys()].filter((a) => !wanted.has(a)), next: due.length ? (from + ask.length) % due.length : 0 };
+  const turn = Array.from({ length: Math.min(max - first.length, due.length) }, (_, n) => due[(from + n) % due.length]);
+  return { ask: [...first, ...turn], gone: [...cached.keys()].filter((a) => !wanted.has(a)), next: due.length ? (from + turn.length) % due.length : 0 };
 }
 
 /**
