@@ -1,8 +1,4 @@
 {
   "place": "none",
-  "title": "Automagik Status",
-  "cloned_from": {
-    "name": "workspace-status",
-    "version": "0.1.12"
-  }
+  "title": "Automagik Status"
 }
