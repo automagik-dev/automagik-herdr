@@ -395,6 +395,8 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
       migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
       usagemeterOn: { ...(before?.usagemeterOn ?? {}) }, usagemeterScope: before?.usagemeterScope ?? null,
+      // When the pack was put in place (the mod manager's INSTALLED); a repair keeps the date.
+      installed: (repair ? before?.installed : null) ?? new Date().toISOString(),
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
@@ -571,7 +573,7 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
       adopted.push(a);
     }
   }
-  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted, installed: new Date().toISOString() }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
   let old = null;
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
   if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings);

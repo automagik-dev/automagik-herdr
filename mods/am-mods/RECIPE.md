@@ -12,22 +12,31 @@ catalog pairing and drift, and it is written against Herdr's current mod API.
 
 A dialog at 80% × 75% (`⌘⇧M`, `mod.open:am-mods`), `popover` background, 13 px text.
 
-- **Header**: `Mods`, then counts — `N seus · N do Herdr · N desligados · N com erro ·
-  checando N` — and, when the index can't be read, `catálogo indisponível: …` instead of silence.
-- **Table** (fixed columns, one row per mod, scrolling): `ON` (30×17 switch, accent when on;
-  `–` for Herdr's own mods, which cannot move), `NAME`, `KIND` (`instalado`, `catálogo`, `clone`,
-  `local`, `Herdr`, `off`, `erro`), `CHECK` (`…` → `ok` / `erro` from `herdr-app check`),
-  `VERSION` (`commit <sha7>`, `← <clone> v<version>`, `upstream <sha7>`), `SOURCE`
-  (`owner/repo[/path] ★stars`, `owner (installer)`, `with Herdr`), `INSTALLED`, `CHANGED` (folder
-  mtime), `PATH` (`mods/<name>` or `mods-disabled/<name>`).
-- **Detail line** under the table: `path:`, the catalog's name and blurb with stars, the drift
-  result when checked, origin/commit/mods/layouts/keys/installed date, or the error from a failed
-  check. A selected mod that is switched off says so.
+All of it in English (the rest of the pack is; there is no locale mechanism to share).
+
+- **Header**: `Mods`, then the groups' counts — `N Automagik Herdr · N yours · N built-in · N off ·
+  N with errors · checking N` — and, when the index can't be read, `catalog unavailable: …`
+  instead of silence.
+- **Table** (fixed columns, scrolling) in three groups, each under a heading (`core.groupMods`):
+  `Automagik Herdr <version>` (the folders the pack installer put in `mods/`, read from its
+  ownership record `automagik-herdr/installed-by-install.sh`), `Yours` (marketplace, catalog,
+  clones, local folders) and `Herdr built-in`, folded to one row until `enter` on it or `b`.
+  Columns (`core.describeMod`): `ON` (30×17 switch, accent when on; `–` for Herdr's own mods,
+  which cannot move), `NAME`, `KIND` (`Automagik Herdr`, `marketplace`, `catalog`, `clone`,
+  `local`, `built-in`, `off`), `CHECK` (`…` → `ok` / `error` from `herdr-app check`), `VERSION`
+  (the pack's release, `commit <sha7>`, `from <clone> v<version>`, `upstream <sha7>`), `SOURCE`
+  (`automagik-herdr`, `owner/repo[/path] ★stars`, `owner (installer)`, `Herdr`), `INSTALLED`
+  (for the pack: the record's `installed=`, else the record file's date), `CHANGED` (folder
+  mtime). The path is in the detail line.
+- **Detail line** under the table: `path:`, then for a pack mod `Automagik Herdr <version> ·
+  installed <date> · u updates the pack`; otherwise the catalog's name and blurb with stars, the
+  drift result when checked, origin/commit/mods/layouts/keys/installed date, or the error from a
+  failed check. A selected mod that is switched off says so.
 - **Marketplace** (`m`): the index's repos, ten per page, with stars and description; `/`
   searches, `s` sorts (stars / updated), `←→` pages, `o` opens a repo, `enter` reviews.
 - **Review** before install or update: what enters (mods, layouts, file count, commit), what the
   code does (runs programs, reaches the network, reads/writes files — a pattern match over the
-  source), the keys it adds and the keys it keeps, and `Bloqueado` when a name is taken.
+  source), the keys it adds and the keys it keeps, and `Blocked` when a name is taken.
 
 ## How it behaves
 
@@ -56,6 +65,11 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:am-mods`), `popover` background, 13
   `<app home>/automagik-herdr/backup/<mod>-<stamp>` — a rename, never `rm -rf` — and an update puts
   the mod's own `.state/`, other dot paths and `node_modules/` back into the fresh folder. A name
   the manager didn't install blocks the install until the person removes or renames it.
+- **The pack's mods** update together: `u` on one asks, then runs the pack's own
+  `mods/am-sidebar/bin/automagik-herdr update` (checksum-verified release, the replaced folders
+  kept for `--rollback`) in this app home, never a per-mod clone; `d` on one says the pack checks
+  its own files (install.sh again). The installer writes `installed=` into its record on every
+  install, update and rollback.
 - **Bulk update** (`U`) is a queue of reviews, one package at a time: nothing is applied that a
   person has not seen, because a plan can add a risk or clash with a name.
 - **Pocket Link is read-only**: the mod, its LaunchAgent and its pairing key belong to
