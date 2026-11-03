@@ -35,7 +35,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
 import { carriedLabels, continueRefusal, ledgerSession, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
-import { decodeExec, hcExecArgs, installOn, linkedMachines, meterReleases, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
+import { decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -2075,7 +2075,8 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
   if (verb === "install") {
     if ([opts.machine !== undefined, opts.linked, opts.local].filter(Boolean).length > 1) throw new CliError("Give one of --machine, --linked and --local.", 2);
     const releases = meterReleases(process.env);
-    if (opts.machine === undefined && !opts.linked) results.push(await installOn(meterRun, null, { releases }));
+    const pins = meterPins(process.env, (path) => readFileSync(path, "utf8"));
+    if (opts.machine === undefined && !opts.linked) results.push(await installOn(meterRun, null, { releases, pins }));
     if (!opts.local) {
       const found = await meterMachines();
       if (found.why) {
@@ -2087,7 +2088,7 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
         list = list.filter((m) => m.name === opts.machine);
         if (!list.length) throw new CliError(`No linked machine "${opts.machine}" (hc machine ls).`, 2);
       }
-      for (const m of list) results.push(m.connected ? await installOn(meterRun, m.name, { releases }) : { machine: m.name, status: "disconnected" });
+      for (const m of list) results.push(m.connected ? await installOn(meterRun, m.name, { releases, pins }) : { machine: m.name, status: "disconnected" });
     }
   } else if (verb === "uninstall") {
     if (opts.machine !== undefined || opts.linked || opts.local) throw new CliError("meter uninstall takes no --machine, --linked or --local.", 2);

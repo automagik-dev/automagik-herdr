@@ -79,7 +79,7 @@ fi
   };
   // As `curl … | sh -s -- <args>` runs it: the script is stdin.
   const piped = (...args) => {
-    const r = spawnSync("sh", ["-s", "--", ...args], { cwd: root, env, encoding: "utf8", input: readFileSync(INSTALL) });
+    const r = spawnSync("sh", ["-s", "--", ...args], { cwd: root, env: { ...env, ...extraEnv }, encoding: "utf8", input: readFileSync(INSTALL) });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
   /**
@@ -110,8 +110,10 @@ fi
   /**
    * Publishes usagemeter release `version` under <release>/usagemeter/download/v<version>/: each
    * asset a script answering `--version` with `usagemeter <reports>`, and SHA256SUMS (or `sums`).
+   * The fakes are not the real builds, so the installer's pin is theirs (AUTOMAGIK_HERDR_METER_PIN,
+   * a file:// release only), or `pin`.
    */
-  const publishMeter = ({ version = USAGEMETER.version, reports = version, sums } = {}) => {
+  const publishMeter = ({ version = USAGEMETER.version, reports = version, sums, pin } = {}) => {
     const dir = join(rel, "usagemeter", "download", `v${version}`);
     mkdirSync(dir, { recursive: true });
     const lines = Object.values(USAGEMETER.assets).map((name) => {
@@ -119,6 +121,9 @@ fi
       return `${sums ?? sha(join(dir, name))}  ${name}\n`;
     });
     writeFileSync(join(dir, "SHA256SUMS"), lines.join(""));
+    const pinFile = join(root, "meter-pin");
+    writeFileSync(pinFile, Object.values(USAGEMETER.assets).map((name) => `${pin ?? sha(join(dir, name))}  ${name}\n`).join(""));
+    extraEnv.AUTOMAGIK_HERDR_METER_PIN = pinFile;
   };
   const meterCalls = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => l.includes("/usagemeter/"));
   const brewCalls = () => readFileSync(brewLog, "utf8").split("\n").filter(Boolean);
@@ -937,6 +942,24 @@ test("usagemeter: install.sh pins release.js's version and knows its four builds
   assert.deepEqual(Object.values(USAGEMETER.assets).sort(),
     ["usagemeter-darwin-arm64", "usagemeter-darwin-x86_64", "usagemeter-linux-aarch64", "usagemeter-linux-x86_64"]);
   for (const name of Object.values(USAGEMETER.assets)) assert.ok(readFileSync(INSTALL, "utf8").includes(`asset=${name} ;;`), name);
+  // The same sha256 per asset as release.js: the pin is the build, not only the version.
+  const pins = Object.fromEntries([...readFileSync(INSTALL, "utf8").matchAll(/^ {4}(usagemeter-[a-z0-9_-]+)\) echo ([0-9a-f]{64}) ;;$/gm)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(pins, USAGEMETER.sha256);
+  assert.deepEqual(Object.keys(USAGEMETER.sha256).sort(), Object.values(USAGEMETER.assets).sort());
+});
+
+test("usagemeter: a download that matches SHA256SUMS but not the pinned sha256 installs nothing", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter({ pin: "a".repeat(64) });
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Warning: usagemeter was not installed: usagemeter-darwin-\S+ is not the build this installer pins \(sha256 [0-9a-f]{64}, pinned a{64}\): nothing was installed/);
+  assert.equal(existsSync(meterBin(s)), false);
+  assert.deepEqual(leftovers(s), []);
+  assert.equal(parseMarker(s.mark()).usagemeter, null);
+  // The pin hook is a file:// test release's only: a GitHub release always uses the embedded pin.
+  assert.match(readFileSync(INSTALL, "utf8"), /meter_pin\(\) \{\n  case \$METER_RELEASES in\n    file:\/\/\*\)/);
 });
 
 test("usagemeter: a scratch install puts the hash-checked binary in ~/.local/bin; a rerun downloads nothing", (t) => {

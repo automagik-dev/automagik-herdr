@@ -345,6 +345,21 @@ meter_version() {
   "$1" --version </dev/null 2>/dev/null \
     | sed -n 's/^usagemeter \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\([-+][0-9A-Za-z.+-]*\)\{0,1\}\)$/\1/p' | head -n 1
 }
+# The sha256 this installer pins for usagemeter asset $1 (release.js USAGEMETER.sha256, kept equal by
+# a test, and checked against the release by scripts/usagemeter-pin.mjs in CI). A file:// test
+# release may pin its own with AUTOMAGIK_HERDR_METER_PIN (SHA256SUMS lines); never a real one.
+meter_pin() {
+  case $METER_RELEASES in
+    file://*) if [ -n "${AUTOMAGIK_HERDR_METER_PIN:-}" ]; then
+      sed -n "s/^\([0-9a-f]\{64\}\) [ *]$1\$/\1/p" "$AUTOMAGIK_HERDR_METER_PIN" | head -n 1; return 0; fi ;;
+  esac
+  case $1 in
+    usagemeter-darwin-arm64) echo 80542d40e71369359cc1048c2d3a00b5703a10657651ca36e4207dfcf7d9824f ;;
+    usagemeter-darwin-x86_64) echo f44107b3b5482b58e8592d482a01299c559ab71ded4d68a5c76b597c96ae6670 ;;
+    usagemeter-linux-aarch64) echo fa08460ebba5f4670bfa5777340c9ac20c89788f560bfadd24aeb30babdcfff4 ;;
+    usagemeter-linux-x86_64) echo 25094c783abf14081d03547596e109b8601b7b47b8efccf76fa4473141cc26c6 ;;
+  esac
+}
 # Whether version $1 >= $2, field by field as numbers (0.10.0 >= 0.9.0).
 version_ge() {
   awk -v a="$1" -v b="$2" 'BEGIN { split(a, x, "."); split(b, y, ".")
@@ -407,6 +422,8 @@ install_meter() {
   if command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$udir/$asset" </dev/null); else got=$(sha256sum "$udir/$asset" </dev/null); fi
   got=${got%% *}
   [ "$got" = "$usum" ] || { why="$asset does not match SHA256SUMS (sha256 $got, expected $usum): nothing was installed"; return 1; }
+  pin=$(meter_pin "$asset")
+  [ -n "$pin" ] && [ "$got" = "$pin" ] || { why="$asset is not the build this installer pins (sha256 $got, pinned ${pin:-none}): nothing was installed"; return 1; }
   mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
   part=$(mktemp "$BIN_DIR/.usagemeter.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
   if cp "$udir/$asset" "$part" && chmod 755 "$part" && mv -f "$part" "$METER"; then

@@ -29,6 +29,21 @@ export function meterReleases(env = {}) {
   return METER_RELEASES;
 }
 
+/**
+ * The sha256 each asset must have: release.js USAGEMETER.sha256 (the pin; the release's own
+ * SHA256SUMS proves integrity, not provenance). A file:// test release may pin its own with
+ * AUTOMAGIK_HERDR_METER_PIN, the text of a SHA256SUMS-style file (`read` reads it); never a real one.
+ */
+export function meterPins(env = {}, read = () => "") {
+  if (meterReleases(env) === METER_RELEASES || !env.AUTOMAGIK_HERDR_METER_PIN) return { ...USAGEMETER.sha256 };
+  const pins = {};
+  for (const line of String(read(env.AUTOMAGIK_HERDR_METER_PIN) ?? "").split("\n")) {
+    const m = /^([0-9a-f]{64}) [ *](usagemeter-[a-z0-9_-]+)$/.exec(line.trim());
+    if (m) pins[m[2]] = m[1];
+  }
+  return pins;
+}
+
 /** `uname -sm` → the platform key of USAGEMETER.assets (the aliases Pocket Link knew too). */
 const PLATFORMS = Object.freeze({
   "Darwin arm64": "darwin-arm64", "Darwin aarch64": "darwin-arm64", "Darwin x86_64": "darwin-x86_64",
@@ -66,13 +81,14 @@ ge() {
 dest=$HOME/.local/bin/usagemeter`;
 
 /**
- * Run on the machine as `sh -c INSTALL sh <base> <asset> <version>`. Prints one line: `current`,
+ * Run on the machine as `sh -c INSTALL sh <base> <asset> <version> <sha256>`: the asset must match
+ * both the release's SHA256SUMS and <sha256>, the pack's pin. Prints one line: `current`,
  * `newer <v>`, `link`, `unknown` (left as it is) or `installed`. Fails (stderr, exit 3: checksum,
  * 4: no curl, 5: download, 6: write) with nothing changed. The state is looked at again just before
  * the rename, in case something else put a usagemeter there meanwhile.
  */
 export const INSTALL = `set -u
-base=$1; asset=$2; want=$3
+base=$1; asset=$2; want=$3; pin=$4
 ${VERSION_SH}
 dir=\${dest%/*}
 state() {
@@ -99,6 +115,7 @@ expect=$(sed -n "s/^\\([0-9a-fA-F]\\{64\\}\\) [ *]$asset\\$/\\1/p" "$tmp/SHA256S
 if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$tmp/$asset" </dev/null); else got=$(shasum -a 256 "$tmp/$asset" </dev/null); fi
 got=\${got%% *}
 [ "$got" = "$expect" ] || { echo "$asset does not match SHA256SUMS (sha256 $got, expected $expect): nothing was installed" >&2; exit 3; }
+[ "$got" = "$pin" ] || { echo "$asset is not the build the pack pins (sha256 $got, pinned $pin): nothing was installed" >&2; exit 3; }
 mkdir -p "$dir" || { echo "could not make $dir" >&2; exit 6; }
 part=$(mktemp "$dir/.usagemeter.XXXXXX") || { echo "could not write in $dir" >&2; exit 6; }
 cp "$tmp/$asset" "$part" && chmod 755 "$part" || { echo "could not write $dest" >&2; exit 6; }
@@ -135,12 +152,14 @@ export const hcExecArgs = (machine, argv, timeout) => ["exec", "--json", "--time
  * resolves `{ code, stdout, stderr }` and never rejects. Resolves `{ machine, status, version?, why? }`,
  * status one of installed | current | newer | link | unknown | failed.
  */
-export async function installOn(run, machine, { releases = METER_RELEASES, version = USAGEMETER.version } = {}) {
+export async function installOn(run, machine, { releases = METER_RELEASES, version = USAGEMETER.version, pins = USAGEMETER.sha256 } = {}) {
   const u = await run(["uname", "-sm"], { on: machine, timeout: 20 });
   if (u.code !== 0) return { machine, status: "failed", why: short(u.stderr) || "could not reach it" };
   const asset = assetFor(u.stdout);
   if (!asset) return { machine, status: "failed", why: `no usagemeter build for ${short(u.stdout).slice(0, 40) || "this system"}` };
-  const r = await run(["sh", "-c", INSTALL, "sh", releaseBase(releases, version), asset, version], { on: machine, timeout: 180 });
+  const pin = pins?.[asset];
+  if (!/^[0-9a-f]{64}$/.test(pin ?? "")) return { machine, status: "failed", why: `no pinned sha256 for ${asset}` };
+  const r = await run(["sh", "-c", INSTALL, "sh", releaseBase(releases, version), asset, version, pin], { on: machine, timeout: 180 });
   if (r.code !== 0) return { machine, status: "failed", why: short(r.stderr) || `exit ${r.code}` };
   const [word, have] = short(r.stdout).split(/\s+/);
   if (word === "installed" || word === "current") return { machine, status: word, version };

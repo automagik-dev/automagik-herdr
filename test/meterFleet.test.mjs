@@ -11,7 +11,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { METER_RELEASES, assetFor, decodeExec, hcExecArgs, linkedMachines, meterReleases, recordAfter, releaseBase } from "../mods/am-sidebar/meterFleet.js";
+import { METER_RELEASES, assetFor, decodeExec, hcExecArgs, linkedMachines, meterPins, meterReleases, recordAfter, releaseBase } from "../mods/am-sidebar/meterFleet.js";
 import { SYNC, syncMeter, syncTargets } from "../mods/am-sidebar/meter.js";
 import { USAGEMETER, formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { meterAfterUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -24,7 +24,7 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 /** A scratch world: a fake hc with two linked machines, an install record, the pinned release. */
-function fleet(t, { sums, marker = true } = {}) {
+function fleet(t, { sums, pin, marker = true } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "am-fleet-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
@@ -43,6 +43,9 @@ function fleet(t, { sums, marker = true } = {}) {
     exe(join(dir, name), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${V}"\nexit 0\n`);
     return `${sums ?? sha(join(dir, name))}  ${name}\n`;
   }).join(""));
+  // The fakes are not the real builds: the pin is theirs (a file:// release's test hook), or `pin`.
+  const pinFile = join(root, "meter-pin");
+  writeFileSync(pinFile, Object.values(USAGEMETER.assets).map((name) => `${pin ?? sha(join(dir, name))}  ${name}\n`).join(""));
   // Each machine: a home, and a curl that logs every file:// URL (the downloads) before the real one.
   const curlLog = join(root, "curl.log");
   writeFileSync(curlLog, "");
@@ -58,7 +61,7 @@ function fleet(t, { sums, marker = true } = {}) {
   writeFileSync(logPath, "");
   const env = {
     PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, HERDR_APP_HOME: app, TMPDIR: root,
-    HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, AUTOMAGIK_HERDR_RELEASE_URL: `file://${root}/release`,
+    HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, AUTOMAGIK_HERDR_RELEASE_URL: `file://${root}/release`, AUTOMAGIK_HERDR_METER_PIN: pinFile,
   };
   const cli = (...args) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { env, encoding: "utf8" });
@@ -93,6 +96,16 @@ test("the release is the pinned GitHub one; only a file:// test folder replaces 
   assert.equal(meterReleases({ AUTOMAGIK_HERDR_RELEASE_URL: "file:///tmp/rel/" }), "file:///tmp/rel/usagemeter");
   assert.equal(meterReleases({ AUTOMAGIK_HERDR_RELEASE_URL: "https://evil.example/x" }), METER_RELEASES);
   assert.equal(meterReleases({ AUTOMAGIK_HERDR_RELEASE_URL: "file:///tmp/../etc" }), METER_RELEASES);
+});
+
+test("the pin is release.js's sha256 per asset; only a file:// test release may bring its own", () => {
+  assert.deepEqual(Object.keys(USAGEMETER.sha256).sort(), Object.values(USAGEMETER.assets).sort());
+  for (const h of Object.values(USAGEMETER.sha256)) assert.match(h, /^[0-9a-f]{64}$/);
+  const lines = `${"b".repeat(64)}  usagemeter-linux-x86_64\n`;
+  assert.deepEqual(meterPins({}), USAGEMETER.sha256);
+  assert.deepEqual(meterPins({ AUTOMAGIK_HERDR_METER_PIN: "/x" }, () => lines), USAGEMETER.sha256, "a GitHub release ignores the hook");
+  assert.deepEqual(meterPins({ AUTOMAGIK_HERDR_RELEASE_URL: "https://evil.example/x", AUTOMAGIK_HERDR_METER_PIN: "/x" }, () => lines), USAGEMETER.sha256);
+  assert.deepEqual(meterPins({ AUTOMAGIK_HERDR_RELEASE_URL: "file:///tmp/rel", AUTOMAGIK_HERDR_METER_PIN: "/x" }, () => lines), { "usagemeter-linux-x86_64": "b".repeat(64) });
 });
 
 test("linked machines: temporary ones and names the record can't hold are left out", () => {
@@ -174,6 +187,16 @@ test("meter install: a hash mismatch installs nothing, names the machine, and th
   const one = s.cli("meter", "install", "--machine", "lin");
   assert.equal(one.code, 1);
   assert.match(one.err, /usagemeter on lin: .*does not match SHA256SUMS/);
+});
+
+test("meter install: SHA256SUMS agrees but the pinned sha256 does not: nothing installed, a warning", (t) => {
+  const s = fleet(t, { pin: "c".repeat(64) });
+  const r = s.cli("meter", "install", "--linked");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Warning: usagemeter on lin: usagemeter-linux-x86_64 is not the build the pack pins \(sha256 [0-9a-f]{64}, pinned c{64}\): nothing was installed\./);
+  assert.equal(existsSync(s.meterOf("lin")), false);
+  assert.deepEqual(s.leftovers("lin"), []);
+  assert.deepEqual(s.mark().usagemeterOn, {});
 });
 
 test("meter install: never a downgrade (a newer or a dev build stays); an older v0.2.0 is upgraded", (t) => {

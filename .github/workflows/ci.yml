@@ -49,3 +49,7 @@ jobs:
 
       - name: One version
         run: node scripts/version.mjs check
+
+      # release.js and install.sh pin each usagemeter build by sha256: checked against the release.
+      - name: usagemeter pin
+        run: node scripts/usagemeter-pin.mjs

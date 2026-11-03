@@ -27,8 +27,11 @@ export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markd
 export const POCKET_LINK = "pocket-link";
 /**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
- * `<os>-<arch>`, checked against that release's SHA256SUMS. install.sh carries the same version
- * (a test keeps them equal). The binary is shared with Pocket Link: never downgraded.
+ * `<os>-<arch>`, checked against that release's SHA256SUMS and against the sha256 pinned here (the
+ * release's SHA256SUMS proves the download is whole, `sha256` that it is the build this pack
+ * pinned). install.sh carries the same version and hashes (a test keeps them equal), and
+ * `node scripts/usagemeter-pin.mjs` (CI) checks them against the release itself. The binary is
+ * shared with Pocket Link: never downgraded.
  */
 export const USAGEMETER = Object.freeze({
   repo: "automagik-dev/usagemeter",
@@ -36,6 +39,12 @@ export const USAGEMETER = Object.freeze({
   assets: Object.freeze({
     "darwin-arm64": "usagemeter-darwin-arm64", "darwin-x86_64": "usagemeter-darwin-x86_64",
     "linux-x86_64": "usagemeter-linux-x86_64", "linux-aarch64": "usagemeter-linux-aarch64",
+  }),
+  sha256: Object.freeze({
+    "usagemeter-darwin-arm64": "80542d40e71369359cc1048c2d3a00b5703a10657651ca36e4207dfcf7d9824f",
+    "usagemeter-darwin-x86_64": "f44107b3b5482b58e8592d482a01299c559ab71ded4d68a5c76b597c96ae6670",
+    "usagemeter-linux-aarch64": "fa08460ebba5f4670bfa5777340c9ac20c89788f560bfadd24aeb30babdcfff4",
+    "usagemeter-linux-x86_64": "25094c783abf14081d03547596e109b8601b7b47b8efccf76fa4473141cc26c6",
   }),
 });
 /** The one layout the pack ships, beside the mod folders in the tarball. */
