@@ -297,9 +297,11 @@ test("an old opt-out (no scope line, no usagemeter= line): update installs nowhe
   assert.deepEqual(calls, [], "nothing ran, here or on a machine");
   // The sidebar's sync stays on this computer too.
   assert.deepEqual(syncTargets([{ name: "lin", state: "connected" }], meterScope(s.mark())), []);
-  // A record that shows the pack installed it (here or on a machine) is a yes: everywhere.
-  assert.equal(meterScope({ ...s.mark(), usagemeter: "0.2.0" }), "all");
-  assert.equal(meterScope({ ...s.mark(), usagemeterOn: { lin: V } }), "all");
+  // An old record never fans out (t22n's ruling): usagemeter= with no scope line is this computer
+  // only; a machines line alone (only a meter install --machine writes one) says nothing of the rest.
+  assert.equal(meterScope({ ...s.mark(), usagemeter: "0.2.0" }), "local");
+  assert.equal(meterScope({ ...s.mark(), usagemeterOn: { lin: V } }), null);
+  assert.equal(meterScope({ ...s.mark(), usagemeter: V, usagemeterScope: "all" }), "all");
   assert.equal(meterScope({ ...s.mark(), usagemeter: V, usagemeterScope: "none" }), "none");
   assert.equal(meterScope(null), null);
   // An explicit meter install is the yes: it records all (or local with --local), and update follows.
@@ -311,6 +313,29 @@ test("an old opt-out (no scope line, no usagemeter= line): update installs nowhe
   assert.equal(s.mark().usagemeterScope, "all", "--local never narrows an all");
   await meterAfterUpdate(io);
   assert.deepEqual(calls, [["meter", "install", "--json"]]);
+});
+
+test("an old record with usagemeter= and no scope line: update installs on this computer only, the sidebar syncs here only", async (t) => {
+  const s = fleet(t);
+  // What an install.sh before this release left after installing usagemeter: usagemeter=0.2.0, no scope.
+  writeFileSync(s.markPath, formatMarker({ ...s.mark(), usagemeter: "0.2.0" }));
+  assert.doesNotMatch(readFileSync(s.markPath, "utf8"), /usagemeter-scope/);
+  assert.equal(meterScope(s.mark()), "local");
+  const calls = [];
+  const io = { modsDir: s.mods, meter: async (args) => { calls.push(args); return { code: 0, stdout: JSON.stringify({ results: [{ machine: null, status: "installed", version: V }], notes: [] }) }; } };
+  assert.deepEqual((await meterAfterUpdate(io)).lines, [`usagemeter ${V} on this computer: installed (checksum ok).`]);
+  assert.deepEqual(calls, [["meter", "install", "--json", "--local"]], "this computer only, never a linked machine");
+  assert.deepEqual(syncTargets([{ name: "lin", state: "connected" }], meterScope(s.mark()), Object.keys(s.mark().usagemeterOn)), []);
+  // The real new pack's CLI with --local: nothing is asked of a linked machine, and the scope stays local.
+  const r = s.cli("meter", "install", "--json", "--local");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.execs(), []);
+  assert.equal(existsSync(s.meterOf("lin")), false);
+  assert.equal(s.mark().usagemeterScope, "local");
+  // Only an explicit meter install fans out.
+  assert.equal(s.cli("meter", "install").code, 0);
+  assert.equal(s.mark().usagemeterScope, "all");
+  assert.equal(s.says("lin"), `usagemeter ${V}`);
 });
 
 test("update runs the new pack's meter install, as the recorded scope says", async (t) => {
@@ -339,6 +364,10 @@ test("sync fan-out: this computer, then each connected linked machine in turn; f
   assert.deepEqual(syncTargets(machines, "all"), ["lin"]);
   assert.deepEqual(syncTargets(machines), [], "nobody asked: this computer only");
   assert.deepEqual(syncTargets(machines, "local"), []);
+  // A machine a meter install --machine put it on is synced; a disconnected one never.
+  assert.deepEqual(syncTargets(machines, null, ["lin", "off"]), ["lin"]);
+  assert.deepEqual(syncTargets(machines, "local", ["lin"]), ["lin"]);
+  assert.deepEqual(syncTargets(machines, "none", ["lin"]), []);
   assert.deepEqual(syncTargets(machines, "none"), []);
   const calls = [];
   const exec = async (bin, args, opts) => { calls.push([bin, args, opts?.on ?? null]); if (opts?.on === "g9") throw new Error("unreachable"); return { code: 0 }; };
@@ -355,25 +384,28 @@ test("sync fan-out: this computer, then each connected linked machine in turn; f
   assert.equal("on" in await syncMeter({ exec: async () => ({ code: 0 }), bin: "/x" }), false);
 });
 
-test("a machine that hangs during sync: left at the 30 s limit, the run goes on and ends, the next run is due", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+test("a machine that hangs during sync: left at the 30 s limit (the caller's timer), the run goes on and ends, the next is due", async () => {
   assert.equal(METER_EXEC_LIMIT_MS, 30_000);
+  // The injected timer, as main.js builds it on cx.timer (a mod has no timer functions): each
+  // sleep is a promise the test ends by hand, and nothing here uses Node's timers.
+  const sleeps = [];
+  const sleep = (ms) => new Promise((done) => sleeps.push({ ms, done }));
+  const flush = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
   const store = new Map();
   let clock = 1_000_000;
   const calls = [];
   // `hang` never answers (its sync is stuck); `lin` answers at once.
   const exec = (bin, args, opts) => { calls.push(opts?.on ?? "here"); return opts?.on === "hang" ? new Promise(() => {}) : Promise.resolve({ code: 0 }); };
   const state = {};
-  const run = () => syncMeter({ exec, bin: "/h/usagemeter", now: () => clock, get: (k) => store.get(k) ?? null, set: (k, v) => store.set(k, v), state, machines: ["hang", "lin"] });
+  const run = () => syncMeter({ exec, bin: "/h/usagemeter", now: () => clock, get: (k) => store.get(k) ?? null, set: (k, v) => store.set(k, v), state, machines: ["hang", "lin"], sleep });
   let done = null;
   const first = run().then((r) => { done = r; });
-  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
-  assert.deepEqual(calls, ["here", "hang"], "stuck on hang");
+  await flush();
+  assert.deepEqual(calls, ["here", "hang"], "one machine at a time: stuck on hang, lin not started");
+  assert.deepEqual(sleeps.map((x) => x.ms), [METER_EXEC_LIMIT_MS], "hang is timed by the caller's sleep");
   assert.equal(done, null);
-  t.mock.timers.tick(METER_EXEC_LIMIT_MS - 1);
-  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
-  assert.equal(done, null, "not before the limit");
-  t.mock.timers.tick(1);
+  assert.equal(state.busy, true, "the run is still going");
+  sleeps[0].done(); // 30 s pass on the caller's timer
   await first;
   assert.deepEqual(calls, ["here", "hang", "lin"], "the run moved on to the next machine");
   assert.deepEqual(done.on, { hang: "timed out", lin: 0 });
@@ -384,10 +416,15 @@ test("a machine that hangs during sync: left at the 30 s limit, the run goes on 
   // The next run, when it is due, starts again from this computer.
   clock += METER_EVERY_MS;
   const again = run();
-  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
-  t.mock.timers.tick(METER_EXEC_LIMIT_MS);
+  await flush();
+  sleeps[sleeps.length - 1].done();
   assert.equal((await again).ran, true);
   assert.deepEqual(calls.slice(3), ["here", "hang", "lin"]);
+  // A machine that answers in time is not cut off when its timer ends later.
+  const quick = await syncMeter({ exec: async () => ({ code: 0 }), bin: "/x", machines: ["lin"], sleep: () => new Promise(() => {}) });
+  assert.deepEqual(quick.on, { lin: 0 });
+  // Without a timer (none given), nothing is timed here: Herdr's exec cap is the limit.
+  assert.deepEqual((await syncMeter({ exec: async () => ({ code: 3 }), bin: "/x", machines: ["lin"] })).on, { lin: 3 });
 });
 
 test("SYNC on a machine: no binary is silent (exit 0); one there runs `sync`", (t) => {

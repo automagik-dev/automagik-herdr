@@ -465,15 +465,19 @@ export default class Spaces extends View {
   }
 
   // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine
-  // when the person agreed to them (meterScope "all"), then the next look.
+  // the person agreed to (meterScope "all", or one a meter install --machine put it on), then the next look.
   meterTick(cx) {
     cx.spawn(async (cx) => {
       let wait = METER_EVERY_MS;
       try {
-        let scope = null;
-        try { scope = meterScope(parseMarker(await readTextFile(`${appHome()}/automagik-herdr/installed-by-install.sh`))); } catch {}
-        const machines = syncTargets(this.machines, scope);
-        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines }));
+        let scope = null, owned = [];
+        try {
+          const record = parseMarker(await readTextFile(`${appHome()}/automagik-herdr/installed-by-install.sh`));
+          scope = meterScope(record);
+          owned = Object.keys(record?.usagemeterOn ?? {});
+        } catch {}
+        const machines = syncTargets(this.machines, scope, owned);
+        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines, sleep: sleepOf(cx) }));
       } catch {}
       cx.timer.after(wait, (cx) => this.meterTick(cx));
     });

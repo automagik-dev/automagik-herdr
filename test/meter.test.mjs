@@ -101,7 +101,10 @@ test("the sidebar wires it: Herdr's exec and home(), 30 s after load, no LaunchA
   const main = readFileSync(join(ROOT, "mods", "am-sidebar", "main.js"), "utf8");
   assert.match(main, /import \{[^}]*\bsyncMeter\b[^}]*\} from "\.\/meter\.js";/);
   assert.match(main, /cx\.timer\.after\(METER_FIRST_MS, \(cx\) => this\.meterTick\(cx\)\)/);
-  assert.match(main, /syncMeter\(\{ exec, bin: meterBin\(home\(\)\), get: shared, set: setShared, state: this\.meter, machines \}\)/);
+  assert.match(main, /syncMeter\(\{ exec, bin: meterBin\(home\(\)\), get: shared, set: setShared, state: this\.meter, machines, sleep: sleepOf\(cx\) \}\)/);
+  assert.match(main, /const machines = syncTargets\(this\.machines, scope, owned\);/);
+  // A mod has no setTimeout (Herdr): meter.js times nothing on its own, only with the caller's sleep.
+  assert.doesNotMatch(readFileSync(join(ROOT, "mods", "am-sidebar", "meter.js"), "utf8"), /\bset(Timeout|Interval)\b/);
   assert.match(main, /cx\.timer\.after\(wait, \(cx\) => this\.meterTick\(cx\)\)/);
   // meter.js is pure: no import at all, so node --test and the mod share it.
   assert.doesNotMatch(readFileSync(join(ROOT, "mods", "am-sidebar", "meter.js"), "utf8"), /^import /m);

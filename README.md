@@ -95,9 +95,10 @@ remembered.
 command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
 installs the pinned usagemeter on this computer and every connected linked machine, and records
 that you asked for it. From then on, `automagik-herdr update` keeps them on the pack's pin within
-what you chose. An install record that never said yes (an earlier `install.sh --no-usagemeter`
-recorded nothing) is never read as one: `update` installs nowhere and prints that command instead,
-and the sidebar syncs only this computer. `--uninstall` removes it
+what you chose. An earlier install's record is never read as a yes for the linked machines: if
+that installer put usagemeter on this computer, `update` keeps it there only; if it recorded
+nothing (an earlier `install.sh --no-usagemeter` recorded nothing), `update` installs nowhere and
+prints that command instead. Either way the sidebar syncs only this computer until you run it. `--uninstall` removes it
 from a linked machine only where the install record says the pack put it and it is still that
 version.
 

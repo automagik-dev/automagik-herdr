@@ -17,9 +17,10 @@ It installs usagemeter 0.3.0 on this computer and on every connected linked mach
 that you asked for it. Updates after that keep them on the pack's pin. Add `--local` for this
 computer only. Add `--machine <name>` for one machine, for example one linked later.
 
-An install record that never said yes is not read as a yes. `install.sh --no-usagemeter` before
-0.9.0 recorded nothing, so in that case `update` installs nowhere and prints the command above, and
-the sidebar syncs only this computer.
+An install record from before 0.9.0 is never read as a yes for the linked machines. If the earlier
+installer put usagemeter on this computer, `update` keeps it there and nowhere else. If it recorded
+nothing (`install.sh --no-usagemeter` before 0.9.0 recorded nothing), `update` installs nowhere
+and prints the command above. Either way, the sidebar syncs only this computer until you run it.
 
 ## What changed
 

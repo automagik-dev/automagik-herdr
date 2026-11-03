@@ -14,13 +14,11 @@ export const METER_EVERY_MS = 10 * 60 * 1000;
 /**
  * The most one linked machine's sync may take (Herdr's exec ends a program at 30 s too): a machine
  * that hangs past it is left behind, the run goes on to the next one and ends, and the next run
- * is scheduled as usual.
+ * is scheduled as usual. Timed with the caller's `sleep(ms)` (a mod has no timer functions: main.js
+ * builds it on cx.timer, launch.js sleepOf); without one, only Herdr's own cap applies.
  */
 export const METER_EXEC_LIMIT_MS = 30_000;
-const within = (promise, ms) => new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error("timed out")), ms);
-  Promise.resolve(promise).then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
-});
+const TIMED_OUT = Symbol("timed out");
 
 /** The shared value (Herdr's shared/setShared) holding when the last run started (ms). */
 export const METER_KEY = "am.sidebar.meter-started";
@@ -32,10 +30,13 @@ exec "$m" sync`;
 
 /**
  * The linked machines a run syncs: the connected ones of `hc machine ls` (the sidebar's list, no
- * temporary ones), and only when the person agreed to them (meterFleet.js meterScope is `all`).
+ * temporary ones) when the person agreed to all of them (meterFleet.js meterScope `all`); else only
+ * those `owned` names (the record's usagemeter-machines: a `meter install --machine M` put it
+ * there), and none at all with `none`.
  */
-export const syncTargets = (machines, scope = null) => (scope !== "all" ? [] : (machines ?? [])
-  .filter((m) => m && m.state === "connected" && !m.temporary && typeof m.name === "string" && m.name).map((m) => m.name));
+export const syncTargets = (machines, scope = null, owned = []) => (scope === "none" ? [] : (machines ?? [])
+  .filter((m) => m && m.state === "connected" && !m.temporary && typeof m.name === "string" && m.name)
+  .filter((m) => scope === "all" || owned.includes(m.name)).map((m) => m.name));
 
 /** The one shared usagemeter path, under the person's home (Herdr's `home()`). */
 export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
@@ -50,11 +51,11 @@ export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
  * it started is still going.
  * `machines`: the connected linked machines to sync after this computer, one at a time, within the
  * same run (`exec("sh", ["-c", SYNC], { on })`; a rejection or a failure there is silent), each
- * within METER_EXEC_LIMIT_MS.
+ * within METER_EXEC_LIMIT_MS when `sleep` (the caller's timer) is given.
  * Resolves `{ ran, why?, code?, on?, wait }`: wait is when to look again (ms); on: { machine: code,
  * null when it could not run, "timed out" past the limit }.
  */
-export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {}, machines = [] }) {
+export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {}, machines = [], sleep = null }) {
   if (state.busy) return { ran: false, why: "busy", wait: METER_EVERY_MS };
   const at = now();
   const last = Number(get(METER_KEY));
@@ -73,8 +74,11 @@ export async function syncMeter({ exec, now = Date.now, bin, get = () => null, s
     if (!machines.length) return here;
     const on = {};
     for (const machine of machines) {
-      try { on[machine] = (await within(exec("sh", ["-c", SYNC], { on: machine }), METER_EXEC_LIMIT_MS))?.code ?? null; }
-      catch (e) { on[machine] = e?.message === "timed out" ? "timed out" : null; }
+      try {
+        const run = exec("sh", ["-c", SYNC], { on: machine });
+        const r = await (sleep ? Promise.race([run, sleep(METER_EXEC_LIMIT_MS).then(() => TIMED_OUT)]) : run);
+        on[machine] = r === TIMED_OUT ? "timed out" : r?.code ?? null;
+      } catch { on[machine] = null; }
     }
     return { ...here, on };
   } finally {

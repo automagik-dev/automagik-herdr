@@ -54,15 +54,16 @@ export const assetFor = (uname) => USAGEMETER.assets[PLATFORMS[String(uname ?? "
 
 /**
  * Where the person agreed to usagemeter, from the install record: `all` (this computer and every
- * linked machine), `local`, `none`, or null when nobody asked. The record's scope line says it;
- * a record without one (an install.sh before this one wrote none, even for --no-usagemeter) counts
- * as `all` only when it shows the pack installed usagemeter somewhere, else null: `update` then
- * installs nowhere and the sidebar syncs only this computer.
+ * linked machine), `local`, `none`, or null when nobody asked. The record's scope line says it,
+ * and only an explicit `automagik-herdr meter install` or an install.sh run of this release writes
+ * `all`. A record without one (an install.sh before this one wrote none, even for --no-usagemeter)
+ * is never `all`: `local` when it shows the pack installed usagemeter on this computer, else
+ * null (`update` then installs nowhere and prints OPT_IN).
  */
 export function meterScope(record) {
   if (!record) return null;
   if (record.usagemeterScope) return record.usagemeterScope;
-  return record.usagemeter || Object.keys(record.usagemeterOn ?? {}).length ? "all" : null;
+  return record.usagemeter ? "local" : null;
 }
 
 /** The line `update` prints when nobody asked: how to opt in. */

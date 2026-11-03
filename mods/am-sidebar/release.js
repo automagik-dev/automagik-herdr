@@ -70,7 +70,8 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * pack put it on (meterFleet.js), and `usagemeter-scope=all|local|none`, what the person chose
  * (install.sh: all by default, local with --usagemeter-local-only, none with --no-usagemeter;
  * `automagik-herdr meter install` sets all, or local with --local). An older install.sh wrote no
- * scope, not even for --no-usagemeter: meterFleet.js meterScope reads that as "not asked". A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
+ * scope, not even for --no-usagemeter: meterFleet.js meterScope reads that as local when it shows
+ * `usagemeter=`, else as "not asked"; never as all. A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
