@@ -196,6 +196,13 @@ jobs:
           fi
           flags=(--latest)
           [[ "${KIND_PRERELEASE}" == "true" ]] && flags=(--prerelease --latest=false)
+          # The tag's docs/release-notes-v<version>.md, when it has one, goes above GitHub's
+          # generated notes (gh prepends --notes to them). From the tag, as the Pack step reads.
+          notes="docs/release-notes-v${VERSION}.md"
+          if git cat-file -e "v${VERSION}:${notes}" 2>/dev/null; then
+            git show "v${VERSION}:${notes}" > "${RUNNER_TEMP}/notes.md"
+            flags+=(--notes "$(cat "${RUNNER_TEMP}/notes.md")")
+          fi
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
