@@ -7,6 +7,8 @@ installs the same way `automagik-herdr update` does (checksum checked, the repla
 
 ## Updating from 0.8.x: run the installer once to see the new bar
 
+After updating from 0.8.x, run the installer once more to switch to the new status bar: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash (a layout you edited is kept).
+
 `automagik-herdr update` (or the sidebar's update notice) from 0.8.x installs 0.9.0, including the
 new `am-status` mod, but runs 0.8.x's updater, which doesn't update the automagik layout. The
 bottom bar stays Herdr's own until you run:

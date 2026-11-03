@@ -18,6 +18,7 @@ const createHashOf = (text) => createHash("sha256").update(text).digest("hex").s
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", stray: "b-zzzzzzzzzz" };
 
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
@@ -61,7 +62,13 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
     term("t4", { bot: ID.cap, cwd: project })];
   writeFileSync(statePath, JSON.stringify({ terminals, next: 100, templates }));
   writeFileSync(logPath, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
+  // No Herdr window: a fake herdr-app first on PATH (start asks it), so the real one is never reached.
+  exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
+  const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
+  writeFileSync(appState, JSON.stringify({ down: true }));
+  writeFileSync(appLog, "");
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
   delete env.HC_TERMINAL_ID;
   const cli = (args, { from = "t1", cwd = project } = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: from ? { ...env, HC_TERMINAL_ID: from } : env, encoding: "utf8" });

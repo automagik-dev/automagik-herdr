@@ -8,55 +8,79 @@
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
 import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, parseBots, checkBots, listedProjects } from "./model.js";
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
+import { TimedOut, discover, machineGate } from "./discover.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "am.sidebar.projects";
 // A folder's project changes rarely (a repo made or removed): looked up again after a minute.
 const KEY_TTL = 60_000;
+// The last discovery kept between runs (discoverySnapshot): a folder's key while a space has
+// shown it in the last week; a project's file, drawn only until its machine answers in this
+// run of Herdr, for at most a day after it was read and three discoveries without an answer.
+const KEYS_KEPT_MS = 7 * 24 * 3600_000;
+const SAVED_MS = 24 * 3600_000;
+const SAVED_RUNS = 3;
 
-const keys = new Map(); // JSON [machine, folder] -> { key, own, at } (model.js projectOf)
-const lastGood = new Map(); // JSON [machine, key] -> { file, warnings }
+const keys = new Map(); // JSON [machine, folder] -> { key, own, at, used } (model.js projectOf)
+// JSON [machine, key] -> { file, warnings, seen, saved? }: seen when it was read, saved when
+// it came from the last run of Herdr (restoreDiscovery) and wasn't read again since.
+const lastGood = new Map();
+const gates = new Map(); // machine -> discover.js machineGate: every call there goes through it
+const misses = new Map(); // machine -> discoveries it hasn't answered, while it has saved files
 
 const id = (machine, key) => JSON.stringify([machine ?? null, key]);
 const under = (key, rest) => `${key === "/" ? "" : key}/${rest}`;
 
+function gateOf(machine) {
+  const m = machine ?? null;
+  if (!gates.has(m)) gates.set(m, machineGate());
+  return gates.get(m);
+}
+// One call on a machine, through its gate (at most DISCOVER_LIMIT at once there; with
+// `sleep`, the caller's timer, one to another machine gives up after CALL_TIMEOUT_MS).
+const onMachine = (on, ask, sleep) => gateOf(on).call(ask, { sleep, remote: Boolean(on) });
+
 // A call that rejects on another machine: rethrown when the machine can't be reached (the
 // answer is unknown, never "no"), else `fallback` (the program or file isn't there).
-// On this machine a rejection always means the program or file isn't there.
-async function orUnreachable(on, call, fallback) {
-  try { return await call(); } catch (e) {
+// On this machine a rejection always means the program or file isn't there. A TimedOut
+// (onMachine) means the machine is away.
+async function orUnreachable(on, call, fallback, sleep) {
+  try { return await onMachine(on, call, sleep); } catch (e) {
     if (!on) return fallback;
-    try { await exec("true", [], { on }); } catch { throw e; }
+    if (e instanceof TimedOut) throw e;
+    try { await onMachine(on, () => exec("true", [], { on }), sleep); } catch { throw e; }
     return fallback;
   }
 }
-function gitOn(on) {
+function gitOn(on, sleep) {
   return (args, cwd) => orUnreachable(on, async () => {
     const r = await exec("git", args, { cwd, on });
     return r.code === 0 ? r.stdout : null;
-  }, null);
+  }, null, sleep);
 }
-function existsOn(on) {
-  return (p) => orUnreachable(on, async () => (await readTextFile(p, { on })) !== null, false);
+function existsOn(on, sleep) {
+  return (p) => orUnreachable(on, async () => (await readTextFile(p, { on })) !== null, false, sleep);
 }
 
 /**
  * The project of a folder on a machine (null: this one), as model.js projectOf's
  * `{ key, own }`, cached for a minute. When the machine can't be reached, the last answer
- * found for the folder; with none, it rejects.
+ * found for the folder (not asked again for a minute); with none, it rejects. `opts.sleep`:
+ * see onMachine.
  */
-export async function projectOfFolder(folder, machine = null) {
+export async function projectOfFolder(folder, machine = null, { sleep = null } = {}) {
   const k = id(machine, folder);
   const hit = keys.get(k);
   if (hit && Date.now() - hit.at < KEY_TTL) return { key: hit.key, own: hit.own };
   let found;
   try {
-    found = await projectOf(folder, gitOn(machine), existsOn(machine));
+    found = await projectOf(folder, gitOn(machine, sleep), existsOn(machine, sleep));
   } catch (e) {
-    if (hit) return { key: hit.key, own: hit.own };
-    throw e;
+    if (!hit) throw e;
+    hit.at = Date.now();
+    return { key: hit.key, own: hit.own };
   }
-  keys.set(k, { ...found, at: Date.now() });
+  keys.set(k, { ...found, at: Date.now(), used: Date.now() });
   return found;
 }
 
@@ -99,6 +123,47 @@ function forgetProject(key, machine) {
   if (kept.length !== list.length) setShared(REMEMBERED, kept);
 }
 
+// One project's bots.json for discover.js: { file, warnings }, null when there is none (a
+// remembered project is forgotten then); rejects when the machine can't answer.
+async function readProject(p, sleep) {
+  const k = id(p.machine, p.key);
+  const text = await onMachine(p.machine, () => readTextFile(under(p.key, BOTS_PATH), { on: p.machine }), sleep);
+  if (text === null) {
+    lastGood.delete(k);
+    if (p.remembered) forgetProject(p.key, p.machine);
+    return null;
+  }
+  try {
+    const { file, warnings } = parseBots(text);
+    lastGood.set(k, { file, warnings, seen: Date.now() });
+    return { file, warnings };
+  } catch (e) {
+    const why = `${under(p.key, BOTS_PATH)}: ${e?.message ?? e}`;
+    const last = lastGood.get(k);
+    return last ? { file: last.file, warnings: [why, ...last.warnings] } : { file: { version: 1, categories: [], bots: [] }, warnings: [why] };
+  }
+}
+
+const ago = (ms) => (ms < 3600_000 ? `${Math.max(1, Math.round(ms / 60_000))} min` : `${Math.round(ms / 3600_000)} h`);
+
+// What a project shows when its read rejects or hasn't answered yet: its last good file. One
+// from the last run of Herdr only until its machine answers, and within SAVED_MS and
+// SAVED_RUNS; while the machine is away it is marked `stale`, with when it was read.
+function lastOf(p) {
+  const k = id(p.machine, p.key);
+  const last = lastGood.get(k);
+  if (!last) return undefined;
+  if (!last.saved) return { file: last.file, warnings: last.warnings };
+  const gate = gateOf(p.machine);
+  if (gate.answered || (misses.get(p.machine) ?? 0) >= SAVED_RUNS || Date.now() - last.seen > SAVED_MS) {
+    lastGood.delete(k);
+    return undefined;
+  }
+  if (!gate.away) return { file: last.file, warnings: last.warnings };
+  const note = `last seen ${ago(Date.now() - last.seen)} ago; ${p.machine ?? "this computer"} isn't answering`;
+  return { file: last.file, warnings: [note, ...last.warnings], stale: true };
+}
+
 /**
  * Every project with definitions, once each however many spaces show it:
  * [{ key, machine, file, warnings, spaces }], `spaces` the ids of the open spaces keyed
@@ -109,51 +174,86 @@ function forgetProject(key, machine) {
  * only when its file is gone (read returns null), never when the read rejects. The CLI's
  * projects (listedByCli) are found as the remembered ones are; one whose file is gone is
  * just not shown: its line in the CLI's file stays, as the view never writes that file.
+ * Each machine is asked on its own, a few lookups at once (discover.js); a folder keyed
+ * before is placed at once and, its key a minute old, looked up again in the same discovery.
+ * `opts.sleep(ms)` (the caller's timer: a mod has no setTimeout) bounds each call to another
+ * machine to CALL_TIMEOUT_MS, after which that machine's projects show their last good file
+ * (lastOf: `stale` for one from the last run of Herdr); `opts.onUpdate(list)` gets the list
+ * as soon as a machine is done, this computer's projects first.
  */
-export async function discoverProjects() {
-  const found = new Map(); // id -> { key, machine, spaces, remembered }
-  const add = (key, machine, space, wasRemembered) => {
-    const k = id(machine, key);
-    const p = found.get(k) ?? { key, machine: machine ?? null, spaces: [], remembered: false };
-    if (space) p.spaces.push(space);
-    p.remembered ||= wasRemembered;
-    found.set(k, p);
-  };
-  for (const s of spaces()) {
-    // An empty folder is that machine's home. Ours is home(); another machine's isn't known
-    // here without asking it, so such a space is skipped (its projects can be remembered).
-    const folder = s.folder || (s.machine ? null : home());
-    if (!folder) continue;
-    // A machine that can't be reached and was never keyed: skipped this tick.
-    try { add(await keyOf(folder, s.machine), s.machine, s.id, false); } catch {}
-  }
-  for (const p of remembered()) add(p.key, p.machine ?? null, null, true);
-  for (const key of await listedByCli()) add(key, null, null, false);
+export async function discoverProjects({ sleep = null, onUpdate = null } = {}) {
+  // An empty folder is that machine's home. Ours is home(); another machine's isn't known
+  // here without asking it, so such a space is skipped (its projects can be remembered).
+  const shown = spaces().map((s) => ({ id: s.id, machine: s.machine ?? null, folder: s.folder || (s.machine ? null : home()) }));
+  const found = await discover({ spaces: shown, remembered: remembered() }, {
+    listed: listedByCli,
+    cachedKey: (folder, machine) => {
+      const hit = keys.get(id(machine, folder));
+      if (!hit) return undefined;
+      hit.used = Date.now();
+      return { key: hit.key, fresh: Date.now() - hit.at < KEY_TTL };
+    },
+    keyOf: async (folder, machine) => (await projectOfFolder(folder, machine, { sleep })).key,
+    read: (p) => readProject(p, sleep),
+    last: lastOf,
+  }, { onUpdate });
+  // A machine with files from the last run of Herdr that didn't answer this time.
+  const waiting = new Set([...lastGood].filter(([, v]) => v.saved).map(([k]) => JSON.parse(k)[0]));
+  for (const m of waiting) if (!gateOf(m).answered) misses.set(m, (misses.get(m) ?? 0) + 1);
+  return found;
+}
 
+// ---- The last discovery, kept between runs (main.js keeps it in its localStorage) ----
+
+/**
+ * The text that restoreDiscovery draws from after a restart: the keys of the folders shown
+ * in the last KEYS_KEPT_MS, and the projects found (`found`, discoverProjects' list), each
+ * with its last good file and when that was read (a stale one keeps its old time).
+ */
+export function discoverySnapshot(found, now = Date.now()) {
+  return JSON.stringify({
+    keys: [...keys].filter(([, v]) => now - (v.used ?? 0) <= KEYS_KEPT_MS).map(([k, v]) => [...JSON.parse(k), v.key, v.own, v.used]),
+    projects: found.map((p) => {
+      const last = lastGood.get(id(p.machine, p.key));
+      return { key: p.key, machine: p.machine ?? null, file: last?.file ?? p.file, warnings: last?.warnings ?? p.warnings, seen: last?.seen ?? now };
+    }),
+  });
+}
+
+/**
+ * At startup, a discoverySnapshot text (null, or anything unreadable: nothing): its keys and
+ * projects become the ones known (each folder looked up again at the next discovery, each
+ * project read again; a machine away shows them as lastOf says), and the projects come back
+ * as discoverProjects would list them for the spaces open now, to draw before it has
+ * answered. Keys unused for KEYS_KEPT_MS and files read over SAVED_MS ago are left out.
+ */
+export function restoreDiscovery(text) {
+  let saved;
+  try { saved = JSON.parse(text); } catch { return []; }
+  if (!saved || typeof saved !== "object") return [];
+  const str = (v) => typeof v === "string";
+  for (const e of Array.isArray(saved.keys) ? saved.keys : []) {
+    if (!Array.isArray(e)) continue;
+    const [machine, folder, key, own, used] = e;
+    if (!(machine === null || str(machine)) || !str(folder) || !str(key) || !str(own)) continue;
+    if (!Number.isFinite(used) || Date.now() - used > KEYS_KEPT_MS) continue;
+    const k = id(machine, folder);
+    if (!keys.has(k)) keys.set(k, { key, own, at: 0, used });
+  }
   const out = [];
-  for (const [k, p] of found) {
-    const entry = (read) => out.push({ key: p.key, machine: p.machine, spaces: p.spaces, ...read });
-    let text;
-    try {
-      text = await readTextFile(under(p.key, BOTS_PATH), { on: p.machine });
-    } catch {
-      if (lastGood.has(k)) entry(lastGood.get(k));
-      continue;
-    }
-    if (text === null) {
-      lastGood.delete(k);
-      if (p.remembered) forgetProject(p.key, p.machine);
-      continue;
-    }
-    try {
-      const { file, warnings } = parseBots(text);
-      lastGood.set(k, { file, warnings });
-      entry({ file, warnings });
-    } catch (e) {
-      const why = `${under(p.key, BOTS_PATH)}: ${e?.message ?? e}`;
-      const last = lastGood.get(k);
-      entry(last ? { file: last.file, warnings: [why, ...last.warnings] } : { file: { version: 1, categories: [], bots: [] }, warnings: [why] });
-    }
+  for (const p of Array.isArray(saved.projects) ? saved.projects : []) {
+    if (!p || !str(p.key) || !(p.machine === null || str(p.machine))) continue;
+    if (!Number.isFinite(p.seen) || Date.now() - p.seen > SAVED_MS) continue;
+    let file;
+    try { ({ file } = parseBots(JSON.stringify(p.file))); } catch { continue; }
+    const warnings = Array.isArray(p.warnings) ? p.warnings.filter(str) : [];
+    const k = id(p.machine, p.key);
+    if (!lastGood.has(k)) lastGood.set(k, { file, warnings, seen: p.seen, saved: true });
+    const on = spaces().filter((s) => {
+      const folder = s.folder || (s.machine ? null : home());
+      return folder && keys.get(id(s.machine ?? null, folder))?.key === p.key && (s.machine ?? null) === p.machine;
+    }).map((s) => s.id);
+    out.push({ key: p.key, machine: p.machine, spaces: on, file, warnings });
   }
   return out;
 }
