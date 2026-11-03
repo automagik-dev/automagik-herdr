@@ -241,6 +241,14 @@ test("botPaneFolders: the folders of live, bot-labelled local panes; none when h
   assert.deepEqual(botPaneFolders(run), ["/p/sub"]);
   assert.deepEqual(botPaneFolders(() => { throw new Error("no hc"); }), []);
 });
+test("botPaneFolders: the foreground's cwd wins over the pane's own (Attach writes the hook there)", () => {
+  const answers = {
+    "ls --json": { terminals: [{ address: "t1", state: "live", cwd: "/p/row" }] },
+    "get t1 --json": { labels: { bot: "b-aaaaaaaaaa" }, cwd: "/p/shell", foreground: { cwd: "/p/attached" } },
+  };
+  const run = (cmd, args) => { const a = answers[args.join(" ")]; if (cmd !== "hc" || !a) throw new Error("no"); return JSON.stringify(a); };
+  assert.deepEqual(botPaneFolders(run), ["/p/attached"]);
+});
 
 test("knownProjects: the sidebar's remembered projects (both keys) and the CLI's lists, this computer's only", (t) => {
   const s = scratch(t);

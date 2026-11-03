@@ -159,7 +159,10 @@ export function openSpaces(run = execFileSync) {
   } catch { return []; }
 }
 
-/** The folders of this computer's bot panes (live, labelled `bot`), from `hc ls` and `hc get`; none without hc. */
+/**
+ * The folders of this computer's bot panes (live, labelled `bot`), from `hc ls` and `hc get`; none
+ * without hc. The foreground's cwd comes first: it is the folder Attach writes the hook into.
+ */
 export function botPaneFolders(run = execFileSync) {
   const ask = (args) => {
     try { return JSON.parse(run("hc", [...args, "--json"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] })); } catch { return null; }
@@ -169,7 +172,7 @@ export function botPaneFolders(run = execFileSync) {
   const out = [];
   for (const row of rows.slice(0, 200)) {
     const get = ask(["get", row.address]);
-    const cwd = get?.cwd ?? row.cwd ?? get?.foreground?.cwd;
+    const cwd = get?.foreground?.cwd ?? get?.cwd ?? row.cwd;
     if (get?.labels?.bot && typeof cwd === "string") out.push(cwd);
   }
   return out;
@@ -214,18 +217,22 @@ function holdsHome(root, home = homedir()) {
 /**
  * The subfolders of `root`, at most SCAN_DEPTH below it, that hold a .claude folder: no link is
  * followed, and SCAN_SKIP's folders, dot-folders and any folder with its own .git (a nested
- * repository or worktree) are not entered. At most SCAN_MAX folders per root. None for a root
- * that is the home folder or one of its ancestors: only the root's own .claude is read there.
+ * repository or worktree) are not entered. At most SCAN_MAX folders per root: a scan that stops
+ * there says so through `log`. None for a root that is the home folder or one of its ancestors:
+ * only the root's own .claude is read there.
  */
-function scan(root) {
+function scan(root, log, max = SCAN_MAX) {
   const found = [];
   if (holdsHome(root)) return found;
   let seen = 0;
+  let stopped = false;
   const walk = (dir, depth) => {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (!e.isDirectory() || SCAN_SKIP.has(e.name) || e.name.startsWith(".") || ++seen > SCAN_MAX) continue;
+      if (stopped) return;
+      if (!e.isDirectory() || SCAN_SKIP.has(e.name) || e.name.startsWith(".")) continue;
+      if (++seen > max) { stopped = true; log(`scan stopped at ${max} in ${root}`); return; }
       const sub = join(dir, e.name);
       if (lstat(join(sub, ".git"))) continue;
       if (lstat(join(sub, ".claude"))) found.push(sub);
@@ -240,8 +247,9 @@ function scan(root) {
  * Where hooks may be, each once: every known project, those of its git worktrees whose key is a
  * known project (a known subfolder of a repository never brings in the repository's root), and a
  * scan of each of those trees (scan); then the `also` folders as they are (panes', the ledger's).
+ * `log` hears of a scan that stopped at its cap; `scanMax` lowers that cap (tests).
  */
-export function foldersOf(projects, { git = runGit, also = [] } = {}) {
+export function foldersOf(projects, { git = runGit, also = [], log = () => {}, scanMax = SCAN_MAX } = {}) {
   const seen = new Set();
   const out = [];
   const add = (folder) => {
@@ -262,7 +270,7 @@ export function foldersOf(projects, { git = runGit, also = [] } = {}) {
       if (tree && usable(tree) && knownReal.has(realOf(keyOf(tree, git))) && add(tree)) roots.push(tree);
     }
   }
-  for (const root of roots) for (const sub of scan(root)) add(sub);
+  for (const root of roots) for (const sub of scan(root, log, scanMax)) add(sub);
   for (const folder of also) add(folder);
   return out;
 }
@@ -328,13 +336,13 @@ function rewrite(p) {
  * that can't be is left. The journal is written before the first rewrite.
  * Returns `{ rewritten: string[], skipped: {file, reason}[], journal }` (journal: its path, or null).
  */
-export function migrateHooks(projects, { appHome, backup = true, git = runGit, also = [] } = {}) {
+export function migrateHooks(projects, { appHome, backup = true, git = runGit, also = [], log } = {}) {
   appHome = resolve(appHome);
   const rewritten = [];
   const skipped = [];
   const due = [];
   const choose = toStable(appHome);
-  for (const folder of foldersOf(projects, { git, also })) {
+  for (const folder of foldersOf(projects, { git, also, log })) {
     const found = settingsOf(folder);
     if (!found) continue;
     let raw;
@@ -369,7 +377,7 @@ export function migrateHooks(projects, { appHome, backup = true, git = runGit, a
  * a command changed since, stays. Entries done, or no longer applicable, leave the journal; the
  * backups stay for manual recovery. Returns `{ restored: string[], skipped: {file, reason}[] }`.
  */
-export function revertHooks(projects, { appHome, git = runGit, also = [] } = {}) {
+export function revertHooks(projects, { appHome, git = runGit, also = [], log } = {}) {
   appHome = resolve(appHome);
   const restored = [];
   const skipped = [];
@@ -377,7 +385,7 @@ export function revertHooks(projects, { appHome, git = runGit, also = [] } = {})
   const byFile = new Map();
   for (const e of entries) { if (!byFile.has(e.file)) byFile.set(e.file, []); byFile.get(e.file).push(e); }
   const files = new Set(byFile.keys());
-  for (const folder of foldersOf(projects, { git, also })) files.add(resolve(join(folder, ".claude", SETTINGS)));
+  for (const folder of foldersOf(projects, { git, also, log })) files.add(resolve(join(folder, ".claude", SETTINGS)));
   const stable = hookCommand(appHome);
   const direct = directHookCommand(appHome);
   const legacy = legacyHookCommand(appHome);
@@ -472,12 +480,12 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit })
   const left = (s) => log(`left: ${s.file} (${s.reason})`);
   if (existsSync(join(modsDir, sidebar, ENTRY_SOURCE))) {
     if (placeEntry(appHome, sidebar)) log(`the briefing hook's entry point is ${stableBriefingPath(appHome)}`);
-    const r = migrateHooks(projects, { appHome, git, also });
+    const r = migrateHooks(projects, { appHome, git, also, log });
     for (const f of r.rewritten) log(`briefing hook moved to the entry point in ${f} (the original is beside it, ${basename(f)}${BACKUP_SUFFIX}…)`);
     r.skipped.forEach(left);
     return { direction: "forward", ...r };
   }
-  const r = revertHooks(projects, { appHome, git, also });
+  const r = revertHooks(projects, { appHome, git, also, log });
   for (const f of r.restored) log(`briefing hook back on ${sidebar}'s own path in ${f}`);
   r.skipped.forEach(left);
   return { direction: "back", ...r };
