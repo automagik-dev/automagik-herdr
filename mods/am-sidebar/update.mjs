@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Installs, updates and rolls back the pack as one unit (A14, D3, D10): one release tarball holds
 // every pack mod folder plus layouts/automagik.json; it is checked against the release's
-// SHA256SUMS, each folder is built in a staging folder beside mods/ (the mod's private paths
+// automagik-herdr-pack-<v>.tgz.sha256, each folder is built in a staging folder beside mods/ (the mod's private paths
 // carried in), then renamed into place, and the folders it replaced are kept together as one
 // rollback set. Only folders the ownership record lists are replaced; any other folder in mods/
 // is left alone, or adopted on an explicit --adopt (moved to backup/ first, never replaced).
@@ -12,8 +12,8 @@
 //   node update.mjs update [--check] [--json] [--mods <dir>]   install the latest release (apply: the same, JSON;
 //                                     apply --expect <v>: only if the latest is still <v>, else `refused`)
 //   node update.mjs rollback          [--mods <dir>]   swap the kept set back; one JSON line
-//   node update.mjs install --from <tgz> --version <v> [--mods <dir>] [--adopt] [--setup]
-//       a tarball already checked against SHA256SUMS (install.sh); one JSON line. --setup also
+//   node update.mjs install --from <tgz> --version <v> [--sequence <n>] [--mods <dir>] [--adopt] [--setup]
+//       a tarball already checked against its .sha256 (install.sh); one JSON line. --setup also
 //       merges free keys, writes the mod manager's catalog.json, places the layout (D8) and runs
 //       `herdr-app check` on every installed mod (exit 3 when one fails). Exit 4: installed, but a
 //       step after the swap (the record, the kept set) did not finish; its warning says where things are.
@@ -41,7 +41,7 @@
 // (shared with the mod, whose loader takes .js) as ESM by detecting its syntax.
 
 import { execFile, execFileSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
 import {
   cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
@@ -51,20 +51,18 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
-  pickUpdate, updatesOff,
+  CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL, POINTER_URL,
+  TIMEOUT_MS, V020_LAYOUT_SHA256, formatMarker, packOfPointer, parseMarker, parseSums, pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
-export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
-  noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
+export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
+  noticeText, packOfPointer, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
 
 const run = promisify(execFile);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
-/** Catalog URLs the pack itself has written (the current one, and the `main` one an early pack wrote). */
-const PACK_CATALOG_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
 /** The version of a pack with no VERSION file: one installed before releases, older than any. */
 export const UNRELEASED = "0.0.0";
 
@@ -103,15 +101,15 @@ export const installedVersion = ({ modsDir = defaultModsDir() } = {}) => readMar
   ?? readVersion(join(modsDir, [PACK_NAME, OLD_PACK_NAME].find((m) => isFile(join(modsDir, m, "VERSION"))) ?? PACK_NAME));
 
 /**
- * Checks `buf` against the SHA256SUMS line for `name` (`sums`: the file's text or parseSums' Map).
+ * Checks `buf` against the sha256sum line for `name` in `sums` (the release's .sha256: its text or parseSums' Map).
  * Returns the hex digest; throws when the name is missing or the digest differs.
  */
 export function verifySha256(buf, sums, name) {
   const table = sums instanceof Map ? sums : parseSums(sums);
   const want = table.get(name);
-  if (!want) throw new Error(`${name} is not in SHA256SUMS: refusing it`);
+  if (!want) throw new Error(`${name} is not in its .sha256: refusing it`);
   const got = sha256(buf);
-  if (got !== want) throw new Error(`${name} does not match SHA256SUMS (sha256 ${got}, expected ${want}): refusing it`);
+  if (got !== want) throw new Error(`${name} does not match its .sha256 (sha256 ${got}, expected ${want}): refusing it`);
   return got;
 }
 
@@ -121,11 +119,53 @@ async function download(fetch, url, timeoutMs) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-/** Downloads `update`'s tarball (from pickUpdate) into `dir`, verified against its SHA256SUMS before it is written; returns its path. */
+/**
+ * The keys this pack trusts for the pointer: pack-keys.json beside this file, which the release
+ * tarball carries. The installed copy is the trust anchor; a key rotation ships in a pack whose
+ * pointer the old key signed.
+ */
+export const packKeys = (dir = dirname(fileURLToPath(import.meta.url))) => {
+  try { return JSON.parse(readFileSync(join(dir, PACK_KEYS_FILE), "utf8"))?.keys ?? []; } catch { return []; }
+};
+
+/**
+ * pack.json's exact `bytes` and its base64 `signature` checked against `keys` (ed25519, as
+ * plugin-lane's lane.json.sig): the update it names (packOfPointer). Throws when its key is not
+ * one of `keys` or the signature does not match.
+ */
+export function verifyPointer(bytes, signature, keys) {
+  let pointer;
+  try { pointer = JSON.parse(Buffer.from(bytes).toString("utf8")); } catch { throw new Error("the pack pointer is not JSON: refusing it"); }
+  const key = (keys ?? []).find((k) => k?.keyId === pointer?.keyId);
+  if (!key) throw new Error(`the pack pointer is signed by ${pointer?.keyId}, a key this pack does not trust: refusing it`);
+  let ok = false;
+  try { ok = verifySignature(null, Buffer.from(bytes), createPublicKey(key.publicKey), Buffer.from(String(signature ?? "").trim(), "base64")); } catch {}
+  if (!ok) throw new Error("the pack pointer's signature does not match: refusing it");
+  return packOfPointer(pointer);
+}
+
+/**
+ * The newest pack, as the signed pointer names it (verifyPointer), or null when updates are off or
+ * there is no pointer yet (404: no pack released here). Throws on any other answer, a missing
+ * signature, or one that does not verify.
+ */
+export async function fetchPointer({ fetch = globalThis.fetch, env = process.env, keys = packKeys(), timeoutMs = TIMEOUT_MS } = {}) {
+  if (updatesOff(env)) return null;
+  const get = (url) => fetch(url, { headers: { "user-agent": "automagik-herdr" }, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+  const response = await get(POINTER_URL);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`GitHub answered ${response.status} for the pack pointer`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const sig = await get(POINTER_SIG_URL);
+  if (!sig.ok) throw new Error(`GitHub answered ${sig.status} for the pack pointer's signature: refusing the pointer`);
+  return verifyPointer(bytes, await sig.text(), keys);
+}
+
+/** Downloads `update`'s tarball (from pickUpdate) into `dir`, checked against the sha256 the signed pointer names before it is written; returns its path. */
 export async function downloadUpdate(update, { fetch = globalThis.fetch, dir, timeoutMs = DOWNLOAD_TIMEOUT_MS } = {}) {
-  const sums = (await download(fetch, update.sums.url, timeoutMs)).toString("utf8");
   const buf = await download(fetch, update.tarball.url, timeoutMs);
-  verifySha256(buf, sums, update.tarball.name);
+  const got = sha256(buf);
+  if (got !== update.sha256) throw new Error(`${update.tarball.name} does not match the signed pointer (sha256 ${got}, expected ${update.sha256}): refusing it`);
   const target = dir ?? mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   mkdirSync(target, { recursive: true });
   const path = join(target, update.tarball.name);
@@ -253,7 +293,7 @@ const restoreSet = (modsDir, old) => { if (old) renameSync(old, prevSetOf(modsDi
 function keepSet(modsDir, next, moved, record, old, rename, warnings) {
   if (moved.length > 0) {
     try {
-      writeFileSync(join(next, ".pack"), formatMarker({ version: record?.version ?? UNRELEASED, mods: moved }));
+      writeFileSync(join(next, ".pack"), formatMarker({ version: record?.version ?? UNRELEASED, mods: moved, sequence: record?.sequence ?? null }));
       rename(next, prevSetOf(modsDir));
     } catch (error) {
       warnings.push(`the replaced folders could not become the kept set (${error.message}): they are in ${next}`);
@@ -374,7 +414,7 @@ function shippedFiles(dir, rel = "") {
 
 /**
  * Checks an installed pack against the release tarball it came from (`tgzPath`, already checked
- * against SHA256SUMS), changing nothing. Every pack folder the ownership record lists must hold
+ * against its .sha256), changing nothing. Every pack folder the ownership record lists must hold
  * each of the release's files byte for byte (a mod's private paths and files it added are not
  * judged), and a shipped executable must still be executable. A folder the record lists that is
  * not in mods/ is missing, unless the mod manager switched it off (moved it to <app
@@ -415,7 +455,7 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
+export async function applyUpdate({ tgzPath, version, sequence = null, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
   if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
   const state = stateDirOf(modsDir);
   mkdirSync(state, { recursive: true });
@@ -433,6 +473,8 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
       usagemeterOn: { ...(before?.usagemeterOn ?? {}) }, usagemeterScope: before?.usagemeterScope ?? null,
       // When the pack was put in place (the mod manager's INSTALLED); a repair keeps the date.
       installed: (repair ? before?.installed : null) ?? new Date().toISOString(),
+      // The signed pointer's sequence when this release came through it; a repair keeps the record's.
+      sequence: sequence ?? (repair ? before?.sequence ?? null : null),
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
@@ -613,7 +655,7 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
       adopted.push(a);
     }
   }
-  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted, installed: new Date().toISOString() }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted, installed: new Date().toISOString(), sequence: set.sequence ?? null }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
   let old = null;
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
   // The rolled-out pack's layout goes with its folders, so a second rollback brings it back.
@@ -872,13 +914,23 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
   return { link, from, to };
 }
 
-/** `{ current, latest, update, disabled }`: latest is the newest release's version or null; update from pickUpdate. */
-export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env) } = {}) {
+/**
+ * `{ current, latest, update, disabled }`: latest is the version the signed pointer names, or null
+ * (no pack released yet); update from pickUpdate. `keys`: the trusted keys (packKeys by default).
+ */
+export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys } = {}) {
   const current = installedVersion({ modsDir });
   if (updatesOff(env)) return { current, latest: null, update: null, disabled: true };
-  const release = await latestRelease({ fetch, env });
-  const latest = typeof release?.tag_name === "string" ? release.tag_name.replace(/^v/, "") : null;
-  return { current, latest, update: pickUpdate(current, release), disabled: false };
+  const pack = await fetchPointer({ fetch, env, ...(keys ? { keys } : {}) });
+  // A pointer signed with a lower sequence than the one the installed pack came through (a
+  // re-posted older pointer) is refused, as install.sh refuses it; a version-only check would
+  // already offer nothing for an older version, this also names why.
+  const recorded = readMarker(modsDir)?.sequence ?? null;
+  if (pack && recorded !== null && pack.sequence < recorded) {
+    throw new Error(`the pack pointer names ${pack.version} (sequence ${pack.sequence}), older than the installed sequence ${recorded}: `
+      + "refusing to downgrade; nothing was installed");
+  }
+  return { current, latest: pack?.version ?? null, update: pickUpdate(current, pack), disabled: false };
 }
 
 /**
@@ -886,15 +938,15 @@ export async function checkForUpdate({ fetch = globalThis.fetch, env = process.e
  * `expect`: the version the person confirmed (the status bar's dialog). When the latest release
  * is another one by now, nothing is downloaded: `{ ..., installed: null, refused: { expected, latest } }`.
  */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), log, binDir = null, window = false, expect = null } = {}) {
-  const found = await checkForUpdate({ fetch, env, modsDir });
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null } = {}) {
+  const found = await checkForUpdate({ fetch, env, modsDir, keys });
   if (!found.update) return { ...found, installed: null };
   if (expect && found.update.version !== expect) return { ...found, installed: null, refused: { expected: expect, latest: found.update.version } };
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
     const before = oldSidebarHere(modsDir);
-    const installed = await applyUpdate({ tgzPath, version: found.update.version, modsDir, log });
+    const installed = await applyUpdate({ tgzPath, version: found.update.version, sequence: found.update.sequence, modsDir, log });
     // The release's layout, as install.sh --setup places it (D8: one the person edited is kept),
     // so an update shows what the release added to it; then the person's layouts are migrated.
     const tgzDir = join(dir, "layout");
@@ -945,12 +997,12 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] | rollback | install --from <tgz> --version <v> [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
 const FLAGS = {
-  check: [], apply: ["--expect"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--adopt", "--setup"],
+  check: [], apply: ["--expect"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--sequence", "--adopt", "--setup"],
   repair: ["--from", "--version"],
 };
-const VALUED = new Set(["--mods", "--from", "--version", "--expect"]);
+const VALUED = new Set(["--mods", "--from", "--version", "--expect", "--sequence"]);
 
 /** Strict arguments: an unknown command or flag, or a flag missing its value, is a usage error before anything is read. */
 export function parseArgs(argv) {
@@ -968,6 +1020,7 @@ export function parseArgs(argv) {
     } else opts[flag.slice(2)] = true;
   }
   if ((command === "install" || command === "repair") && !(opts.from && opts.version)) throw usage();
+  if (opts.sequence !== undefined && !/^\d{1,15}$/.test(String(opts.sequence))) throw usage();
   return { command, opts };
 }
 
@@ -1004,7 +1057,7 @@ async function main(argv) {
   const appHome = dirname(resolve(modsDir));
   if (opts.setup) preflightKeys(appHome);
   const before = oldSidebarHere(modsDir);
-  const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, modsDir, adopt: Boolean(opts.adopt), log });
+  const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, sequence: opts.sequence === undefined ? null : Number(opts.sequence), modsDir, adopt: Boolean(opts.adopt), log });
   const crossed = () => crossedRename(modsDir, before);
   // Exit 4: installed, but a step after the swap did not finish (its warning says what and where).
   const done = () => { if (installed.warnings.length) process.exitCode = 4; };

@@ -9,10 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { announce, CHECK_EVERY_MS, EXEC_TIMEOUT_MS, NODE_PATHS, RETRY_MS, SHOWN_KEY, nextCheckIn, nodeOrder, noticeFor, readCheck, runCheck, shownFrom } from "../mods/am-sidebar/updateCheck.js";
-import { LATEST_URL } from "../mods/am-sidebar/release.js";
+import { POINTER_SIG_URL, POINTER_URL } from "../mods/am-sidebar/release.js";
+import { keys, pointerBytes, signatureOf } from "./pointer.mjs";
 import { cmdUpdate, CliError } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 
-const UP = { version: "0.2.0", tag: "v0.2.0", page: "https://github.com/automagik-dev/automagik-herdr/releases/tag/v0.2.0" };
+const UP = { version: "0.2.0", tag: "v0.2.0", page: "https://github.com/automagik-dev/automagik/releases/tag/v0.2.0" };
 const line = (o) => `${JSON.stringify(o)}\n`;
 /** Herdr's exec over a table node path → result, "missing" (rejects: can't start) or a function. */
 const fakeExec = (table, calls = []) => async (command, args) => {
@@ -117,18 +118,16 @@ test("nextCheckIn and noticeFor: retry after RETRY_MS, then every CHECK_EVERY_MS
 
 // ---- the CLI ----
 
-const release = (version) => ({
-  tag_name: `v${version}`, draft: false, prerelease: false, html_url: `https://github.com/x/releases/tag/v${version}`,
-  assets: [
-    { name: `automagik-herdr-pack-${version}.tgz`, browser_download_url: `https://dl.test/automagik-herdr-pack-${version}.tgz` },
-    { name: "SHA256SUMS", browser_download_url: "https://dl.test/SHA256SUMS" },
-  ],
-});
+/** The herdr-lane release serving a pointer to `version`, signed by the test key (or another, `untrusted`). */
+const served = (version, { untrusted = false } = {}) => {
+  const bytes = pointerBytes(version);
+  return { [POINTER_URL]: bytes, [POINTER_SIG_URL]: signatureOf(bytes, { untrusted }) };
+};
 const fetchOf = (table) => async (url) => {
   const body = table[url];
   if (body instanceof Error) throw body;
   if (body === undefined) return new Response("not found", { status: 404 });
-  return Response.json(body);
+  return new Response(body);
 };
 function mods(t, version = "0.1.0") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-up-")));
@@ -141,13 +140,15 @@ function mods(t, version = "0.1.0") {
 
 test("automagik-herdr update --check reports current and latest", async (t) => {
   const { dir } = mods(t);
-  const io = { modsDir: dir, env: {} };
-  assert.equal(await cmdUpdate({ check: true }, [], { ...io, fetch: fetchOf({ [LATEST_URL]: release("0.1.0") }) }),
+  const io = { modsDir: dir, env: {}, keys };
+  assert.equal(await cmdUpdate({ check: true }, [], { ...io, fetch: fetchOf(served("0.1.0")) }),
     "Automagik Herdr 0.1.0 is installed; the latest release is 0.1.0. Up to date.");
-  assert.match(await cmdUpdate({ check: true }, [], { ...io, fetch: fetchOf({ [LATEST_URL]: release("0.2.0") }) }),
-    /^Automagik Herdr 0\.1\.0 is installed; 0\.2\.0 is out \(https:\/\/github\.com\/x\/releases\/tag\/v0\.2\.0\)\. Run `automagik-herdr update` to install it\.$/);
-  const json = await cmdUpdate({ check: true, json: true }, [], { ...io, fetch: fetchOf({ [LATEST_URL]: release("0.2.0") }) });
+  assert.match(await cmdUpdate({ check: true }, [], { ...io, fetch: fetchOf(served("0.2.0")) }),
+    /^Automagik Herdr 0\.1\.0 is installed; 0\.2\.0 is out \(https:\/\/github\.com\/automagik-dev\/automagik\/releases\/tag\/v0\.2\.0\)\. Run `automagik-herdr update` to install it\.$/);
+  const json = await cmdUpdate({ check: true, json: true }, [], { ...io, fetch: fetchOf(served("0.2.0")) });
   assert.deepEqual([json.current, json.latest, json.update.version], ["0.1.0", "0.2.0", "0.2.0"]);
+  await assert.rejects(cmdUpdate({ check: true }, [], { ...io, fetch: fetchOf(served("0.2.0", { untrusted: true })) }),
+    (e) => e instanceof CliError && e.code === 1 && /signature does not match: refusing it/.test(e.message), "a pointer signed by another key is refused");
   assert.equal(await cmdUpdate({ check: true }, [], { ...io, fetch: fetchOf({}) }),
     "Automagik Herdr 0.1.0 is installed; the latest release is none yet. Up to date.");
   assert.match(await cmdUpdate({ check: true }, [], { modsDir: dir, env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" }, fetch: fetchOf({}) }), /Updates are off \(AUTOMAGIK_HERDR_NO_UPDATE=1\)/);
@@ -155,10 +156,10 @@ test("automagik-herdr update --check reports current and latest", async (t) => {
 
 test("automagik-herdr update: the network down is one clear line, exit 1; flag misuse exit 2", async (t) => {
   const { dir } = mods(t);
-  const down = fetchOf({ [LATEST_URL]: new TypeError("fetch failed") });
-  await assert.rejects(cmdUpdate({ check: true }, [], { modsDir: dir, env: {}, fetch: down }),
+  const down = fetchOf({ [POINTER_URL]: new TypeError("fetch failed") });
+  await assert.rejects(cmdUpdate({ check: true }, [], { modsDir: dir, env: {}, keys, fetch: down }),
     (e) => e instanceof CliError && e.code === 1 && e.message === "Couldn't check for updates: fetch failed");
-  await assert.rejects(cmdUpdate({}, [], { modsDir: dir, env: {}, fetch: down }), (e) => e instanceof CliError && /^Not updated: fetch failed/.test(e.message));
+  await assert.rejects(cmdUpdate({}, [], { modsDir: dir, env: {}, keys, fetch: down }), (e) => e instanceof CliError && /^Not updated: fetch failed/.test(e.message));
   await assert.rejects(cmdUpdate({ check: true, rollback: true }, [], { modsDir: dir }), (e) => e instanceof CliError && e.code === 2);
   await assert.rejects(cmdUpdate({ rollback: true }, [], { modsDir: dir }), (e) => e instanceof CliError && /^Nothing rolled back: no earlier pack kept/.test(e.message));
 });

@@ -3,11 +3,25 @@
 // Automagik's desktop updater (apps/desktop/src/update.js: compareVersions, pickUpdate, the
 // 4-hour timing). Pure: no `herdr` and no `node:` imports, so the mod, the CLI and
 // `node --test` share it; the download, checksum and swap live in update.mjs. Apache-2.0.
+//
+// The pack lives in the Automagik monorepo (herdr/) and ships on its releases, `v<version>` with
+// the monorepo's one version (docs/rfcs/0011-monorepo-parts-and-releases.md there). A release
+// carries the pack only when herdr/ changed since the one before, so the newest pack is named by a
+// signed pointer, as plugin-lane names the plugins: the rolling `herdr-lane` release holds pack.json
+// (the newest pack release, its tarball and that tarball's sha256) and pack.json.sig (ed25519 over
+// its exact bytes, base64), checked against the keys this pack carries (pack-keys.json). The
+// signature is checked in update.mjs and install.sh (node:crypto); this file only reads the pointer.
 
-export const REPO = "automagik-dev/automagik-herdr";
-/** `/latest` answers the newest release that is neither a draft nor a prerelease. */
-export const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-export const SUMS_NAME = "SHA256SUMS";
+export const REPO = "automagik-dev/automagik";
+/** The rolling release that names the newest pack, and its two files. */
+export const LANE_RELEASE = "herdr-lane";
+export const POINTER_URL = `https://github.com/${REPO}/releases/download/${LANE_RELEASE}/pack.json`;
+export const POINTER_SIG_URL = `${POINTER_URL}.sig`;
+export const POINTER_SCHEMA = 1;
+/** The public keys this pack trusts for the pointer, beside this file: `{ keys: [{ keyId, publicKey (PEM) }] }`. */
+export const PACK_KEYS_FILE = "pack-keys.json";
+/** Where the pack lived until v0.14.x; the monorepo's release of it is the first above 3.0.0. */
+export const OLD_REPO = "automagik-dev/automagik-herdr";
 /** The folder that carries the pack's VERSION, update.mjs and the CLI. */
 export const PACK_NAME = "am-sidebar";
 /**
@@ -19,8 +33,8 @@ export const OLD_PACK_NAME = "spaces-agents";
 /**
  * Every mod folder the pack ships (D3, D10): the tarball's top level is exactly these plus
  * `layouts/automagik.json`, and release.yml asserts it. It ships inside the tarball it checks, so
- * it guards against packaging bugs, not tampering (SHA256SUMS covers integrity). Pocket Link is
- * never one of them: automagik-pocket owns it.
+ * it guards against packaging bugs, not tampering (the signed pointer covers that). Pocket
+ * Link is never one of them: Pocket owns it.
  */
 export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markdown", "am-mods", "am-new-menu", "am-quota",
   "am-sidebar", "am-status", "am-tabs"]);
@@ -54,9 +68,22 @@ export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caa
 /** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */
 export const PACK_KEYS = Object.freeze({ global: Object.freeze({ "cmd-shift-m": "mod.open:am-mods" }) });
 /** What the mod manager lists; mods/am-mods/core.js's CATALOG_URL is kept equal by a test. */
-export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
-/** The pack's tarball on release `version` (release.yml's Pack step). */
+export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik/dev/herdr/catalog/index.json";
+/**
+ * Every catalog URL a pack has written (the current one first): the monorepo's on `main`, and the
+ * old repository's on `dev` and `main`. A copy holding one of them is the pack's to rewrite; any
+ * other URL is the person's. core.js keeps the same list (a test keeps them equal).
+ */
+export const PACK_CATALOG_URLS = Object.freeze([
+  CATALOG_URL,
+  "https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/catalog/index.json",
+  `https://raw.githubusercontent.com/${OLD_REPO}/dev/catalog/index.json`,
+  `https://raw.githubusercontent.com/${OLD_REPO}/main/catalog/index.json`,
+]);
+/** The pack's tarball on release `version` (release.yml's "Pack the herdr pack" step). */
 export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
+/** Its sha256, `sha256sum` output for the tarball alone, beside it on the same release (for --version). */
+export const sumsName = (version) => `${tarballName(version)}.sha256`;
 
 /**
  * The installer's ownership record (`<app home>/automagik-herdr/installed-by-install.sh`) as data.
@@ -65,6 +92,8 @@ export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
  * the rename reverts, `installed=<ISO time>` when update.mjs last put the pack's folders in place
  * (the mod manager's INSTALLED column; am-mods/core.js parsePackMarker reads it too),
+ * `sequence=<n>`, the signed pointer's sequence when the installed release came through it
+ * (install.sh refuses an older pointer),
  * `usagemeter=<version>` when install.sh put the usagemeter binary in ~/.local/bin (--uninstall
  * removes only that one), `usagemeter-machines=<machine>:<version>,…` for the linked machines the
  * pack put it on (meterFleet.js), and `usagemeter-scope=all|local|none`, what the person chose
@@ -95,18 +124,21 @@ export function parseMarker(text) {
     usagemeterOn: Object.fromEntries(list(get("usagemeter-machines")).map((e) => [e.slice(0, e.lastIndexOf(":")), e.slice(e.lastIndexOf(":") + 1)])
       .filter(([m, v]) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(m) && /^\d+\.\d+\.\d+$/.test(v))),
     usagemeterScope: ["all", "local", "none"].includes(get("usagemeter-scope")) ? get("usagemeter-scope") : null,
+    sequence: /^\d{1,15}$/.test(get("sequence")) ? Number(get("sequence")) : null,
   };
 }
 
 /** What `installed=` may hold: `new Date().toISOString()`. */
 export const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
-export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], installed = null, usagemeter = null,
-  usagemeterOn = {}, usagemeterScope = null }) =>
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], installed = null, sequence = null,
+  usagemeter = null, usagemeterOn = {}, usagemeterScope = null }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
     ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
     ...(migrated.length ? [`migrated=${migrated.join(",")}`] : []),
     ...(installed ? [`installed=${installed}`] : []),
+    // sequence before the usagemeter lines, which install.sh writes last: a rewrite keeps the bytes.
+    ...(Number.isSafeInteger(sequence) ? [`sequence=${sequence}`] : []),
     ...(usagemeter ? [`usagemeter=${usagemeter}`] : []),
     ...(Object.keys(usagemeterOn ?? {}).length ? [`usagemeter-machines=${Object.entries(usagemeterOn).map(([m, v]) => `${m}:${v}`).join(",")}`] : []),
     ...(usagemeterScope ? [`usagemeter-scope=${usagemeterScope}`] : [])].join("\n") + "\n";
@@ -145,25 +177,32 @@ export function compareVersions(a, b) {
 }
 
 /**
- * The update `release` (GitHub's release JSON, as `/latest` answers it) offers over `current`:
- * `{ version, tag, page, tarball: {name, url}, sums: {name, url} }`, or null when it is not newer,
- * is a draft or prerelease, or lacks the pack's tarball or SHA256SUMS.
+ * The update a pointer (pack.json, parsed, its signature already checked) names: `{ version, tag,
+ * page, sequence, tarball: { name, url }, sha256, size }`. Throws when it is not this pack's
+ * pointer: another schema or part, a version that is not X.Y.Z, no whole-number sequence, a tarball
+ * of another name, or a sha256 that is not 64 hex.
  */
-export function pickUpdate(current, release) {
-  const tag = release?.tag_name;
-  if (!release || release.draft || release.prerelease === true || typeof tag !== "string" || !tag.startsWith("v")) return null;
-  const version = tag.slice(1);
-  if (!(compareVersions(version, current) > 0)) return null;
-  const asset = (name) => {
-    const found = Array.isArray(release.assets) ? release.assets.find((a) => a?.name === name) : null;
-    return typeof found?.browser_download_url === "string" ? { name, url: found.browser_download_url } : null;
+export function packOfPointer(pointer) {
+  const bad = (why) => { throw new Error(`the pack pointer ${why}: refusing it`); };
+  if (!pointer || typeof pointer !== "object") bad("is not JSON");
+  if (pointer.schemaVersion !== POINTER_SCHEMA) bad(`has schema ${pointer.schemaVersion}, not ${POINTER_SCHEMA}`);
+  if (pointer.part !== "herdr") bad(`names part ${pointer.part}, not herdr`);
+  const version = pointer.version;
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) bad(`names version ${version}`);
+  const tarball = pointer.tarball ?? {};
+  if (tarball.name !== tarballName(version)) bad(`names ${tarball.name}, not ${tarballName(version)}`);
+  if (typeof tarball.url !== "string" || !/^(https|file):\/\//.test(tarball.url)) bad("has no tarball URL");
+  if (typeof tarball.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(tarball.sha256)) bad("has no sha256 of 64 hex");
+  if (!Number.isSafeInteger(pointer.sequence) || pointer.sequence < 0) bad("has no sequence");
+  const tag = `v${version}`;
+  return {
+    version, tag, page: `https://github.com/${REPO}/releases/tag/${tag}`, sequence: pointer.sequence,
+    tarball: { name: tarball.name, url: tarball.url }, sha256: tarball.sha256, size: Number.isInteger(tarball.size) ? tarball.size : null,
   };
-  const tarball = asset(tarballName(version));
-  const sums = asset(SUMS_NAME);
-  if (!tarball || !sums) return null;
-  const page = typeof release.html_url === "string" ? release.html_url : `https://github.com/${REPO}/releases/tag/${encodeURIComponent(tag)}`;
-  return { version, tag, page, tarball, sums };
 }
+
+/** The update `pack` (packOfPointer's) offers over `current`: itself when newer, else null. */
+export const pickUpdate = (current, pack) => (pack && compareVersions(pack.version, current) > 0 ? pack : null);
 
 /** `sha256sum` output (`<hex>  <name>`, `*<name>` in binary mode) as a Map name → lowercase hex. */
 export function parseSums(text) {
@@ -173,23 +212,6 @@ export function parseSums(text) {
     if (m) sums.set(m[2], m[1].toLowerCase());
   }
   return sums;
-}
-
-/**
- * The newest published release (GitHub's JSON), or null when updates are off or the repository
- * has none yet (404). Throws on any other answer. `fetch` is injected: Herdr's runtime has none,
- * so the mod reaches this through `node update.mjs check`.
- */
-export async function latestRelease({ fetch = globalThis.fetch, env = globalThis.process?.env ?? {}, timeoutMs = TIMEOUT_MS } = {}) {
-  if (updatesOff(env)) return null;
-  const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
-  const response = await fetch(LATEST_URL, {
-    headers: { accept: "application/vnd.github+json", "user-agent": "automagik-herdr", "x-github-api-version": "2022-11-28" },
-    signal,
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${REPO}'s latest release`);
-  return response.json();
 }
 
 /** The mod's notice for `update` (from pickUpdate). */

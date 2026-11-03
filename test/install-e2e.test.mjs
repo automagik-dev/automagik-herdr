@@ -1,5 +1,5 @@
 // The public install path end to end (#43): the pack built by release.yml's own Pack lines, served
-// as a file:// release with SHA256SUMS, installed by install.sh piped into bash as the README's
+// as a file:// release with the tarball's .sha256 and the signed herdr-lane pointer, installed by install.sh piped into bash as the README's
 // one-liner runs it, on three scratch homes: a fresh one, a v0.4.0 sidebar-only install, and one
 // with a personal layout and an unrelated mod (sheepdog). The folder list is PACK_MODS from
 // mods/am-sidebar/release.js, as release.yml reads it from the tag; this test does not take it
@@ -17,12 +17,15 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const RELEASE_YML = join(ROOT, ".github", "workflows", "release.yml");
-const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, tarballName } = await import("../mods/am-sidebar/release.js");
+const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
 const { hookCommand, legacyHookCommand } = await import("../mods/am-sidebar/briefingText.mjs");
+const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
 /** The release this branch becomes; release.yml sets VERSION to it in the commit it tags. */
 const RELEASE = "0.5.0";
 /** The latest sidebar-only release (v0.2-v0.4.x: automagik-herdr-<v>.tgz, spaces-agents only). */
 const OLD = "0.4.0";
+/** A release on the server that the signed pointer does not name: never installed. */
+const NEWER = "0.6.0";
 /** Paths update.mjs carries over from the replaced folder (D10): never in the archive. */
 const PRIVATE = (rel) => rel.split("/").some((s) => s.startsWith(".") || s === "node_modules");
 
@@ -163,13 +166,22 @@ if [ "$1" = status ]; then
   printf '{\\n  "layout": "%s",\\n  "zoom": false\\n}\\n' "$(cat "${shown}")"
 fi
 `);
-  // The release: latest/download/{SHA256SUMS, the pack}, as GitHub serves it.
+  // The release: download/v<RELEASE>/{the pack, its .sha256}, as the monorepo's releases serve it,
+  // and the herdr-lane release's pack.json naming it, signed (pack.json.sig) with the test key the
+  // installer is told to trust. A newer release the pointer does not name is not offered.
   const { tgz } = pack(launcher);
-  const dl = join(rel, "latest", "download");
-  mkdirSync(dl, { recursive: true });
   const body = readFileSync(tgz);
-  writeFileSync(join(dl, tarballName(RELEASE)), body);
-  writeFileSync(join(dl, "SHA256SUMS"), `${sha(body)}  ${tarballName(RELEASE)}\n`);
+  for (const version of [RELEASE, NEWER]) {
+    const dl = join(rel, "download", `v${version}`);
+    mkdirSync(dl, { recursive: true });
+    writeFileSync(join(dl, tarballName(version)), body);
+    writeFileSync(join(dl, sumsName(version)), `${sha(body)}  ${tarballName(version)}\n`);
+  }
+  const lane = join(rel, "download", "herdr-lane");
+  mkdirSync(lane, { recursive: true });
+  const pointer = pointerBytes(RELEASE, { url: `file://${rel}/download/v${RELEASE}/${tarballName(RELEASE)}`, body });
+  writeFileSync(join(lane, "pack.json"), pointer);
+  writeFileSync(join(lane, "pack.json.sig"), `${signatureOf(pointer)}\n`);
   // usagemeter's pinned release, which install.sh reads from <release>/usagemeter/ for file://:
   // each build a script answering --version.
   const meter = join(rel, "usagemeter", "download", `v${USAGEMETER.version}`);
@@ -191,6 +203,7 @@ fi
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
+    AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
     AUTOMAGIK_HERDR_METER_PIN: meterPin, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog,
   };
   return {

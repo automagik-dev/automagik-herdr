@@ -16,6 +16,7 @@ const PACK_SRC = join(ROOT, "mods", "am-sidebar");
 const LAYOUT_SRC = join(ROOT, "layouts", "automagik.json");
 const { OLD_PACK_NAME, PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/am-sidebar/release.js");
 const CASK = "penso/tap/herdr-gpui";
+const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 /** The command install.sh links (its cli_target): the sidebar's bin/automagik-herdr wrapper when the pack ships one, else the .mjs. */
@@ -74,6 +75,7 @@ fi
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
+    AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
   };
   const appHome = join(home, ".config", "herdr-app");
   const pack = join(appHome, "mods", "am-sidebar");
@@ -92,9 +94,13 @@ fi
    * Publishes a release as release.yml packs it: every PACK_MODS folder of the repo plus
    * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. As in a real release
    * only am-sidebar carries VERSION; each main.js ends in a `// release <v>` line, the code
-   * change a release brings, so a test can tell which release a folder is from.
+   * change a release brings, so a test can tell which release a folder is from. The tarball and its
+   * .sha256 go in download/v<version>/; with `latest`, the herdr-lane release's pack.json names it,
+   * signed by the test key (pack.json.sig; `sign: "untrusted"` signs with another key, `sign: false`
+   * leaves the signature out; `pointer` adds or overrides pack.json fields). `sums` replaces the sha256 both publish. Without `latest`, only
+   * --version reaches it.
    */
-  const publish = (version, { edit, sums, latest = true } = {}) => {
+  const publish = (version, { edit, sums, latest = true, sign = true, pointer = {} } = {}) => {
     const src = join(root, `src-${version}`);
     rmSync(src, { recursive: true, force: true });
     for (const m of PACK_MODS) {
@@ -106,11 +112,18 @@ fi
     cpSync(LAYOUT_SRC, join(src, "layouts", "automagik.json"));
     edit?.(src);
     const name = `automagik-herdr-pack-${version}.tgz`;
-    const dirs = [join(rel, "download", `v${version}`), ...(latest ? [join(rel, "latest", "download")] : [])];
-    for (const dir of dirs) {
-      mkdirSync(dir, { recursive: true });
-      execFileSync("tar", ["-czf", join(dir, name), "-C", src, ...readdirSync(src)], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
-      writeFileSync(join(dir, "SHA256SUMS"), `${sums ?? sha(join(dir, name))}  ${name}\n`);
+    const dir = join(rel, "download", `v${version}`);
+    mkdirSync(dir, { recursive: true });
+    execFileSync("tar", ["-czf", join(dir, name), "-C", src, ...readdirSync(src)], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+    const sum = sums ?? sha(join(dir, name));
+    writeFileSync(join(dir, `${name}.sha256`), `${sum}  ${name}\n`);
+    if (latest) {
+      const lane = join(rel, "download", "herdr-lane");
+      mkdirSync(lane, { recursive: true });
+      const bytes = pointerBytes(version, { url: `file://${dir}/${name}`, sha256: sum, ...pointer });
+      writeFileSync(join(lane, "pack.json"), bytes);
+      rmSync(join(lane, "pack.json.sig"), { force: true });
+      if (sign) writeFileSync(join(lane, "pack.json.sig"), `${signatureOf(bytes, { untrusted: sign === "untrusted" })}\n`);
     }
   };
   /**
@@ -155,15 +168,15 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
-  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\ninstalled=\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z\nusagemeter=0\\.3\\.0\nusagemeter-scope=all\n$`));
+  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\ninstalled=\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z\nsequence=90000\nusagemeter=0\\.3\\.0\nusagemeter-scope=all\n$`));
   // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
-  const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "latest", "download", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
+  const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "download", "v9.9.0", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
   for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`am-sidebar/bin/${f}`), `the tarball has am-sidebar/bin/${f}`);
   for (const f of ["run.sh", "automagik-herdr"]) assert.equal(lstatSync(join(s.pack, "bin", f)).mode & 0o111, 0o111, f);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:am-mods" } });
-  assert.match(readFileSync(join(s.appHome, "data", "am-mods", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
+  assert.match(readFileSync(join(s.appHome, "data", "am-mods", "catalog.json"), "utf8"), /automagik-dev\/automagik\/dev\/herdr\/catalog\/index\.json/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
@@ -237,14 +250,51 @@ test("Herdr missing with --yes: installed with the Homebrew cask, then the pack"
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
 });
 
-test("a tarball that doesn't match SHA256SUMS installs nothing", (t) => {
+test("a tampered tarball (not the signed pointer's sha256, or not a --version release's .sha256) installs nothing", (t) => {
   const s = scratch(t);
   s.publish("9.9.0", { sums: "0".repeat(64) });
   const r = s.run("--yes");
   assert.equal(r.code, 1);
-  assert.match(r.err, /does not match SHA256SUMS .*nothing was installed/);
+  assert.match(r.err, /automagik-herdr-pack-9\.9\.0\.tgz does not match the signed pointer \(sha256 [0-9a-f]{64}, expected 0{64}\): nothing was installed/);
   assert.equal(existsSync(s.appHome), false, "nothing written before the checksum");
   assert.equal(existsSync(s.link), false);
+  s.publish("9.8.0", { sums: "0".repeat(64), latest: false });
+  const old = s.run("--yes", "--version", "9.8.0");
+  assert.equal(old.code, 1);
+  assert.match(old.err, /does not match automagik-herdr-pack-9\.8\.0\.tgz\.sha256 .*nothing was installed/);
+  assert.equal(existsSync(s.appHome), false);
+});
+
+test("the pack pointer: a bad signature, an untrusted key, no signature or no pointer installs nothing", (t) => {
+  const s = scratch(t);
+  s.publishMeter();
+  const refused = (re, what) => {
+    const r = s.run("--yes");
+    assert.equal(r.code, 1, what);
+    assert.match(r.err, re, what);
+    assert.equal(existsSync(s.appHome), false, `${what}: nothing written`);
+  };
+  refused(/could not download file:\/\/.*\/download\/herdr-lane\/pack\.json \(is a pack released yet\?\)/, "no pointer");
+  s.publish("9.9.0", { sign: "untrusted" });
+  refused(/the pack pointer .*pack\.json: its signature does not match; nothing was installed/, "another key's signature");
+  // A pointer edited after it was signed (here: to name another sha256).
+  s.publish("9.9.0");
+  const lane = join(s.root, "release", "download", "herdr-lane", "pack.json");
+  writeFileSync(lane, readFileSync(lane, "utf8").replace(/"sha256": "[0-9a-f]{64}"/, `"sha256": "${"1".repeat(64)}"`));
+  refused(/its signature does not match/, "an edited pointer");
+  s.publish("9.9.0", { sign: false });
+  refused(/could not download .*pack\.json\.sig: refusing the pointer/, "no signature");
+  s.publish("9.9.0");
+  s.extraEnv.AUTOMAGIK_HERDR_PACK_KEYS = JSON.stringify({ keys: [{ ...TEST_KEYS[0], keyId: "someone-else" }] });
+  refused(/it is signed by herdr-pack-test, a key this installer does not trust/, "an unknown key");
+  // The installer's own keys are pack-keys.json's (this test keeps them equal); a test key is never one.
+  const shipped = JSON.parse(/^\s*TRUSTED_KEYS='([^']*)'$/m.exec(readFileSync(INSTALL, "utf8"))[1]).keys;
+  assert.deepEqual(shipped, JSON.parse(readFileSync(join(PACK_SRC, "pack-keys.json"), "utf8")).keys);
+  assert.ok(!shipped.some((k) => k.keyId === "herdr-pack-test"));
+  delete s.extraEnv.AUTOMAGIK_HERDR_PACK_KEYS;
+  const ok = s.run("--yes");
+  assert.equal(ok.code, 0, ok.err);
+  assert.match(ok.out, /Pack pointer: signed by a key this installer trusts; it names 9\.9\.0\./);
 });
 
 test("a tarball holding a symlink installs nothing, and leaves the old pack", (t) => {
@@ -356,7 +406,7 @@ test("not macOS: explains and exits 1; Node too old with no brew: says where to 
 test("--help and an unknown option", (t) => {
   const s = scratch(t);
   assert.match(s.run("--help").out, /install\.sh --uninstall/);
-  assert.match(s.run("--help").out, /needs v0\.5\.0 or later/);
+  assert.match(s.run("--help").out, /--version installs that Automagik release; it must carry the\npack/);
   assert.match(s.run("--help").out, /--adopt replaces a pack-named mod/);
   assert.equal(s.run("--nope").code, 2);
 });
@@ -823,7 +873,7 @@ test("AUTOMAGIK_HERDR_RELEASE_URL: a file:// folder or this repository on GitHub
   s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = "https://evil.example/releases";
   const bad = s.run("--yes");
   assert.equal(bad.code, 1);
-  assert.match(bad.err, /must be a file:\/\/ folder or https:\/\/github\.com\/automagik-dev\/automagik-herdr/);
+  assert.match(bad.err, /must be a file:\/\/ folder or https:\/\/github\.com\/automagik-dev\/automagik\//);
 });
 
 test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is fetched", (t) => {
@@ -832,8 +882,8 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
   writeFileSync(curlLog, "");
   exe(join(s.bin, "curl"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${curlLog}"\nexit 1\n`);
   for (const url of [
-    "https://github.com/automagik-dev/automagik-herdr/../../evil/repo/releases",
-    "https://github.com/automagik-dev/automagik-herdr/%2e%2e/%2e%2e/evil/repo/releases",
+    "https://github.com/automagik-dev/automagik/../../evil/repo/releases",
+    "https://github.com/automagik-dev/automagik/%2e%2e/%2e%2e/evil/repo/releases",
   ]) {
     s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = url;
     const r = s.run("--yes");
@@ -844,10 +894,62 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
   assert.equal(existsSync(s.pack), false);
 });
 
-test("every download keeps the path as written (curl --path-as-is): the pack's two, usagemeter's two", () => {
+test("no downgrade: a re-posted older signed pointer is refused by version or sequence; --version still installs it", (t) => {
+  const s = scratch(t);
+  s.publishMeter();
+  s.publish("9.10.0");
+  const first = s.run("--yes");
+  assert.equal(first.code, 0, first.err);
+  assert.match(s.mark(), /^sequence=100000$/m, "the marker records the pointer's sequence");
+  // Someone who can write release assets, without the key, re-posts the older 9.9.0 pointer and signature.
+  s.publish("9.9.0");
+  const before = treeSum(s.mods);
+  const r = s.run("--yes");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /it names 9\.9\.0 \(sequence 90000\), older than the installed 9\.10\.0: refusing to downgrade; nothing was installed\. To install 9\.9\.0 on purpose: --version 9\.9\.0/);
+  assert.equal(treeSum(s.mods), before, "nothing changed");
+  assert.deepEqual(s.versions(), s.all("9.10.0"));
+  // The same version, signed with a lower sequence: the sequence alone refuses it.
+  s.publish("9.10.0", { pointer: { sequence: 5 } });
+  const seq = s.run("--yes");
+  assert.equal(seq.code, 1);
+  assert.match(seq.err, /it names 9\.10\.0 \(sequence 5\), older than the installed sequence 100000: refusing to downgrade/);
+  // The current pointer again: a re-run checks the install, as before.
+  s.publish("9.10.0");
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /already up to date/);
+  // On purpose: --version installs the older release (its .sha256), and records no sequence.
+  const down = s.run("--yes", "--version", "9.9.0");
+  assert.equal(down.code, 0, down.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  assert.doesNotMatch(s.mark(), /^sequence=/m);
+  // The newest pointer takes it forward again.
+  const up = s.run("--yes");
+  assert.equal(up.code, 0, up.err);
+  assert.deepEqual(s.versions(), s.all("9.10.0"));
+  assert.match(s.mark(), /^sequence=100000$/m);
+});
+
+test("every download keeps the path as written (curl --path-as-is): the pointer and its signature, the pack's two, usagemeter's two", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
-  assert.equal(calls.length, 4);
-  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "\$u?base\//);
+  assert.equal(calls.length, 6);
+  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$POINTER(\.sig)?")/);
+  assert.doesNotMatch(readFileSync(INSTALL, "utf8"), /api\.github\.com|releases\?per_page|MAX_PAGES/, "no search through the releases");
+});
+
+test("the release the signed pointer names is installed, not a newer one it does not name", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  s.publish("9.10.0", { latest: false });
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  // --version takes a version, nothing else reaches a URL.
+  const bad = s.run("--yes", "--version", "9.9.0/../../x");
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /--version takes a version like 3\.58\.0/);
 });
 
 test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {
