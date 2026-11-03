@@ -288,21 +288,22 @@ export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
  * live, labelled with a `known` bot, and not carrying `foreground.argv`. A pane already in
  * `cached` (address -> argvEntry) with the same `created_ms` and its agent in front is
  * skipped: a bot pane runs the command it was started with. One read while still in its
- * `sh -c` wrapper is asked again, and so is one whose row the program table calls no agent
- * (`program.agent` false): that read alone keeps it live (liveFrom), so it is kept fresh and
- * an agent that quits back to its shell stops counting (after the unread ones). At most `max`
- * per call; the rest wait for the next.
- * Returns { ask: addresses, gone: cached addresses no longer wanted }.
+ * `sh -c` wrapper (or at a shell) is asked again, and so is one whose row doesn't say
+ * `program.agent` true (false, or no program): the read alone can keep it live (liveFrom), so
+ * it is kept fresh and an agent that quits back to its shell stops counting. Unread panes come
+ * first, then the re-reads; at most `max` per call, taken from `start` round the list, so panes
+ * that never settle (a bot pane at its shell) can't starve the rest. Returns { ask: addresses,
+ * gone: cached addresses no longer wanted, next: the `start` for the next call }.
  */
-export function argvToAsk(terminals, known, cached = new Map(), max = 3) {
+export function argvToAsk(terminals, known, cached = new Map(), max = 3, start = 0) {
   const rows = (terminals ?? []).filter((k) => k?.address && k.state === "live" && known.has(k.labels?.[BOT_LABEL])
     && !Array.isArray(k.foreground?.argv));
   const wanted = new Set(rows.map((k) => k.address));
   const unread = (k) => { const hit = cached.get(k.address); return !hit?.settled || hit.created !== (k.created_ms ?? null); };
-  // Unread panes first; a re-read of a settled one the table calls no agent takes what's left.
-  const ask = [...rows.filter(unread), ...rows.filter((k) => !unread(k) && rowIsAgent(k) === false)]
-    .map((k) => k.address).slice(0, max);
-  return { ask, gone: [...cached.keys()].filter((a) => !wanted.has(a)) };
+  const due = [...rows.filter(unread), ...rows.filter((k) => !unread(k) && rowIsAgent(k) !== true)].map((k) => k.address);
+  const from = due.length ? ((start % due.length) + due.length) % due.length : 0;
+  const ask = Array.from({ length: Math.min(max, due.length) }, (_, n) => due[(from + n) % due.length]);
+  return { ask, gone: [...cached.keys()].filter((a) => !wanted.has(a)), next: due.length ? (from + ask.length) % due.length : 0 };
 }
 
 /**

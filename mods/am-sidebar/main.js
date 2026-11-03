@@ -651,11 +651,11 @@ export default class Spaces extends View {
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
-    // a peek, rather than nothing.
-    const held = live || planned ? null : heldTerminalOf(b.id, this.all, panes());
+    // a peek, rather than nothing. panes() is read at click time, not on every render.
+    const held = live || planned ? null : heldTerminalOf(b.id, this.all);
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
-      : held ? () => focusOrPeek(held)
+      : held ? () => focusOrPeek(heldTerminalOf(b.id, terminals(), panes()) ?? held)
         : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
       machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");
@@ -902,7 +902,8 @@ export default class Spaces extends View {
   readBotArgv(cx) {
     if (this.argvBusy) return;
     const rows = terminals();
-    const { ask, gone } = argvToAsk(rows, knownBots(this.bots), this.argvOf);
+    const { ask, gone, next } = argvToAsk(rows, knownBots(this.bots), this.argvOf, 3, this.argvCursor ?? 0);
+    this.argvCursor = next;
     let changed = gone.length > 0;
     for (const a of gone) this.argvOf.delete(a);
     if (!ask.length) { if (changed) cx.notify(); return; }
