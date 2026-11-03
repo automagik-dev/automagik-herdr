@@ -3,6 +3,7 @@
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
+import { ENV } from "./workers.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
@@ -42,8 +43,10 @@ export function startRefusal(file, botId) {
 /**
  * `hc run` arguments for Start: in the background, labelled with the bot and Herdr's
  * adoption labels, named, in the project folder, with the parent rule, never --no-notify.
+ * With `path`, the agent runs as `/usr/bin/env PATH=<path> <argv>`, as a worker does
+ * (workers.js workerArgs): the PATH agentPath.mjs interpreterPath gives it (#56).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {} }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -51,7 +54,8 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  return [...args, ...parent, "--", ...argv];
+  const env = path ? [ENV, `PATH=${path}`] : [];
+  return [...args, ...parent, "--", ...env, ...argv];
 }
 
 /** True when `hc get`'s foreground is a program other than a shell (an agent, by Decision 3). */

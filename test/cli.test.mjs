@@ -422,8 +422,10 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().terminal, "t100");
   const run = runCall(s.calls());
+  // A claude needs no interpreter: PATH isn't changed, so the seat isn't wrapped in /usr/bin/env PATH=… (#56).
   assert.deepEqual(run, ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
     "--", "claude", "--model", "claude-opus-5-5"]);
+  assert.equal(run.some((a) => a === "/usr/bin/env" || a.startsWith("PATH=")), false);
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
   const settings = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
@@ -435,6 +437,39 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(again.code, 0);
   assert.match(again.out, /already running in t100/);
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
+});
+
+test("start (#56) lands in the project's space: a project terminal's tab only when its space shows the project", (t) => {
+  // The window: the caller's space on another folder, and the project's, its second tab selected.
+  const startIn = (callerLabels, { projectSpace = true } = {}) => {
+    const s = scene(t);
+    const spaces = [{ id: "sp-caller", folder: "/", machine: null, active: true, tabs: [{ id: "tb-c", active: true, terminals: [] }] }];
+    if (projectSpace) {
+      spaces.push({ id: "sp-proj", folder: s.project, machine: null, active: false,
+        tabs: [{ id: "tb-a", active: false, terminals: [] }, { id: "tb-b", active: true, terminals: [] }] });
+    }
+    writeFileSync(join(s.root, "herdr-app.json"), JSON.stringify({ spaces }));
+    s.seed(team());
+    const caller = term("t20", { cwd: s.project, argv: ["claude"] }); // e.g. an orchestrator working in the project
+    caller.labels = callerLabels;
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [caller], next: 100 }));
+    const r = s.cli(["start", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    r.appCalls = s.appCalls();
+    return r;
+  };
+  // The caller's tab is in another space: the bot goes to the project's space, in its selected tab,
+  // with one herdr-app ls for the whole start (placementOf and windowPlace share it).
+  const away = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" });
+  assert.deepEqual([away.json().space, away.json().tab], ["sp-proj", "tb-b"]);
+  assert.deepEqual(away.appCalls, [["ls"]]);
+  // The caller's tab is in the project's space: it takes the bot.
+  const home = startIn({ "herdr.space": "sp-proj", "herdr.tab": "tb-a" });
+  assert.deepEqual([home.json().space, home.json().tab], ["sp-proj", "tb-a"]);
+  // No space shows the project: never the caller's tab; a new space on the project is opened (#71).
+  const none = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" }, { projectSpace: false });
+  assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual(none.appCalls.map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
 });
 
 test("start a member: parent is its lead's live terminal, outliving it; else --no-parent; --space/--tab add placement labels", (t) => {
