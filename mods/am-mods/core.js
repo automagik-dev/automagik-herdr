@@ -473,7 +473,9 @@ export function groupMods(mods, { builtInOpen = false } = {}) {
     if (!g.folded) for (const m of g.mods) rows.push({ mod: m, selectable: true });
   }
   const off = mods.filter((m) => !m.enabled).length;
-  const counts = [`${pack.length} ${PACK_TITLE}`, `${yours.length} yours`, `${herdr.length} built-in`, ...(off ? [`${off} off`] : [])];
+  // The header counts what is drawn: one count per group shown, then the mods switched off.
+  const named = { pack: PACK_TITLE, yours: "yours", herdr: "built-in" };
+  const counts = [...groups.map((g) => `${g.mods.length} ${named[g.key]}`), ...(off ? [`${off} off`] : [])];
   return { groups, rows, counts };
 }
 

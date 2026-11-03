@@ -130,5 +130,5 @@ test("groupMods: the pack, yours, then built-in folded to one row; the counts ar
   // An empty group is not drawn; a home without the pack starts with Yours.
   const bare = core.groupMods(mods.filter((m) => m.kind !== "pack"));
   assert.deepEqual(bare.groups.map((g) => g.key), ["yours", "herdr"]);
-  assert.equal(bare.counts[0], "0 Automagik Herdr");
+  assert.deepEqual(bare.counts, ["2 yours", "2 built-in"], "no count for a group that is not drawn");
 });
