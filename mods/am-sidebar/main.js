@@ -13,7 +13,7 @@ import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
-import { discoverProjects, watchProject } from "./bots.js";
+import { discoverProjects, discoverySnapshot, restoreDiscovery, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
@@ -113,6 +113,9 @@ const FALLBACK = 60000;
 // Character pictures (characters.js), under the app home outside mods/, by their path
 // relative to the app home, as image() takes it.
 const PETS = "am-sidebar-pets";
+// The last bot discovery (bots.js discoverySnapshot), in the mod's localStorage: drawn at
+// startup until the first discovery answers.
+const BOTS_SAVED = "bots.last";
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
@@ -206,9 +209,11 @@ export default class Spaces extends View {
     this.loadExtra(cx);
     // Bot definitions (bots.js): every project with a .herdr/bots.json, read now, on the
     // 15-second timer (another machine's) and on a change under a local project's .herdr/.
-    this.bots = [];
-    this.botsSeen = "[]"; // the last result, as text: re-render only on a change
-    this.botsRun = 0; // the latest discovery; an older one finishing late is dropped
+    // Until the first discovery answers, the last one saved (BOTS_SAVED) is drawn.
+    try { this.bots = restoreDiscovery(localStorage.getItem(BOTS_SAVED)); } catch { this.bots = []; }
+    this.botsSeen = JSON.stringify(this.bots); // the last result, as text: re-render only on a change
+    this.botsRun = 0; // the latest discovery started
+    this.botsShown = 0; // the discovery drawn last: an older one answering after it is dropped
     this.botWatch = new Map(); // local project key -> the token of its one watcher
     this.refreshBots(cx);
     // The bot view (rows.js): the folds made this session (A7: fold id -> open), the row under
@@ -560,7 +565,8 @@ export default class Spaces extends View {
       .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
   }
 
-  // One tree's rows, as spaceRowOrder gives them, in one block.
+  // One tree's rows, as spaceRowOrder gives them, in one block; dimmed while it shows a file
+  // from the last run of Herdr its machine hasn't confirmed (bots.js lastOf: `stale`).
   botBlock(tree, t, dark, shown) {
     const rows = shown.map((r) => {
       if (r.kind === "category") return this.categoryRow(r, t);
@@ -569,7 +575,7 @@ export default class Spaces extends View {
         .child(div().flex_1().min_w(0).truncate().child(`${base(tree.key)}: ${r.text}`));
       return this.botRow(r, tree, t, dark);
     });
-    return [v_flex().id(`bots-${projectId(tree)}`).children(rows)];
+    return [v_flex().id(`bots-${projectId(tree)}`).opacity(tree.stale ? 0.5 : 1).children(rows)];
   }
 
   categoryRow(r, t) {
@@ -785,12 +791,25 @@ export default class Spaces extends View {
     this.refreshBots(cx);
   }
 
+  // A discovery's lists are drawn as they come (this computer's projects first, each other
+  // machine as it answers); one still running when the next starts is drawn until a newer
+  // one has been (a discovery longer than the 15-second timer still shows).
   refreshBots(cx) {
     const run = ++this.botsRun;
     cx.spawn(async (cx) => {
+      const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+      const show = (found) => {
+        if (run < this.botsShown) return;
+        this.botsShown = run;
+        const seen = JSON.stringify(found);
+        if (seen === this.botsSeen) return;
+        this.botsSeen = seen;
+        this.bots = found;
+        cx.notify();
+      };
       let found;
-      try { found = await discoverProjects(); } catch { return; }
-      if (run !== this.botsRun) return;
+      try { found = await discoverProjects({ sleep, onUpdate: show }); } catch { return; }
+      if (run < this.botsShown) return;
       // For the footer's Bots tab (am-footer): whether this computer has a bot, as the
       // Bot settings list counts them. Set only on a change.
       const defined = found.some((p) => !p.machine && p.file?.bots?.length > 0);
@@ -806,12 +825,11 @@ export default class Spaces extends View {
           if (this.botWatch.get(key) === token) this.botWatch.delete(key);
         });
       }
-      const seen = JSON.stringify(found);
-      if (seen !== this.botsSeen) {
-        this.botsSeen = seen;
-        this.bots = found;
-        cx.notify();
-      }
+      show(found);
+      try {
+        const saved = discoverySnapshot(found);
+        if (saved !== this.botsSaved) { this.botsSaved = saved; localStorage.setItem(BOTS_SAVED, saved); }
+      } catch {}
       this.readBotArgv(cx);
     });
   }
