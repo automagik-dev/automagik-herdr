@@ -88,27 +88,46 @@ export async function modelTexts() {
   return out;
 }
 
+/** A sleep from a mod context's timer (mods have no setTimeout), for startBot; null without one. */
+export const sleepOf = (cx) => (cx?.timer ? (ms) => new Promise((done) => cx.timer.after(ms, () => done())) : null);
+
+const localSpaces = () => spaces().filter((s) => !s.machine);
+// The first of `list` whose folder keys to the project.
+async function keyedSpace(list, projectKey) {
+  for (const s of list) {
+    try { if (s.folder && (await keyOf(s.folder)) === projectKey) return s; } catch {}
+  }
+  return null;
+}
+
+// Spaces being opened now, one per project: a second Start in that project waits for it.
+const opening = new Map(); // project key -> Promise<space | null>
+
+// A new space on the project, named after its folder: space.new, then (run() answers
+// nothing) looked for in spaces() every stepMs for up to waitMs. Null if it never shows.
+async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}) {
+  const before = new Set(localSpaces().map((s) => s.id));
+  try { run("space.new", { name: projectKey.replace(/\/+$/, "").split("/").pop(), folder: projectKey, machine: "" }); } catch { return null; }
+  for (let waited = 0; ; waited += stepMs) {
+    const space = await keyedSpace(localSpaces().filter((s) => !before.has(s.id)), projectKey);
+    if (space || waited >= waitMs) return space;
+    await sleep(stepMs);
+  }
+}
+
 // Where a started bot opens: the first space of this computer whose folder keys to the
-// project, else a new space on the project (space.new, named `name` or after the folder;
-// run() answers nothing, so it is looked for in spaces() for up to waitMs), else the shown
-// space; in that space's active tab.
-async function placeFor(projectKey, { sleep = null, name = null, waitMs = 5000, stepMs = 100 } = {}) {
-  const mine = () => spaces().filter((s) => !s.machine);
-  let space = null;
-  for (const s of mine()) {
-    try { if (s.folder && (await keyOf(s.folder)) === projectKey) { space = s; break; } } catch {}
-  }
-  if (!space) {
-    const before = new Set(mine().map((s) => s.id));
-    let asked = true;
-    try { run("space.new", { name: name || projectKey.replace(/\/+$/, "").split("/").pop(), folder: projectKey, machine: "" }); } catch { asked = false; }
-    for (let waited = 0; asked; waited += stepMs) {
-      space = mine().find((s) => !before.has(s.id) && s.folder === projectKey) ?? null;
-      if (space || !sleep || waited >= waitMs) break;
-      await sleep(stepMs);
+// project, else a space opened on it (only with a `sleep` to wait for it by, so a space
+// is never left behind empty), else the shown space; in that space's active tab.
+async function placeFor(projectKey, { sleep = null, ...wait } = {}) {
+  let space = await keyedSpace(localSpaces(), projectKey);
+  if (!space && sleep) {
+    if (!opening.has(projectKey)) {
+      opening.set(projectKey, openSpace(projectKey, sleep, wait).finally(() => opening.delete(projectKey)));
     }
+    space = await opening.get(projectKey);
   }
-  space ??= mine().find((s) => s.id === focused()?.space) ?? mine().find((s) => s.active) ?? null;
+  const mine = localSpaces();
+  space ??= mine.find((s) => s.id === focused()?.space) ?? mine.find((s) => s.active) ?? null;
   const tab = space?.tabs?.find((t) => t.active) ?? null;
   return { space: space?.id ?? null, tab: tab?.id ?? null };
 }
@@ -122,7 +141,7 @@ const STARTED_GRACE = 60_000;
 /**
  * Starts a bot as a new pane on this computer, or focuses its live pane. Refuses a planned
  * bot, one with no agent, a project folder that doesn't key to itself, and a bot already
- * being started. `place`: { sleep, name } for a space it opens (placeFor).
+ * being started. `place.sleep` (sleepOf(cx)) lets it open a space on the project (placeFor).
  */
 export async function startBot(projectKey, botId, place = {}) {
   if (starting.has(botId)) return { refused: `${botId} is already starting.` };

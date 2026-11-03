@@ -18,7 +18,7 @@ import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
-import { attachBot, startBot, liveTerminalOf } from "./launch.js";
+import { attachBot, startBot, liveTerminalOf, sleepOf } from "./launch.js";
 
 const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
 // The form's dialog size: the mockup's 1000 × 840 (main.js opens it the same way).
@@ -281,7 +281,7 @@ export class BotForm {
         // Saved either way from here: a refused or failed Start says so, and the form
         // stops offering to create the bot a second time.
         let refused = null;
-        try { refused = (await startBot(this.key, entry.id))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
+        try { refused = (await startBot(this.key, entry.id, { sleep: sleepOf(cx) }))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
         if (refused) {
           this.error = `Saved, not started: ${refused}`;
           this.saved = true;
@@ -325,7 +325,7 @@ export class BotForm {
     this.busy = true;
     this.error = null;
     cx.spawn(async (cx) => {
-      const r = await startBot(project.key, bot.id);
+      const r = await startBot(project.key, bot.id, { sleep: sleepOf(cx) });
       this.busy = false;
       if (r.refused) this.error = r.refused;
       else { run("am-sidebar.refresh"); closeOverlay(this.p.overlay); }

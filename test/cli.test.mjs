@@ -646,6 +646,16 @@ test("start with no space showing the project opens one on its folder and starts
   const r3 = s3.cli(["start", "Genie", "--json"]);
   assert.equal(r3.code, 0, r3.err);
   assert.deepEqual([r3.json().space, r3.json().tab], ["sp-new1", "tb-new1"]);
+  // Another start opened a space on the folder at the same time: the first one is used and
+  // the space this start opened is closed, so one space shows the project.
+  const s4 = scene(t, { window: { spaces: [], rival: true } });
+  s4.seed(team());
+  const r4 = s4.cli(["start", "Genie", "--json"]);
+  assert.equal(r4.code, 0, r4.err);
+  assert.equal(r4.json().space, "sp-rival");
+  assert.deepEqual(s4.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2]).id ?? null]),
+    [["space.new", null], ["space.close", "sp-new1"]]);
+  assert.deepEqual(s4.windowNow().spaces.map((x) => x.id), ["sp-rival"]);
   // --space still picks the place: the window isn't asked.
   const s2 = scene(t, { window: { spaces: [] } });
   s2.seed(team());

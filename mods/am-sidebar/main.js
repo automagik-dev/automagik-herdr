@@ -21,7 +21,7 @@ import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
 import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
-import { startBot, attachBot, modelTexts } from "./launch.js";
+import { startBot, attachBot, modelTexts, sleepOf } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, workerTabName, openWorkerTab } from "./workerTab.js";
@@ -220,10 +220,9 @@ export default class Spaces extends View {
     this.open = new Map();
     this.hoverRow = null;
     this.trees = [];
-    // Per project id, from the last draw that showed its space: its index in its sidebar list
-    // and that space's name, where its rows stay and what its next space is called.
+    // Per project id, from the last draw that showed its space: its index in its sidebar
+    // list, where its rows stay once that space closes.
     this.places = new Map();
-    this.spaceNames = new Map();
     this.botOf = new Map(); // terminal address -> bot id
     this.pets = new Set();
     this.petsWanted = new Map(); // file -> { look, pose, dark }
@@ -808,10 +807,8 @@ export default class Spaces extends View {
     const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
     const project = this.bots.find(has) ?? (await discoverProjects()).find(has);
     if (!project) return notify({ title, body: `No project on this computer defines ${bot}.`, level: "warning" });
-    // Start opens a space on the project when none is open, named as its last one was.
-    const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-    const r = c === "start" ? await startBot(project.key, bot, { sleep, name: this.spaceNames.get(projectId(project)) })
-      : await attachBot(project.key, bot, terminal);
+    // Start opens a space on the project when none is open (sleepOf: to wait for it).
+    const r = c === "start" ? await startBot(project.key, bot, { sleep: sleepOf(cx) }) : await attachBot(project.key, bot, terminal);
     if (r.refused) notify({ title, body: r.refused, level: "warning", timeout: 12000 });
     this.refreshBots(cx);
   }
@@ -1010,7 +1007,6 @@ export default class Spaces extends View {
     const list = (mine, m) => {
       const ids = mine.map((r) => r.w.id), rowOf = new Map(mine.map((r) => [r.w.id, r]));
       for (const [id, i] of placesOf(ids, at)) this.places.set(id, i);
-      for (const r of mine) if (at.has(r.w.id)) this.spaceNames.set(at.get(r.w.id), r.w.name);
       const orphans = rest.filter((id) => (byId.get(id).machine ?? null) === m);
       return withSpaceless(ids, orphans, this.places).flatMap((x) => (x.space ? draw(rowOf.get(x.space)) : spaceless(byId.get(x.project))));
     };

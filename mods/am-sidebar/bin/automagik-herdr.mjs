@@ -812,21 +812,28 @@ async function windowSpaces() {
  * Where a start with no --space goes: a project terminal's place (placementOf) while the window
  * still shows that space, else a window space on the project, else a new one (herdr-app do
  * space.new, named after the folder). With no window to ask, the terminal's place, or null.
+ * Two starts at once can each open one: both then use the first space on the project in the
+ * window, and the one that opened another closes it (it holds only its new shell).
  */
 async function windowPlace(key, labelled = null) {
   const seen = await windowSpaces();
   if (!seen) return labelled;
   if (labelled && seen.spaces.some((s) => s.id === labelled.space)) return labelled;
+  // This ls is the check right before space.new: nothing else runs between them.
   const open = spacePlace(seen.spaces, seen.keys, key);
   if (open) return open;
   const name = key.replace(/\/+$/, "").split("/").pop();
   const r = await runProgram("herdr-app", ["do", "space.new", JSON.stringify({ name, folder: key, machine: "" })]);
   if (r.code !== 0) return null;
-  let id = null;
-  try { id = JSON.parse(r.stdout)?.space ?? null; } catch { /* the ids are read from ls instead */ }
+  let out = {};
+  try { out = JSON.parse(r.stdout) ?? {}; } catch { /* the space is found in ls instead */ }
   const now = await windowSpaces();
-  const made = now && spacePlace(now.spaces.filter((s) => !id || s.id === id), now.keys, key, new Set(seen.spaces.map((s) => s.id)));
-  return made || (typeof id === "string" ? { space: id, tab: null, from: null } : null);
+  const first = now && spacePlace(now.spaces, now.keys, key);
+  const ours = now?.spaces.find((s) => s.id === out.space || s.tabs.some((t) => t.panes.some((p) => p.terminal === out.terminal)));
+  if (first && ours && ours.id !== first.space) {
+    await runProgram("herdr-app", ["do", "space.close", JSON.stringify({ id: ours.id, confirmed: true })]);
+  }
+  return first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
 }
 
 async function cmdStart(opts, [ref]) {
