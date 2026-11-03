@@ -423,7 +423,10 @@ install_meter() {
   got=${got%% *}
   [ "$got" = "$usum" ] || { why="$asset does not match SHA256SUMS (sha256 $got, expected $usum): nothing was installed"; return 1; }
   pin=$(meter_pin "$asset")
-  [ -n "$pin" ] && [ "$got" = "$pin" ] || { why="$asset is not the build this installer pins (sha256 $got, pinned ${pin:-none}): nothing was installed"; return 1; }
+  if [ -z "$pin" ] || [ "$got" != "$pin" ]; then
+    why="$asset is not the build this installer pins (sha256 $got, pinned ${pin:-none}): nothing was installed"
+    return 1
+  fi
   mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
   part=$(mktemp "$BIN_DIR/.usagemeter.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
   if cp "$udir/$asset" "$part" && chmod 755 "$part" && mv -f "$part" "$METER"; then
