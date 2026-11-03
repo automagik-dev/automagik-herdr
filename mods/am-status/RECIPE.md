@@ -1,7 +1,7 @@
 # am-status
 
 The window's bottom status bar, with the installed Automagik Herdr version and its update check
-beside "commands". Derived from Herdr's shipped `workspace-status`.
+beside "commands". Derived from Herdr's shipped `workspace-status` 0.1.12.
 
 ## What you see
 
@@ -28,6 +28,15 @@ it couldn't (offline, GitHub refusing, no node, no sidebar answering).
   <pack>/update.mjs apply`, the path `automagik-herdr update` takes: the tarball checked against
   the release's `SHA256SUMS`, the replaced pack kept for `automagik-herdr update --rollback`. A
   notice then says to reload Herdr's mods (no mod can reload them itself).
+- **Check now** at most once a minute (GitHub answers 60 unauthenticated requests an hour): a
+  click inside that minute is answered with the last check ("checked just now").
+- **Only the confirmed version**: the request carries the version the dialog named, and the
+  sidebar runs `update.mjs apply --expect <v>`. When the offer changed in between, or the latest
+  release moved on by the time of the download, nothing is installed and the bar offers the new
+  version with the reason in the tooltip; confirm again.
+- **The layout follows**: the update places the release's `layouts/automagik.json` as install.sh
+  does (D8: a layout you edited is kept), and `automagik-herdr update --rollback` puts the
+  rolled-to pack's layout back, so a rollback never leaves the bar naming a missing `am-status`.
 - **Couldn't check**: the reason in the tooltip; click to try again. Never a notice, never a
   dialog: a failed look is retried on the sidebar's own timer.
 - **Updates off** (`AUTOMAGIK_HERDR_NO_UPDATE` where the check runs): the version alone.
@@ -55,5 +64,6 @@ this mod names no repository.
 The `automagik` layout's `status` block names `am-status` in place of `workspace-status`. A
 layout of your own: set that block's `content.mod` to `am-status`.
 
+The lineage is this file's and the root NOTICE's (mod.json has no `cloned_from`).
 `monitor.svg`, `server.svg` and `branch.svg` are Herdr's, copied from `workspace-chrome` so the
 bar doesn't depend on another mod's folder.

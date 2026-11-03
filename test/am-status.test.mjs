@@ -42,7 +42,7 @@ test("update available: '0.8.0 → 0.8.1 · update', only 'update' is accent and
   // A failed install keeps offering the update, the reason in the tooltip.
   const failed = statusLabel({ state: { ...state, applyError: "sha256 mismatch" }, version: "0.8.0", now: NOW });
   assert.equal(text(failed), "0.8.0 → 0.8.1 · update");
-  assert.match(failed.tooltip, /The last install failed: sha256 mismatch/);
+  assert.match(failed.tooltip, /Not installed: sha256 mismatch/);
   assert.equal(offered(state, "0.8.0"), "0.8.1");
   assert.equal(offered(state, "0.8.1"), null, "already installed (VERSION moved on): nothing to confirm");
   assert.equal(offered({ kind: "current" }, "0.8.0"), null);
@@ -185,4 +185,44 @@ test("runCheck runs `apply` with the same node fallback when asked", async () =>
   const { node } = await check.runCheck(exec, "/p/update.mjs", "/usr/local/bin/node", { mods: "/m", command: "apply" });
   assert.equal(node, "/usr/local/bin/node");
   assert.deepEqual(calls, [["/usr/local/bin/node", "/p/update.mjs", "apply", "--mods", "/m"]]);
+});
+
+test("manual checks at most once a minute (GitHub's 60/hour): coolingDown over the last answer", () => {
+  assert.equal(check.MANUAL_CHECK_COOLDOWN_MS, 60_000);
+  assert.equal(check.coolingDown({ at: NOW - 59_000 }, NOW), true);
+  assert.equal(check.coolingDown({ at: NOW - 60_000 }, NOW), false);
+  assert.equal(check.coolingDown({}, NOW), false, "never checked");
+  assert.equal(check.coolingDown({ at: NOW + 120_000 }, NOW), false, "a clock that went back doesn't block for ever");
+  // The sidebar answers a click inside the cooldown with the last check: the bar says "checked just now".
+  const s = sharedStore();
+  s.set(check.STATE_KEY, { kind: "current", current: "0.8.0", at: NOW - 20_000 });
+  check.finish(s.get, s.set, null, { request: "r" });
+  const l = statusLabel({ state: s.get(check.STATE_KEY), request: { id: "r", what: "check", at: NOW - 100 }, version: "0.8.0", now: NOW });
+  assert.equal(text(l), "Automagik Herdr 0.8.0");
+  assert.match(l.tooltip, /checked just now/);
+});
+
+test("an install runs only for the version the person confirmed", () => {
+  const offer = { kind: "update", current: "0.8.0", update: { version: "0.8.1", page: "p" } };
+  assert.equal(check.applyRefusal({ to: "0.8.1" }, offer), null);
+  assert.match(check.applyRefusal({ to: "0.8.1" }, { ...offer, update: { version: "0.8.2", page: "p" } }), /0\.8\.2 is out now, not 0\.8\.1: confirm again/);
+  assert.match(check.applyRefusal({}, offer), /no confirmed version/);
+  assert.match(check.applyRefusal({ to: "0.8.1" }, { kind: "current", current: "0.8.1" }), /nothing to install/);
+  // update.mjs's own refusal (the latest moved between the sidebar's look and the install): the
+  // bar offers the new version and says why nothing went in.
+  const out = { code: 0, stdout: `${JSON.stringify({ current: "0.8.0", latest: "0.8.2", update: { version: "0.8.2", page: "p" }, installed: null,
+    refused: { expected: "0.8.1", latest: "0.8.2" } })}\n` };
+  const patch = check.applyPatch(out, offer, NOW);
+  assert.equal(patch.kind, "update");
+  assert.equal(patch.update.version, "0.8.2");
+  const l = statusLabel({ state: patch, version: "0.8.0", now: NOW });
+  assert.equal(text(l), "0.8.0 → 0.8.2 · update");
+  assert.match(l.tooltip, /Not installed: 0\.8\.2 is out now, not 0\.8\.1: confirm again/);
+});
+
+test("runCheck passes `--expect <v>` through to update.mjs apply", async () => {
+  const calls = [];
+  const exec = async (node, args) => { calls.push(args); return { code: 0, stdout: '{"installed":null}\n' }; };
+  await check.runCheck(exec, "/p/update.mjs", "node", { mods: "/m", command: "apply", extra: ["--expect", "0.8.1"] });
+  assert.deepEqual(calls, [["/p/update.mjs", "apply", "--expect", "0.8.1", "--mods", "/m"]]);
 });

@@ -19,8 +19,8 @@ import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
-import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, busyOf, checkPatch, claim, finish,
-  nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
+import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, applyRefusal, busyOf, checkPatch, claim,
+  coolingDown, finish, nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
 import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
@@ -467,15 +467,16 @@ export default class Spaces extends View {
 
   // The status bar's install: `node <pack>/update.mjs apply`, the path `automagik-herdr update`
   // takes (checksum checked, the replaced pack kept for --rollback), then a notice to reload.
-  applyUpdates(cx, request) {
+  // `to`: the version the person confirmed; update.mjs refuses when the latest is another by now.
+  applyUpdates(cx, request, to) {
     const before = stateFrom(shared(STATE_KEY));
-    const id = claim(shared, setShared, "apply", Date.now(), { request, to: before.update?.version ?? before.latest ?? null });
+    const id = claim(shared, setShared, "apply", Date.now(), { request, to });
     if (id === null) return false;
     cx.spawn(async (cx) => {
       let patch = { applyError: "the install did not run", at: Date.now() };
       try {
         const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
-          { mods: `${appHome()}/mods`, command: "apply" });
+          { mods: `${appHome()}/mods`, command: "apply", extra: ["--expect", to] });
         if (node) this.updates.node = node;
         patch = applyPatch(result, before, Date.now());
       } catch (e) { patch = { applyError: String(e?.message ?? e), at: Date.now() }; }
@@ -487,17 +488,31 @@ export default class Spaces extends View {
   }
 
   // On the 250 ms timer: a new request from the status bar. A look asked for while one runs is
-  // answered by it, an install asked for while one runs is that one; an install waits for a
-  // running look (the request stays fresh for REQUEST_FRESH_MS).
+  // answered by it, and one within a minute of the last by that one (GitHub's hourly limit); an
+  // install asked for while one runs is that one, one for a version no longer offered is refused
+  // (the bar asks again), and one waits for a running look (fresh for REQUEST_FRESH_MS).
   updateRequest(cx) {
     const value = shared(REQUEST_KEY);
-    const what = requestDue(value, this.updates.seen, Date.now());
+    const now = Date.now();
+    const what = requestDue(value, this.updates.seen, now);
     if (!what) return;
     const { id } = value;
+    const state = stateFrom(shared(STATE_KEY));
+    const busy = busyOf(state, now);
     if (what === "check") {
       this.updates.seen = id;
-      if (!busyOf(stateFrom(shared(STATE_KEY)), Date.now())) this.checkUpdates(cx, false, id);
-    } else if (busyOf(stateFrom(shared(STATE_KEY)), Date.now())?.what === "apply" || this.applyUpdates(cx, id)) this.updates.seen = id;
+      if (busy) return;
+      if (coolingDown(state, now)) finish(shared, setShared, null, { request: id });
+      else this.checkUpdates(cx, false, id);
+      return;
+    }
+    if (busy?.what === "apply") { this.updates.seen = id; return; }
+    if (busy) return;
+    const refused = applyRefusal(value, state);
+    if (refused) {
+      this.updates.seen = id;
+      finish(shared, setShared, null, { request: id, applyError: refused });
+    } else if (this.applyUpdates(cx, id, value.to)) this.updates.seen = id;
   }
 
   // One due `usagemeter sync` through Herdr's exec, then the next look when meter.js says.

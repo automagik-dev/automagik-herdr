@@ -11,6 +11,7 @@ import { REQUEST_KEY, STATE_KEY, confirmText, offered, statusLabel } from "./lab
 export default class AmStatus extends View {
   init(_props, cx) {
     this.version = null;
+    this.confirming = null; // the version the open confirm dialog names
     this.seen = null; // the state the last VERSION read went with
     this.readVersion(cx);
     // Once a second: redraw while a check, an install or a request is under way (its "checking…"
@@ -27,7 +28,7 @@ export default class AmStatus extends View {
       for (;;) {
         // Only the name counts: Herdr may append the command's args ("update {}").
         const c = String(await nextCommand() ?? "").trim().split(/\s+/)[0];
-        if (c === "update") this.ask("apply");
+        if (c === "update" && this.confirming) this.ask("apply", this.confirming);
         cx.notify();
       }
     });
@@ -41,9 +42,10 @@ export default class AmStatus extends View {
     });
   }
 
-  ask(what) {
+  // `to`: for an install, the version the dialog named; the sidebar refuses any other.
+  ask(what, to = null) {
     const at = Date.now();
-    setShared(REQUEST_KEY, { id: `${what}-${at}-${Math.random().toString(36).slice(2, 8)}`, what, at });
+    setShared(REQUEST_KEY, { id: `${what}-${at}-${Math.random().toString(36).slice(2, 8)}`, what, at, ...(to ? { to } : {}) });
   }
 
   click(what) {
@@ -52,6 +54,7 @@ export default class AmStatus extends View {
     const current = this.version ?? state?.current ?? null;
     const latest = offered(state, current);
     if (!latest) return this.ask("check");
+    this.confirming = latest;
     openOverlay({ mod: "confirm", kind: "dialog", width: 460, height: 210, props: { ...confirmText(current, latest), command: { name: "am-status.update" } } });
   }
 

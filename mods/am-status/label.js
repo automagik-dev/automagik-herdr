@@ -67,7 +67,7 @@ export function statusLabel({ state = null, request = null, version = null, now 
   if (s.kind === "update") {
     const latest = str(s.update?.version) ?? str(s.latest);
     if (latest && latest !== current) {
-      const why = str(s.applyError) ? `The last install failed: ${s.applyError}. ` : "";
+      const why = str(s.applyError) ? `Not installed: ${s.applyError}. ` : "";
       return { parts: [dim(`${current ?? "?"} → ${latest}`), dim(" · "), { text: "update", tone: "accent", click: "update" }],
         tooltip: `${why}Automagik Herdr ${latest} is out${checked}. Click update to install it.` };
     }

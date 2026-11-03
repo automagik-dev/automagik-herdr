@@ -47,11 +47,12 @@ function answerOf(stdout) {
  * ms (the mod builds it on Herdr's timer, which has no setTimeout); without it nothing is timed.
  * `mods`: the app home's mods folder, so update.mjs reads the installed version from the same
  * Herdr. `command`: "apply" installs the latest release the same way (update.mjs apply, what
- * `automagik-herdr update` runs: checksum checked, the replaced set kept); pass no sleep then, a
- * download takes as long as it takes. Resolves `{ node, result }`, node null when none answered.
+ * `automagik-herdr update` runs: checksum checked, the replaced set kept), with `extra`
+ * ["--expect", v] so only the confirmed version goes in; pass no sleep then, a download takes as
+ * long as it takes. Resolves `{ node, result }`, node null when none answered.
  */
-export async function runCheck(exec, script, last = null, { mods = null, sleep = null, timeoutMs = EXEC_TIMEOUT_MS, command = "check" } = {}) {
-  const args = [script, command, ...(mods ? ["--mods", mods] : [])];
+export async function runCheck(exec, script, last = null, { mods = null, sleep = null, timeoutMs = EXEC_TIMEOUT_MS, command = "check", extra = [] } = {}) {
+  const args = [script, command, ...extra, ...(mods ? ["--mods", mods] : [])];
   let fallback = null;
   for (const node of nodeOrder(last)) {
     let result;
@@ -187,6 +188,10 @@ export function applyPatch(result, state, now) {
     return { kind: "installed", from: answer.current ?? state.current ?? null, current: version, latest: version, update: null,
       why: null, applyError: null, at: now };
   }
+  if (result?.code === 0 && answer?.refused) {
+    // The latest moved on after the confirm: offer the new one, nothing installed.
+    return { ...checkPatch(result, now), applyError: `${answer.refused.latest} is out now, not ${answer.refused.expected}: confirm again` };
+  }
   if (result?.code === 0 && answer && !answer.error && answer.installed === null) return checkPatch(result, now);
   const why = typeof answer?.error === "string" ? answer.error : result ? `exit ${result.code}` : "node not found";
   return { applyError: why, at: now };
@@ -199,6 +204,27 @@ export function applyNotice(patch) {
       + " (`automagik-herdr update --rollback` puts it back). Reload Herdr's mods to use it." };
   }
   if (patch.applyError) return { title: "Automagik Herdr not updated", level: "error", body: patch.applyError };
+  return null;
+}
+
+/** Manual checks ("check now" in the status bar) at most once a minute: GitHub answers 60
+ *  unauthenticated requests an hour. A click inside it is answered with the last check. */
+export const MANUAL_CHECK_COOLDOWN_MS = 60_000;
+
+/** True while a manual check would repeat one that finished less than the cooldown ago. */
+export const coolingDown = (state, now) => typeof state?.at === "number" && now - state.at < MANUAL_CHECK_COOLDOWN_MS && now >= state.at;
+
+/**
+ * An install request against what the state offers: null when it may run, else why not. The
+ * request carries the version the person confirmed (`to`); one that no longer matches the
+ * offered update is refused, so the bar asks again with the new version.
+ */
+export function applyRefusal(request, state) {
+  const offered = state?.kind === "update" ? (state.update?.version ?? state.latest ?? null) : null;
+  const to = typeof request?.to === "string" && request.to !== "" ? request.to : null;
+  if (!to) return "no confirmed version";
+  if (!offered) return `nothing to install (the last check found no update over ${state?.current ?? "the installed pack"})`;
+  if (to !== offered) return `${offered} is out now, not ${to}: confirm again`;
   return null;
 }
 

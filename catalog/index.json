@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-03T05:04:46.739Z",
+  "generatedAt": "2026-11-03T05:44:07.381Z",
   "modCount": 10,
   "repositoryCount": 3,
   "source": "automagik-herdr",
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik-herdr",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-03T01:50:06-03:00",
+      "pushedAt": "2026-11-03T02:35:04-03:00",
       "headCommit": "",
       "path": "",
       "name": "Automagik Herdr",
@@ -42,7 +42,7 @@
         {
           "name": "am-footer",
           "title": "Automagik Footer",
-          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome`."
+          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome` 0.1.11."
         },
         {
           "name": "am-markdown",
@@ -57,7 +57,7 @@
         {
           "name": "am-new-menu",
           "title": "Automagik New Menu",
-          "blurb": "The `+` menu (the tab bar's `+`, and a space row's, in place of Herdr's stock one): start a terminal or an installed coding agent in the shown space (or a space row's `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu`; it asks herdr-core which age"
+          "blurb": "The `+` menu (the tab bar's `+`, and a space row's, in place of Herdr's stock one): start a terminal or an installed coding agent in the shown space (or a space row's `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu` 0.1.7; it asks herdr-core whi"
         },
         {
           "name": "am-quota",
@@ -72,7 +72,7 @@
         {
           "name": "am-status",
           "title": "Automagik Status",
-          "blurb": "The window's bottom status bar, with the installed Automagik Herdr version and its update check beside \"commands\". Derived from Herdr's shipped `workspace-status`."
+          "blurb": "The window's bottom status bar, with the installed Automagik Herdr version and its update check beside \"commands\". Derived from Herdr's shipped `workspace-status` 0.1.12."
         },
         {
           "name": "am-tabs",
