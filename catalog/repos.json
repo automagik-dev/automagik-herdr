@@ -8,14 +8,31 @@
       "modNames": [
         "insights"
       ],
-      "headCommit": "92cdb30bfe5b41b0b25e5a44f2b3965f9811ce24",
-      "stars": 38,
-      "pushedAt": "2026-10-31T02:52:29Z",
+      "headCommit": "e68e6bf16e7873b501f9b26b3d72a167fa70ffd3",
+      "stars": 40,
+      "pushedAt": "2026-11-03T06:54:16Z",
       "defaultBranch": "main",
       "hasKeys": false,
       "hasPreview": true,
       "license": "MIT",
-      "recipeBytes": 8962
+      "recipeBytes": 13422
+    },
+    {
+      "fullName": "dmazlum/herdr-revive",
+      "path": "",
+      "name": "Revive",
+      "blurb": "Brings back the coding agent a Herdr terminal lost to a reboot or a herdr-core restart, in the same pane with the same flags, and forks a live session beside it (Claude Code; Codex and pi experimental).",
+      "modNames": [
+        "revive"
+      ],
+      "hasKeys": true,
+      "hasPreview": true,
+      "stars": 4,
+      "pushedAt": "2026-11-02T17:02:25Z",
+      "defaultBranch": "main",
+      "license": "MIT",
+      "headCommit": "6851ada7a6da1d897d787cbf1e21dfe675dd6460",
+      "recipeBytes": 12817
     },
     {
       "fullName": "automagik-dev/automagik-pocket",
