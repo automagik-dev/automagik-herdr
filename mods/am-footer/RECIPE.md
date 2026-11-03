@@ -2,7 +2,7 @@
 
 The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle
 **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from
-Herdr's shipped `workspace-chrome`.
+Herdr's shipped `workspace-chrome` 0.1.11.
 
 ## What you see
 
@@ -38,7 +38,7 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 
 ## Built from
 
-`mods/am-footer/main.js`, `mod.json` (`place: none`, `cloned_from` recorded), `puzzle.svg`
+`mods/am-footer/main.js`, `mod.json` (`place: none`; the lineage is this file's, not a `cloned_from`), `puzzle.svg`
 (Lucide's puzzle, `stroke-width 2`, `currentColor`), Herdr's other icons reused from
 `mods/workspace-chrome/`. Herdr API: `theme`, `run`, `props`, `window`, `layout`, `panes`,
 `updates`, `shared`, `setShared`, `readTextFile`, `appHome`, `exec`, `watchFolder`, `openOverlay`,

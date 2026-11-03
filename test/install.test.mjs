@@ -144,7 +144,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
-  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
+  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\ninstalled=\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z\nusagemeter=0\\.2\\.0\n$`));
   // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
   const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "latest", "download", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
   for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`am-sidebar/bin/${f}`), `the tarball has am-sidebar/bin/${f}`);

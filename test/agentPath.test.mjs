@@ -232,7 +232,7 @@ test("a binary, a #!/bin/sh script or an agent not on PATH: PATH unchanged, noth
  * A scratch project for the CLI: codex on PATH only as a link into a fake nvm prefix (node beside
  * it, nowhere on PATH), the fake hc, git, and a live t1 playing Dev. `extra` bots join the file.
  */
-function codexProject(t, extra = []) {
+function codexProject(t, extra = [], { terminals = [], env: more = {} } = {}) {
   const s = scratch(t);
   const prefix = npmPrefix(s.root);
   const bin = join(s.root, "bin");
@@ -257,10 +257,10 @@ function codexProject(t, extra = []) {
   const log = join(s.root, "hc.log");
   writeFileSync(state, JSON.stringify({ next: 100, templates: [], terminals: [{ address: "t1", name: "t1", cwd: project, state: "live",
     parent: null, created_ms: 1, labels: { bot: "b-cccccccccc" }, foreground: { argv: ["claude"], cwd: project, pid: 4000 },
-    status: { app: "claude-code", state: "idle" } }] }));
+    status: { app: "claude-code", state: "idle" } }, ...terminals] }));
   writeFileSync(log, "");
   const path = `${bin}:${s.empty}`;
-  const env = { ...s.env, PATH: path, HERDR_APP_HOME: app, HC_FAKE_STATE: state, HC_FAKE_LOG: log, HC_TERMINAL_ID: "t1" };
+  const env = { ...s.env, PATH: path, HERDR_APP_HOME: app, HC_FAKE_STATE: state, HC_FAKE_LOG: log, HC_TERMINAL_ID: "t1", ...more };
   const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
   const run = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((c) => c[0] === "run");
   return { s, prefix, path, cli, run };
@@ -291,21 +291,17 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
   assert.equal(seat.status, 0, seat.stderr);
 });
 
-test("agentPathEntry.mjs (the sidebar's Start): prints the PATH to start an agent with, or null when PATH serves it", (t) => {
-  const s = scratch(t);
-  const prefix = npmPrefix(s.root);
-  const bin = join(s.root, "bin");
-  mkdirSync(bin);
-  symlinkSync(join(prefix, "bin/codex"), join(bin, "codex"));
-  const entry = new URL("../mods/am-sidebar/agentPathEntry.mjs", import.meta.url).pathname;
-  const ask = (program, path) => {
-    const r = spawnSync(process.execPath, [entry, program], { env: { ...s.env, PATH: path }, encoding: "utf8" });
-    assert.equal(r.status, 0, r.stderr);
-    return JSON.parse(r.stdout);
-  };
-  const path = `${bin}:${s.empty}`;
-  assert.deepEqual(ask("codex", path),
-    { path: `${join(prefix, "bin")}:${path}`, note: `codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it.` });
-  assert.deepEqual(ask("codex", `${bin}:${join(prefix, "bin")}`), { path: null, note: null });
-  assert.deepEqual(ask("claude", path), { path: null, note: null });
+test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs under env PATH=<nvm bin>:<PATH>, not into 127", (t) => {
+  const old = { address: "t7", name: "maint", cwd: "", state: "live", parent: null, created_ms: 1, labels: { bot: "b-dddddddddd" },
+    foreground: { argv: ["codex"], cwd: "", pid: 4100 }, status: { app: "codex", state: "idle" } };
+  const { prefix, path, cli, run: runCall } = codexProject(t, [{ id: "b-dddddddddd", name: "Maint", kind: "member", agent: "codex" }],
+    { terminals: [old], env: { AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300" } });
+  const r = cli("restart", "Maint", "--json");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).replaced, "t7");
+  const run = runCall();
+  const argv = run.slice(run.indexOf("--") + 1);
+  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}`, "codex", "resume", "--last"]);
+  const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
+  assert.equal(seat.status, 0, seat.stderr);
 });

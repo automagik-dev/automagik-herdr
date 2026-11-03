@@ -416,7 +416,7 @@ test("update.mjs: install across the rename moves the hooks; rollback to v0.3 pu
   const said = installed.stderr.split("\n").filter((l) => l.startsWith("notice: ")).map((l) => l.slice(8));
   assert.match(said[0], /^IMPORTANT: the bots' briefing hook moved to a new path in 2 settings files:$/);
   for (const dir of [s.proj, s.worker]) assert.ok(said.includes(`  ${dir}: ${settings(dir)}`), `${dir} is listed: ${said.join("\n")}`);
-  assert.ok(said.some((l) => /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/.test(l)));
+  assert.ok(said.some((l) => /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)/.test(l)));
   assert.ok(said.some((l) => /not rewritten .*automagik-herdr start <bot>.*automagik-herdr attach <bot>/.test(l)));
   assert.ok(installed.stderr.trimEnd().endsWith(said.at(-1)), "the notice is the last thing logged");
   const viaEntry = s.hook(hookCommand(s.app));
@@ -458,7 +458,7 @@ test("hooksNotice: every file with its project, the running sessions, unknown pr
   const forward = hooksNotice({ direction: "forward", rewritten: files, skipped: [] });
   assert.deepEqual(forward.slice(0, 3), ["IMPORTANT: the bots' briefing hook moved to a new path in 2 settings files:",
     `  /p/a: ${files[0]}`, `  /p/b/sub: ${files[1]}`]);
-  assert.match(forward[3], /running .* keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once\.$/);
+  assert.match(forward[3], /running .* keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)\.$/);
   assert.match(forward[4], /^Projects the pack doesn't know about were not rewritten/);
   const back = hooksNotice({ direction: "back", restored: [files[0]], skipped: [] });
   assert.equal(back[0], "IMPORTANT: the bots' briefing hook went back to the older release's path in 1 settings file:");
