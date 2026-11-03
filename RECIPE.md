@@ -6,12 +6,13 @@ we carry, `install.sh` puts the released pack into an app home, `scripts/catalog
 
 ## What you see
 
-Nothing of its own: the pack is what it installs. The main mod is **`spaces-agents`** — the
+Nothing of its own: the pack is what it installs. The main mod is **`am-sidebar`** — the
 sidebar and the Bots in it (a project's main bot and its team, Automagik's characters, the
 Create/Edit form, Start/Attach, the per-turn briefing, and `bin/automagik-herdr.mjs`); its own
-`RECIPE.md` describes it. Beside it are the pieces that make the sidebar usable — `sidebar-chrome`
-(the footer rail), `auto-tabs` (the tab bar), `new-menu-tui` (the `+` menu), `md-menu`
-(Markdown straight from a terminal — the menu and the preview in one mod), `automations` (scheduled agent prompts) — and **`mod-manager`**, the table at
+`RECIPE.md` describes it. Beside it are the pieces that make the sidebar usable — `am-footer`
+(the footer rail), `am-tabs` (the tab bar), `am-new-menu` (the `+` menu), `am-markdown`
+(Markdown straight from a terminal — the menu and the preview in one mod), `am-automations`
+(scheduled agent prompts), `am-quota` (the quota panel) — and **`am-mods`**, the table at
 `⌘⇧M` that lists every installed mod with on/off switches, `herdr-app check` results, versions,
 sources from our catalog and paths, plus the marketplace (`m`) and the review before any copy.
 
@@ -19,11 +20,12 @@ Every mod brings its own `RECIPE.md`, `LICENSE` and keys.
 
 ## How it behaves
 
-- **Install** (`install.sh`, through `mods/spaces-agents/update.mjs`): installs every `PACK_MODS`
+- **Install** (`install.sh`, through `mods/am-sidebar/update.mjs`): installs every `PACK_MODS`
   folder of the release's `automagik-herdr-pack-<v>.tgz` into `<app home>/mods/` as one unit,
   only over folders its record lists (others are left alone, or moved to `backup/` with
   `--adopt`), merges the pack's keys (only free keys — one in use stays the person's, printed as
-  `key = … stays …`), writes `<app home>/data/mod-manager/catalog.json` with the index URL, then
+  `key = … stays …`), writes `<app home>/data/am-mods/catalog.json` with the index URL (or brings
+  the `catalog.json` in its data folder from before the rename up to date), then
   runs `herdr-app check` per mod and fails the run if any fails. Settings, terminals, Pocket Link
   and Herdr's own mods are untouched.
 - **Catalog** (`node scripts/catalog.mjs`, `--refresh`, `--check`): reads the remotes and HEAD of this
@@ -34,25 +36,26 @@ Every mod brings its own `RECIPE.md`, `LICENSE` and keys.
   `modCount`, `repositoryCount`, `mods[]` with `owner/repo/fullName/url/stars/pushedAt/headCommit/
   path/name/blurb/modNames/hasKeys/hasPreview/recipeBytes/previewUrl`). One mod has one owner: the
   first entry to claim a name keeps it (the pack is first), and a repo left with nothing drops out.
-- **At run time** the manager reads that index: `data/mod-manager/catalog.json` → `{ url }`, a
+- **At run time** the manager reads that index: `data/am-mods/catalog.json` (else the one from
+  before the rename) → `{ url }`, a
   local path in a checkout or the published raw URL after a push. From it, each installed mod gets
   its repo, blurb, stars and head commit; `d` compares the folder against that commit; `u` adopts a
   hand-installed catalog mod so later updates are ordinary.
 
 ## Built from
 
-- `mods/mod-manager/` — `main.js`, `core.js`, `mod.json`, `RECIPE.md` (vendored from
+- `mods/am-mods/` — `main.js`, `core.js`, `mod.json`, `RECIPE.md` (vendored from
   `jacksonpires/herdr-app-mod-manager`, MIT, retargeted at our index).
 - `catalog/index.json` (generated), `catalog/repos.json` (the other repos we carry).
-- `scripts/catalog.mjs`, `install.sh` with `mods/spaces-agents/update.mjs` (no dependencies; `gh` optional for stars).
-- `keys.json` — `cmd-shift-m` → `mod.open:mod-manager`.
+- `scripts/catalog.mjs`, `install.sh` with `mods/am-sidebar/update.mjs` (no dependencies; `gh` optional for stars).
+- `keys.json` — `cmd-shift-m` → `mod.open:am-mods`.
 - Programs the pack runs: `git`, `herdr-app check`, `node`; the manager adds `gh`, `find`,
   `shasum`, `stat`, `rm`, `mv`, `mkdir`, `cp`, `open`.
 
 ## Watch out
 
 - The installer owns `mods/` and `keys.json`; the manager owns what it installs (shared
-  `"mod-manager.installed"`). Installed copies of a pack mod are replaced wholesale by the
+  `"am.mods.installed"`). Installed copies of a pack mod are replaced wholesale by the
   installer — edit here, not in the app home.
 - The pack's entry is generated from this checkout: a stale HEAD in `catalog/index.json` makes the
   manager think the pack is behind. Regenerate before tagging a release.
@@ -64,10 +67,10 @@ Every mod brings its own `RECIPE.md`, `LICENSE` and keys.
 
 ## Done when
 
-- `herdr-app check mods/mod-manager` passes.
+- `herdr-app check mods/am-mods` passes.
 - `node scripts/catalog.mjs` writes an index whose first entry is this pack, whose `modNames` is
   exactly the folders under `mods/`, and with no mod name claimed twice; `--check` exits 0 on that
-  index and 1 when it is older than 7 days or any entry drifted.
+  index and 1 when any entry drifted (never for its age or head commit).
 - `HERDR_APP_HOME=<temp> sh install.sh --yes` installs every mod, adds only free keys, writes the
   catalog config and prints `check passed` for each mod.
 - In the app: `⌘⇧M` opens the table; a mod installed from our catalog shows its repo and stars;

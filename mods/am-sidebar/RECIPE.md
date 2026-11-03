@@ -1,4 +1,4 @@
-# spaces-agents
+# am-sidebar
 
 The sidebar of Automagik Herdr, and the bots in it: each project's main bot and its team, drawn
 with Automagik's characters, created and edited in one form, started on or attached to any coding
@@ -11,7 +11,7 @@ One scrolling column, `chrome` background, 13 px text.
 
 - **Machine headers** when a space isn't on this computer; **space rows** with the space's icon
   (an image, an emoji on its colour, or its letter), name, repo · branch, `↑n ↓n`, and a `+` that
-  opens `new-menu-tui` for that space.
+  opens `am-new-menu` for that space.
 - **Under the first space of each project** (its folder's git main checkout; worktree spaces keep
   plain rows): the project's bot tree. The main bot is a raised card bordered in its ink;
   categories are uppercase headers with a muted subtitle; members nest under their lead inside a
@@ -28,7 +28,7 @@ One scrolling column, `chrome` background, 13 px text.
 
 - **Definitions** are the project's `.herdr/bots.json` (schema and validation in `model.js`):
   every open space's folder, the projects remembered in shared `am.sidebar.projects` and the
-  ones the CLI lists in `<app home>/spaces-agents-projects.json` are read on this machine or
+  ones the CLI lists in `<app home>/am-sidebar-projects.json` are read on this machine or
   another, watched for edits, and written back here only.
 - **The view is pure data** (`rows.js`): which bots are live by the `bot=<id>` label on a terminal,
   each bot's pose per status, the project tree (nesting by `lead`, categories, planned members,
@@ -68,8 +68,8 @@ One scrolling column, `chrome` background, 13 px text.
 - **Pressing**: a space selects on click and reorders on drag (inside its machine); an agent or bot
   row focuses its pane; a bot row's right-click offers Edit, Start and Attach; an agent's offers
   "Attach as bot…"; the space's tile opens the icon dialog (below). **New bot** and
-  **Bot settings** live in the footer's Bots tab (`sidebar-chrome`), which opens this mod's `create` and `pick` forms; the
-  `pick` list with no bot yet shows one **New bot** line that opens the form. Commands: `spaces-agents.new-bot`, `edit`, `start`, `attach`, `refresh`.
+  **Bot settings** live in the footer's Bots tab (`am-footer`), which opens this mod's `create` and `pick` forms; the
+  `pick` list with no bot yet shows one **New bot** line that opens the form. Commands: `am-sidebar.new-bot`, `edit`, `start`, `attach`, `refresh`.
 - **Icon dialog** (`spaceIcon.js`, `spaceIconModel.js`, `emoji-data.js`; formerly the separate
   `space-icon` mod): the space's tile opens this mod again as a 440 × 520 dialog with props
   `{spaceIcon: <space id>}`, and `init` hands it to `SpaceIconDialog`, as it does the bot form.
@@ -83,7 +83,7 @@ One scrolling column, `chrome` background, 13 px text.
   live with the dialog left open; it shows behind an emoji or the letter, an image covers it.
   `Use letter` removes the icon. Search is by Unicode name ("grinning", not "happy"); flags are not
   listed, paste one.
-- **Paste**: `spaces-agents.paste` / `paste_image` put the clipboard into a terminal, sending it as
+- **Paste**: `am-sidebar.paste` / `paste_image` put the clipboard into a terminal, sending it as
   a real PNG to another machine (`paste.js`, `clipboard-png.jxa`).
 - **Names** for terminals that report no status come from `${appHome()}/sidebar-agents.json`.
 
@@ -123,11 +123,11 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
 - **State**: shared `am.sidebar.icons` (space id → `{kind: "emoji", char}` or
   `{kind: "image", file}`; an older bare path reads as an image), `am.sidebar.projects`, `am.sidebar.update-shown`,
   `am.sidebar.theme-selected`, `am.space.colors` (space id → palette name, hex or `transparent`), `am.sidebar.collapsed`, `bots.defined` (whether this
-  computer has a bot, for the footer's Bots popup); before the rename these were `spaces-agents.*`,
-  `space.colors` and `sidebar.collapsed`, copied to `am.*` once on load and left in place for one
+  computer has a bot, for the footer's Bots popup); before the rename they had their old names
+  (`migrate.js` SHARED_RENAMES lists each), copied to `am.*` once on load and left in place for one
   release (`migrate.js` SHARED_RENAMES). Outside the mod folder,
   so replacing it loses nothing: the rename map (`${appHome()}/sidebar-agents.json`), the CLI's
-  project list (`spaces-agents-projects.json`), the space icons (`space-icons/`), the copied
+  project list (`am-sidebar-projects.json`, copied once from its name before the rename), the space icons (`space-icons/`), the copied
   themes, and the replaced pack kept for
   rollback (`<app home>/automagik-herdr/`).
 - **Another machine's project** is read, never written; a live bot there is shown, not started.
@@ -136,7 +136,7 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
 
 ## Done when
 
-`herdr-app check mods/spaces-agents` passes; a project's `.herdr/bots.json` shows as a tree with
+`herdr-app check mods/am-sidebar` passes; a project's `.herdr/bots.json` shows as a tree with
 characters and statuses; Create writes an entry the CLI then lists; Start opens a pane carrying the
 bot's labels; Attach ties an existing pane; a Claude bot receives its briefing before a turn; the
 Automagik theme shows after the first load and a theme picked later stays; a space's tile opens

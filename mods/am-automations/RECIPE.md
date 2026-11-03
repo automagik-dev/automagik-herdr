@@ -1,4 +1,4 @@
-# automations
+# am-automations
 
 Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00
 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were
@@ -46,7 +46,7 @@ of three views:
 
 ## Built from
 
-`mods/automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
+`mods/am-automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
 `automations.svg` (a clock, 24×24 stroke), `mod.json`
 (`place: "none"`, title "Automations"), `LICENSE` (this pack's Apache-2.0) and `LICENSE-upstream`
 (DnzzL's MIT, verbatim). Herdr API: `exec`, `hc`, `home`, `theme`, `terminals`, `spaces`, `run`,
@@ -67,6 +67,6 @@ templates, `sh`, and the agents a run starts (`claude`, `codex`, `pi`).
 
 ## Done when
 
-`herdr-app check mods/automations` passes; with the scheduler installed the panel lists the automations
+`herdr-app check mods/am-automations` passes; with the scheduler installed the panel lists the automations
 the CLI lists; `+` saves a new one with its next three runs previewed; `▶` opens a run in a new space;
 the switch writes `paused: true` and the header reads "All paused".

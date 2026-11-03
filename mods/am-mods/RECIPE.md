@@ -10,7 +10,7 @@ catalog pairing and drift, and it is written against Herdr's current mod API.
 
 ## What it shows
 
-A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background, 13 px text.
+A dialog at 80% × 75% (`⌘⇧M`, `mod.open:am-mods`), `popover` background, 13 px text.
 
 - **Header**: `Mods`, then counts — `N seus · N do Herdr · N desligados · N com erro ·
   checando N` — and, when the index can't be read, `catálogo indisponível: …` instead of silence.
@@ -33,9 +33,11 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background
 
 - **On/off** moves the folder between `mods/` and `mods-disabled/` (`core.setEnabled`): the app
   loads only `mods/`, so off is real and nothing is deleted. Herdr's own mods are refused.
-- **Records** of what the manager installed live in shared `"mod-manager.installed"` (source,
+- **Records** of what the manager installed live in shared `"am.mods.installed"` (copied once on load from its
+  name before the rename, `migrate.js` SHARED_RENAMES; source,
   prefix, commit, mods, layouts, keys added, risks seen). Update and remove work off them.
-- **Catalog**: `core.catalogUrl` reads `data/mod-manager/catalog.json` (`{ url }`) or the mod's own
+- **Catalog**: `core.catalogUrl` reads `data/am-mods/catalog.json` (`{ url }`), then the one in its
+  data folder from before the rename, or the mod's own
   `catalog.json`, else the published index; a local path is read, an `https` URL is fetched. A mod
   is matched by the entry's `modNames`, so an installed folder with no record still knows its repo,
   blurb and head commit.
@@ -48,7 +50,7 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background
   removed counts — "differs from upstream", which is edited *or* behind.
 - **Check**: `herdr-app check` once per enabled non-Herdr mod, one at a time, streamed into the
   `CHECK` column; a failure turns the name red and puts the message in the detail line.
-- **Install / update / remove**: clone into `~/.config/herdr-app/.mod-manager-cache/`, review, then
+- **Install / update / remove**: clone into `~/.config/herdr-app/.am-mods-cache/`, review, then
   copy `mods/<name>/` and `layouts/*`, merge `keys.json` (never overwriting a key in use), check,
   toast. An update or a removal **moves the old folder aside** to
   `<app home>/automagik-herdr/backup/<mod>-<stamp>` — a rename, never `rm -rf` — and an update puts
@@ -65,7 +67,7 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background
 
 ## Built from
 
-- `mods/mod-manager/`: `main.js` (the view: table, marketplace, review, form), `core.js` (files,
+- `mods/am-mods/`: `main.js` (the view: table, marketplace, review, form), `core.js` (files,
   git, catalog, drift — no Herdr import, so `node` can run it), `mod.json`
   (`place: "none"`, dialog overlay 0.8 × 0.75).
 - Herdr API: `exec`, `appHome`, `readTextFile`, `writeTextFile`, `shared`/`setShared`, `props`,
@@ -73,7 +75,7 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background
   (`readFile`, `writeFile`, `mkdir`, `unlink`, `stat`); `InputState`/`Input`.
 - Programs: `git`, `gh` (optional), `herdr-app check`, `find`, `shasum`, `stat`, `rm`, `mv`,
   `mkdir`, `cp`, `open`.
-- Keys: `cmd-shift-m` → `mod.open:mod-manager` (from the pack's `keys.json`).
+- Keys: `cmd-shift-m` → `mod.open:am-mods` (from the pack's `keys.json`).
 
 ## Watch out
 
@@ -92,7 +94,7 @@ A dialog at 80% × 75% (`⌘⇧M`, `mod.open:mod-manager`), `popover` background
 
 ## Done when
 
-- `herdr-app check mods/mod-manager` passes.
+- `herdr-app check mods/am-mods` passes.
 - `node scripts/catalog.mjs` writes `catalog/index.json` with this pack first, every `mods/*`
   folder in its `modNames`, and one owner per mod name.
 - `HERDR_APP_HOME=<temp> sh install.sh --yes` installs the pack, adds only free keys, writes the

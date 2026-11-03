@@ -26,33 +26,33 @@ holds eight mod folders and one layout, and nothing else:
 
 | Folder | What you get |
 |---|---|
-| `spaces-agents` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
-| `sidebar-chrome` | the footer rail (Mods, Automations, Quota, Settings, Add machine) |
-| `auto-tabs` | the tab bar |
-| `new-menu-tui` | the `+` menu (a space row's `+`) |
-| `md-menu` | the terminal's right-click menu with its Markdown files |
-| `mod-manager` | the mod manager (`⌘⇧M`) |
-| `automations` | the automations panel |
+| `am-sidebar` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
+| `am-footer` | the footer rail (Bots, Mods, Automations, Quota, Settings, Add machine) |
+| `am-tabs` | the tab bar |
+| `am-new-menu` | the `+` menu (a space row's `+` and the tab bar's `+`) |
+| `am-markdown` | the terminal's right-click menu with its Markdown files |
+| `am-mods` | the mod manager (`⌘⇧M`) |
+| `am-automations` | the automations panel |
 | `am-quota` | the quota panel |
 | `layouts/automagik.json` | the layout that shows all of the above |
 
-Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar (`spaces-agents`)
-alone, with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
+Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar alone (under its
+old folder name, see [From v0.2 to v0.4.x](#from-v02-to-v04x)), with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
 checksum and a version number don't tell the two apart; the folder list does. After installing,
 the installer prints `Installed the pack <v> in <mods>: <folders>`; that list must name all
 eight. To check an install later:
 
 ```bash
 sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh
-# am-quota,auto-tabs,automations,md-menu,mod-manager,new-menu-tui,sidebar-chrome,spaces-agents
+# am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs
 ```
 
 It never touches anything it did not install:
 
 - its record (`~/.config/herdr-app/automagik-herdr/installed-by-install.sh`) lists every folder
   it put in `mods/`, and only those are ever replaced, updated or rolled back;
-- a folder of the same name that you installed yourself (say your own `sidebar-chrome`) is
-  reported and left alone; `--adopt` takes it over, after moving it to
+- a folder of the same name that you installed yourself (say your own `am-footer`, or one under
+  its name from before v0.5.0) is reported and left alone; `--adopt` takes it over, after moving it to
   `automagik-herdr/backup/<mod>-<date>/`, where it stays until `--uninstall` puts it back;
 - the folders an install or update replaces are kept together in `automagik-herdr/.prev/`;
 - each mod's `.state/`, other dot paths and `node_modules` move into its new copy (a linked
@@ -63,9 +63,9 @@ It adds the `automagik` layout (Herdr's main layout with the whole pack in place
 none, and replaces it only while it is the unchanged copy v0.2 to v0.4 shipped. The pack shows
 only in a layout that names it, so while Herdr shows another one the installer asks before
 switching (or prints the `herdr-app do layout.switch` command when it can't ask). A layout of
-your own that names `spaces-agents` is never edited: the installer lists the pack pieces it
-lacks and points at the pack's copy to take their blocks from (see
-[Wiring](#wiring-your-layout)); or switch to the `automagik` layout. Running it again is safe.
+your own that shows the sidebar keeps its blocks: the installer only renames the pack mods it
+names (from v0.4.x, below), lists the pack pieces it lacks and points at the pack's copy to take
+their blocks from (see [Wiring](#wiring-your-layout)); or switch to the `automagik` layout. Running it again is safe.
 Add options after `bash -s --`: `--yes` answers every question, `--version 0.5.0` installs that
 release (v0.5.0 or later: earlier ones have no pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
@@ -82,12 +82,38 @@ time; there is no LaunchAgent and no daemon. A dev build counts by its version n
 only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
 that version and Pocket Link is not installed; usagemeter's data is kept.
 
-**From v0.2 to v0.4.x:** rerun the one-liner above. Their own `automagik-herdr update` finds
-nothing newer, because the pack ships under a new name. The installer replaces the sidebar-only
-`spaces-agents` (kept in `automagik-herdr/.prev/`, its `.state` carried over), adds the other
-seven mods, and replaces the `automagik` layout while it is the unchanged one those releases
-shipped. If you adapted a layout of your own to show the sidebar, it stays as it is; the
-installer prints what it lacks.
+### From v0.2 to v0.4.x
+
+Rerun the one-liner above. Their own `automagik-herdr update` finds nothing newer, because the
+pack ships under a new name. v0.5.0 also renames every mod folder (there are no aliases):
+
+| Before v0.5.0 | From v0.5.0 |
+|---|---|
+| `spaces-agents` | `am-sidebar` |
+| `sidebar-chrome` | `am-footer` |
+| `auto-tabs` | `am-tabs` |
+| `new-menu-tui` | `am-new-menu` |
+| `md-menu` (with `markdown-browser`) | `am-markdown` |
+| `mod-manager` | `am-mods` |
+| `automations` | `am-automations` |
+| `space-icon` | inside `am-sidebar` |
+
+The installer:
+
+- replaces the sidebar-only folder with `am-sidebar` (the old one is kept in
+  `automagik-herdr/.prev/`, its `.state` carried over) and adds the other seven mods;
+- replaces the `automagik` layout while it is the unchanged one those releases shipped;
+- renames the pack mods your own layouts and `keys.json` name, each file backed up first in
+  `automagik-herdr/backup/layouts-<date>/` (a mod you installed yourself keeps its name until
+  `--adopt`), and prints what a layout of yours still lacks;
+- points the `automagik-herdr` link at `am-sidebar`'s command;
+- moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
+  rewrote. A Claude session already running in one of those projects keeps the old hook and gets
+  no briefing until it is restarted or `/hooks` is run in it. A project the installer doesn't
+  know about keeps the old hook: `automagik-herdr start` or `attach` its bot, or open it as a
+  space in Herdr and run the installer again.
+
+`automagik-herdr update --rollback` returns to the release before, the old names included.
 
 ### Paste this to your agent
 
@@ -104,7 +130,7 @@ Install Automagik Herdr on this Mac and set up my first bot.
 2. Verify, don't assume: a version and a checksum don't say what was installed. All must hold:
    automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
    sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
-   am-quota,auto-tabs,automations,md-menu,mod-manager,new-menu-tui,sidebar-chrome,spaces-agents;
+   am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs;
    herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those eight mods.
    If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
    found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.
@@ -384,8 +410,8 @@ Start and Attach add one `UserPromptSubmit` hook to `.claude/settings.local.json
 bot's session folder, never to the shared `settings.json`, and keep that file out of git
 through the clone's own exclude file. The hook runs
 `sh <app home>/mods/<sidebar>/bin/run.sh <app home>/automagik-herdr/briefing.mjs`, with the
-installed sidebar folder's run.sh (`am-sidebar`, else `spaces-agents`; nothing when neither has
-one): run.sh finds node 22.7 or later, or bun, even where the agent's PATH has no `node`, and the
+installed sidebar folder's run.sh (`am-sidebar`, else the sidebar's folder from before v0.5.0;
+nothing when neither has one): run.sh finds node 22.7 or later, or bun, even where the agent's PATH has no `node`, and the
 fixed entry point runs that folder's `briefing.mjs`, so a renamed folder or a rollback doesn't
 break it. The installer and `automagik-herdr update` move
 older hooks onto it (each file backed up beside itself as `settings.local.json.am-backup`), a hook
@@ -412,20 +438,20 @@ of the pack (for the rest, copy each folder of the table above the same way, and
 [Wiring](#wiring-your-layout)):
 
 ```bash
-cp -R mods/spaces-agents ~/.config/herdr-app/mods/
+cp -R mods/am-sidebar ~/.config/herdr-app/mods/
 mkdir -p ~/.config/herdr-app/layouts ~/.local/bin
 cp layouts/automagik.json ~/.config/herdr-app/layouts/
 herdr-app do layout.switch '{"name":"automagik"}'
-ln -s ~/.config/herdr-app/mods/spaces-agents/bin/automagik-herdr ~/.local/bin/automagik-herdr
+ln -s ~/.config/herdr-app/mods/am-sidebar/bin/automagik-herdr ~/.local/bin/automagik-herdr
 ```
 
 Herdr never overwrites a mod folder that is already there. If you run your own
-`spaces-agents` clone, move it out of `mods/` first, and keep the backup outside `mods/`,
+`am-sidebar` clone, move it out of `mods/` first, and keep the backup outside `mods/`,
 or Herdr loads it as a second mod. A rename map in `<app home>/sidebar-agents.json` is read
 as before. The sidebar docks nowhere by itself (its `mod.json` place is `none`): it shows only
 in a layout that names it. `automagik.json` is Herdr's `main` layout with the pack in place of
 the `spaces` and `agents` sidebars, so copying it and switching to it are required steps. If
-your own layout already names `spaces-agents`, keep it and skip those two lines.
+your own layout already names `am-sidebar`, keep it and skip those two lines.
 
 ### Upgrading from herdr-bots
 
@@ -436,12 +462,12 @@ If you ran `herdr-bots` from a clone, use `automagik-herdr` in its place.
 No build step and no dependencies. The checks CI runs:
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
 `launchArgs.js`, `models.js`, `workers.js`, `formModel.js`, `release.js`, `updateCheck.js`,
-`workerTab.js`), so the tests
+`workerTab.js`, `migrate.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are
@@ -453,8 +479,8 @@ script, not the JSON (`test/theme.test.mjs` fails when they differ).
 ### Publishing
 
 The public repository carries the `herdr-mod` topic, which is set on GitHub (repository
-settings), not in a file. `mods/spaces-agents/RECIPE.md` (how the pack is built) and
-`mods/spaces-agents/preview.png` (the bot view) are Herdr's share files: they describe the pack
+settings), not in a file. `mods/am-sidebar/RECIPE.md` (how the pack is built) and
+`mods/am-sidebar/preview.png` (the bot view) are Herdr's share files: they describe the pack
 to readers of the repository and are inert in an installed copy.
 
 ## License and credits
@@ -462,7 +488,7 @@ to readers of the repository and are inert in an installed copy.
 Apache-2.0 (`LICENSE`; the pack folder carries a copy). The sidebar is derived from Herdr's
 shipped `spaces` mod 0.1.7 (`LICENSE-herdr`); `main.js` says so at its top, and `mod.json`'s
 `title` changed to "Automagik Sidebar". The characters come from Automagik by Namastex Labs
-(`LICENSE-automagik`), whose drawing comes from DS Bot. See `mods/spaces-agents/NOTICE`.
+(`LICENSE-automagik`), whose drawing comes from DS Bot. See `mods/am-sidebar/NOTICE`.
 
 ## What else is in the pack
 
@@ -471,12 +497,12 @@ with its own `RECIPE.md`:
 
 | Mod | Derived from | What it does |
 |---|---|---|
-| `sidebar-chrome` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Mods, Automations, Quota, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
-| `auto-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. |
-| `automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
-| `md-menu` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
-| `new-menu-tui` | Herdr's `new-menu` | The `+` menu: terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
-| `mod-manager` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
+| `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Quota, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
+| `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
+| `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
+| `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
+| `am-new-menu` | Herdr's `new-menu` | The `+` menu (the sidebar's and the tab bar's, in place of Herdr's own): terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
+| `am-mods` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
 | `am-quota` | clean-room | A sidebar panel listing every Claude Code and Codex account the CLIProxyAPI knows, with its window, and switching the local credentials to the one you pick; the rail's Quota tab toggles it. |
 
 **Not in this pack, on purpose:** Pocket Link belongs to
@@ -515,18 +541,18 @@ when a `mod.json`, a mod folder or an SVG under `mods/` changes; it writes nothi
 The installer does this for the `automagik` layout. To give a layout of your own the whole pack,
 copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's copy) into it:
 
-1. root: `"terminal_menu": "md-menu"`;
-2. the tab bar block: `"mod": "auto-tabs"`, `"size": { "px": 42 }`;
-3. the `spaces` block: `"mod": "spaces-agents"`;
-4. the footer block: `"mod": "sidebar-chrome"` with `"props": { "footer": true }` and
+1. root: `"terminal_menu": "am-markdown"`;
+2. the tab bar block: `"mod": "am-tabs"`, `"size": { "px": 42 }`;
+3. the `spaces` block: `"mod": "am-sidebar"`;
+4. the footer block: `"mod": "am-footer"` with `"props": { "footer": true }` and
    `"size": { "px": 42 }`;
-5. a block `{ "id": "automations-panel", "content": { "mod": "automations" }, "size":
+5. a block `{ "id": "automations-panel", "content": { "mod": "am-automations" }, "size":
    { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
    it;
 6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles.
 
-`new-menu-tui` (opened by the sidebar's `+`) and `mod-manager` (`⌘⇧M`, the rail's Mods tab) need
-no block.
+`am-new-menu` (opened by the sidebar's and the tab bar's `+`) and `am-mods` (`⌘⇧M`, the rail's
+Mods tab) need no block.
 
 ## One installer
 
@@ -555,10 +581,10 @@ test/        the bot work's pure-module tests (node --test)
 ## Develop
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/spaces-agents/*.js mods/spaces-agents/*.mjs mods/spaces-agents/bin/*.mjs; do node --check "$f" || exit 1; done
+node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done
 ```
 
-The pure rules (project key, schema, leads, ids, looks) live in `mods/spaces-agents/model.js`
+The pure rules (project key, schema, leads, ids, looks) live in `mods/am-sidebar/model.js`
 and import nothing from Herdr; so does the briefing's text (`briefingText.mjs`).
 Model detection lives in `models.js` (`test/models.test.mjs`). `test/briefing.test.mjs`
 runs `briefing.mjs` under node with a fake `hc` on `PATH`, and `test/cli.test.mjs` runs every
@@ -571,6 +597,6 @@ works inside Herdr. Check that in Herdr itself.
 ## License
 
 Apache-2.0 (`LICENSE`; the pack folder carries a copy). Two files are changed from Herdr's
-`spaces` 0.1.7: `mods/spaces-agents/main.js`, which says so at its top, and
-`mods/spaces-agents/mod.json`, whose `place` changed from `none` to `left`. JSON can't
+`spaces` 0.1.7: `mods/am-sidebar/main.js`, which says so at its top, and
+`mods/am-sidebar/mod.json`, whose `title` changed to "Automagik Sidebar". JSON can't
 carry a comment, so the change to `mod.json` is noted here and in the repository history.
