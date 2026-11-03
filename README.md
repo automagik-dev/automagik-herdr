@@ -86,10 +86,18 @@ The phone reads each machine's own usage summary there (the `herdr-meter` docume
 machine's herdr-core), so usagemeter runs on every linked machine too: the installer installs the
 same pinned build on each connected machine in `hc machine ls` (each machine downloads it and checks
 both hashes itself; one that fails is a warning naming it), and the sidebar's 10-minute run syncs
-each connected machine after this computer, one at a time. `automagik-herdr update` does the same
-with the new pack's pin, and `automagik-herdr meter install [--machine M]` does it again, for
-example for a machine linked later. `--usagemeter-local-only` keeps it to this computer, and
-`--no-usagemeter` covers the linked machines too; both are remembered. `--uninstall` removes it
+each connected machine after this computer, one at a time. `automagik-herdr meter install
+[--machine M]` does it again, for example for a machine linked later. `--usagemeter-local-only`
+keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
+remembered.
+
+**Updating to this release from an earlier one:** the update is run by the earlier release's
+command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
+installs the pinned usagemeter on this computer and every connected linked machine, and records
+that you asked for it. From then on, `automagik-herdr update` keeps them on the pack's pin within
+what you chose. An install record that never said yes (an earlier `install.sh --no-usagemeter`
+recorded nothing) is never read as one: `update` installs nowhere and prints that command instead,
+and the sidebar syncs only this computer. `--uninstall` removes it
 from a linked machine only where the install record says the pack put it and it is still that
 version.
 
