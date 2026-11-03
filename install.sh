@@ -493,17 +493,17 @@ install() {
   # migrateHooks.mjs (with briefingText.mjs, model.js and its models.js) the briefing hooks onto a
   # fixed path.
   mkdir "$TMP/x"
-  s=${PACK##*/}
-  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$s/update.mjs" "$s/release.js" "$s/migrate.js" \
-    "$s/migrateHome.mjs" "$s/migrateHooks.mjs" "$s/briefingText.mjs" "$s/model.js" "$s/models.js" \
-    </dev/null 2>/dev/null || fail "$TGZ lacks $s's updater files: nothing was installed."
+  side=${PACK##*/}
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/update.mjs" "$side/release.js" "$side/migrate.js" \
+    "$side/migrateHome.mjs" "$side/migrateHooks.mjs" "$side/briefingText.mjs" "$side/model.js" "$side/models.js" \
+    </dev/null 2>/dev/null || fail "$TGZ lacks $side's updater files: nothing was installed."
   for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js; do
-    { [ -f "$TMP/x/$s/$f" ] && [ ! -L "$TMP/x/$s/$f" ]; } || fail "$TGZ: $s/$f is not a plain file: nothing was installed."
+    { [ -f "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ]; } || fail "$TGZ: $side/$f is not a plain file: nothing was installed."
   done
   rc=0
   changed=yes
   if [ "$same" = yes ]; then
-    out=$(node "$TMP/x/$s/update.mjs" repair --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>"$TMP/log") || rc=$?
+    out=$(node "$TMP/x/$side/update.mjs" repair --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" </dev/null 2>"$TMP/log") || rc=$?
     if [ "$rc" = 2 ]; then
       # A release whose updater has no `repair` command (cut before #44): it is installed again.
       say "This release's updater cannot check the installed files; installing $VERSION again."
@@ -513,7 +513,7 @@ install() {
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
       fail "could not check the installed pack: ${why:-$out $(cat "$TMP/log")}"
     else
-      sed 's/^/  /' "$TMP/log"
+      sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
       case $out in *'"changed":false'*) changed=no ;; esac
       if [ "$changed" = yes ]; then say "Repaired the pack $VERSION in $MODS: what differed from the release is listed above."; fi
     fi
@@ -521,12 +521,14 @@ install() {
   if [ "$same" = no ]; then
     set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
     if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
-    out=$(node "$TMP/x/$s/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
+    out=$(node "$TMP/x/$side/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
     if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
       fail "nothing was installed: ${why:-$out $(cat "$TMP/log")}"
     fi
-    sed 's/^/  /' "$TMP/log"
+    sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
+    # The briefing hooks' notice (update.mjs): kept for the end of the run, where it is read.
+    sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
     say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
     if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
       say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
@@ -566,6 +568,8 @@ install() {
   esac
 
   # ---- f. next ----
+  # The hooks notice after everything else the run printed and before its last lines, so it is read.
+  if [ -s "$TMP/notice" ]; then say ""; cat "$TMP/notice"; say ""; fi
   # A failed check or an unfinished step is never "Done" nor "up to date".
   if [ "$rc" = 4 ]; then switch_hint; fail "the pack is installed, but a step after it did not finish (the warning above says what, and where the folders are)."; fi
   if [ "$rc" = 3 ] && [ "$same" = yes ]; then

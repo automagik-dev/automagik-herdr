@@ -18,6 +18,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const RELEASE_YML = join(ROOT, ".github", "workflows", "release.yml");
 const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, tarballName } = await import("../mods/am-sidebar/release.js");
+const { hookCommand, legacyHookCommand } = await import("../mods/am-sidebar/briefingText.mjs");
 /** The release this branch becomes; release.yml sets VERSION to it in the commit it tags. */
 const RELEASE = "0.5.0";
 /** The latest sidebar-only release (v0.2-v0.4.x: automagik-herdr-<v>.tgz, spaces-agents only). */
@@ -323,9 +324,27 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   writeFileSync(personal, mine);
   m.show("main-agents");
   const dogBefore = files(sheepdog);
+  // A bot's project the CLI listed, with v0.4's hook (straight at mods/spaces-agents).
+  const proj = join(m.root, "acme");
+  mkdirSync(join(proj, ".claude"), { recursive: true });
+  execFileSync("git", ["init", "-q", proj]);
+  const projSettings = join(proj, ".claude", "settings.local.json");
+  writeFileSync(projSettings, `${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: legacyHookCommand(m.appHome), timeout: 10 }] }] } }, null, 2)}\n`);
+  writeFileSync(join(m.appHome, "spaces-agents-projects.json"), JSON.stringify([proj]));
 
   const r = m.oneLiner("--yes");
   assertFullPack(m, r);
+  // The hook moved, and the run says so last, loudly: the file with its project, the running
+  // sessions that keep the old hook, and the projects it didn't know.
+  assert.equal(JSON.parse(readFileSync(projSettings, "utf8")).hooks.UserPromptSubmit[0].hooks[0].command, hookCommand(m.appHome));
+  const out = r.out.split("\n");
+  const from = out.indexOf("IMPORTANT: the bots' briefing hook moved to a new path in 1 settings file:");
+  assert.ok(from > 0, r.out);
+  assert.equal(out[from + 1], `  ${proj}: ${projSettings}`);
+  assert.match(out[from + 2], /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/);
+  assert.match(out[from + 3], /were not rewritten .*automagik-herdr start <bot>/);
+  assert.ok(out.findIndex((l) => l.startsWith("Done: Automagik Herdr")) > from + 3, "after every step's output, before the closing lines");
+  assert.ok(!r.out.includes("notice: "), "the tag never shows");
   // The sidebar-only pack is replaced and kept as the rollback set; its state carried over.
   assert.equal(readFileSync(join(m.state, ".prev", "spaces-agents", "VERSION"), "utf8"), `${OLD}\n`);
   assert.equal(existsSync(old), false, "spaces-agents became am-sidebar");

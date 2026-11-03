@@ -55,7 +55,7 @@ import {
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
-import { CLI_LINK, botPaneFolders, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
+import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
   noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
@@ -884,16 +884,20 @@ async function main(argv) {
   const { command, opts } = parseArgs(argv);
   const modsDir = opts.mods ?? defaultModsDir();
   const log = (line) => process.stderr.write(`${line}\n`);
+  // The hooks notice, last and tagged: install.sh prints the `notice: ` lines at the end of its run.
+  const notice = (hooks) => { for (const line of hooksNotice(hooks)) log(`notice: ${line}`); };
   // The CLI link and the open spaces belong to this computer's own app home; install.sh links the CLI itself.
   const host = { binDir: binDirOf(), window: liveHome(modsDir) };
   if (command === "check" || (command === "update" && opts.check)) return checkForUpdate({ modsDir });
   if (command === "apply" || command === "update") {
     const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, ...host });
+    if (command === "update") notice(r.installed?.hooks?.hooks);
     if (command === "apply" || opts.json) return r;
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };
   }
   if (command === "rollback") {
     const r = rollback({ modsDir, log, ...host });
+    notice(r.hooks?.hooks);
     if (r.warnings.length) process.exitCode = 4;
     return r;
   }
@@ -913,6 +917,7 @@ async function main(argv) {
   if (!opts.setup) {
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window });
+    notice(installed.hooks?.hooks);
     done();
     return { installed };
   }
@@ -923,6 +928,7 @@ async function main(argv) {
     // After setupHome: the pack's own layout is placed first, so only the person's are migrated.
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window });
+    notice(installed.hooks?.hooks);
     done();
     if (failed.length && !process.exitCode) process.exitCode = 3;
     return { installed, checkFailed: failed };

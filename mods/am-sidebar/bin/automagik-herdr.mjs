@@ -32,6 +32,7 @@ import { EFFORT_SHAPE, LEDGER_FILE, ROLES, TASK_LABEL, WORKER_OF_LABEL, WORKER_R
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, relinkCli, rollback as rollbackPack } from "../update.mjs";
 import { NO_UPDATE_ENV } from "../release.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
+import { hooksNotice } from "../migrateHooks.mjs";
 import { plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState } from "./state.mjs";
 
@@ -1212,6 +1213,9 @@ async function cmdWorker(opts, rest) {
 
 // ---- updates (A14) ----
 
+/** The hooks notice (migrateHooks.mjs hooksNotice) on lines of its own after the summary, or "". */
+const hooksLines = (hooks) => { const lines = hooksNotice(hooks); return lines.length ? `\n${lines.join("\n")}` : ""; };
+
 /**
  * `update`: install the latest release, `--check` only reports, `--rollback` swaps the kept
  * pack back. `io` is injected by the tests (fetch, env, modsDir, binDir); the pack is the installed
@@ -1250,7 +1254,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
     const { relinked, note } = relink(before);
     const warned = r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : "";
-    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${warned}${note}`;
+    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${warned}${note}${hooksLines(r.hooks?.hooks)}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
@@ -1261,7 +1265,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   const current = r.current ?? "not installed";
   if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}${hooksLines(r.installed.hooks?.hooks)}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
