@@ -295,3 +295,32 @@ const PROMPT = {
 export function promptArgs(agentKey, task) {
   return PROMPT[agentKey] ? PROMPT[agentKey](task) : [task];
 }
+
+// How each agent picks up where it left off, for Restart: the words after its `run`. Each
+// was read from that agent's own --help on 2026-11-03 (claude, codex resume, pi, omp, kimi,
+// agy, hermes). Claude resumes a known session by id, else the latest one in its folder;
+// codex resume is a subcommand, which still goes after `run` (its top-level options come
+// before it). An agent missing here has no resume this pack knows: Restart starts it fresh.
+const RESUME = {
+  claude: (session) => (session ? ["--resume", session] : ["--continue"]),
+  codex: () => ["resume", "--last"],
+  pi: () => ["--continue"],
+  omp: () => ["--continue"],
+  kimi: () => ["--continue"],
+  antigravity: () => ["--continue"],
+  hermes: () => ["--continue"],
+};
+
+/** True when Restart can resume `agentKey`'s conversation (RESUME lists it). */
+export const canResume = (agentKey) => Boolean(RESUME[agentKey]);
+
+/**
+ * The words that resume `agentKey`'s last conversation, appended to its `run`: `session` is a
+ * known session id (Claude's, from the pane's agent.session label), null when none is known.
+ * Null when the agent has no resume (Restart then starts it fresh, and says so).
+ */
+export function resumeArgs(agentKey, session = null) {
+  // Never a value that reads as a flag (the CLI passes only UUIDs; restart.js sessionId).
+  const s = typeof session === "string" && session.trim() && !session.trim().startsWith("-") ? session.trim() : null;
+  return RESUME[agentKey] ? RESUME[agentKey](s) : null;
+}

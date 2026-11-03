@@ -436,8 +436,8 @@ export function hooksNotice(hooks) {
       : forward ? `IMPORTANT: the bots' briefing hook moved to a new path in ${n}:`
         : `IMPORTANT: the bots' briefing hook went back to the older release's path in ${n}:`,
     ...files.map((f) => `  ${dirname(dirname(f))}: ${f}`),
-    forward ? `A Claude session already running in ${files.length ? "those projects" : "a bot's project"} keeps the OLD hook and gets NO briefing until it is restarted, or until /hooks is run in it once.`
-      : "A Claude session already running in those projects keeps the hook it loaded until it is restarted, or until /hooks is run in it once.",
+    forward ? `A Claude session already running in ${files.length ? "those projects" : "a bot's project"} keeps the OLD hook and gets NO briefing until it is restarted. Restart the bot: automagik-herdr restart <bot> (or the bot row's Restart).`
+      : "A Claude session already running in those projects keeps the hook it loaded until it is restarted. Restart the bot: automagik-herdr restart <bot> (or the bot row's Restart).",
     ...(forward ? ["Projects the pack doesn't know about were not rewritten and get no briefing. In one, run `automagik-herdr start <bot>` or `automagik-herdr attach <bot>` (either writes the new hook), or open it as a space in Herdr and run the installer again."] : []),
   ];
 }

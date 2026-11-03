@@ -68,7 +68,8 @@ prints the two points below, even when it rewrote no file. The old path has no s
 
 - **Running Claude sessions keep the OLD hook and get no briefing.** This applies to a session that
   was already running in one of the listed projects: it still holds the old hook, which points into
-  the renamed folder. It gets no briefing until you restart it or run `/hooks` in it once.
+  the renamed folder. It gets no briefing until you restart the bot: `automagik-herdr restart <bot>`
+  (or the bot row's Restart; v0.6.0 and later).
 - **Projects the pack doesn't know about are not rewritten.** The installer only rewrites projects
   it knows:
   - the sidebar's remembered projects;
@@ -83,8 +84,8 @@ prints the two points below, even when it rewrote no file. The old path has no s
   included.
 
 `automagik-herdr update --rollback` moves the hooks back to the older release's path and prints the
-same kind of list. A running session keeps the hook it loaded until you restart it or run `/hooks`
-in it.
+same kind of list. A running session keeps the hook it loaded until you restart the bot:
+`automagik-herdr restart <bot>` (or the bot row's Restart).
 
 ## Also lost or kept across the rename
 
